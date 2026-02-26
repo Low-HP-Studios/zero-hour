@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { DEFAULT_AUDIO_VOLUMES, type AudioVolumeSettings } from "./Audio";
 import { PerfHUD } from "./PerfHUD";
 import { Scene } from "./Scene";
 import {
@@ -22,6 +23,7 @@ export function GameRoot() {
     showR3fPerf: false,
   });
   const [stressCount, setStressCount] = useState<StressModeCount>(0);
+  const [audioVolumes, setAudioVolumes] = useState<AudioVolumeSettings>(DEFAULT_AUDIO_VOLUMES);
   const [perfMetrics, setPerfMetrics] = useState<PerfMetrics>(DEFAULT_PERF_METRICS);
   const [player, setPlayer] = useState<PlayerSnapshot>(DEFAULT_PLAYER_SNAPSHOT);
   const [weaponEquipped, setWeaponEquipped] = useState(false);
@@ -57,6 +59,7 @@ export function GameRoot() {
     <div className="app-shell">
       <Scene
         settings={settings}
+        audioVolumes={audioVolumes}
         stressCount={stressCount}
         onPerfMetrics={setPerfMetrics}
         onPlayerSnapshot={setPlayer}
@@ -199,6 +202,50 @@ export function GameRoot() {
                 {stressLabel}
               </button>
             </div>
+
+            <div className="settings-row" style={{ display: "grid", gap: 6 }}>
+              <span className="muted">Audio volumes</span>
+              <VolumeSlider
+                label="Master"
+                value={audioVolumes.master}
+                onChange={(value) =>
+                  setAudioVolumes((prev) => ({
+                    ...prev,
+                    master: value,
+                  }))
+                }
+              />
+              <VolumeSlider
+                label="Gun"
+                value={audioVolumes.gunshot}
+                onChange={(value) =>
+                  setAudioVolumes((prev) => ({
+                    ...prev,
+                    gunshot: value,
+                  }))
+                }
+              />
+              <VolumeSlider
+                label="Steps"
+                value={audioVolumes.footsteps}
+                onChange={(value) =>
+                  setAudioVolumes((prev) => ({
+                    ...prev,
+                    footsteps: value,
+                  }))
+                }
+              />
+              <VolumeSlider
+                label="Hit"
+                value={audioVolumes.hit}
+                onChange={(value) =>
+                  setAudioVolumes((prev) => ({
+                    ...prev,
+                    hit: value,
+                  }))
+                }
+              />
+            </div>
           </div>
           <p className="muted" style={{ marginTop: 8 }}>
             Stress mode is mostly draw-call pain right now. Adding full physics later is how you end up benchmarking regret instead of gameplay.
@@ -206,5 +253,31 @@ export function GameRoot() {
         </div>
       </div>
     </div>
+  );
+}
+
+type VolumeSliderProps = {
+  label: string;
+  value: number;
+  onChange: (value: number) => void;
+};
+
+function VolumeSlider({ label, value, onChange }: VolumeSliderProps) {
+  return (
+    <label className="settings-row" style={{ gap: 6 }}>
+      <span style={{ width: 42 }}>{label}</span>
+      <input
+        type="range"
+        min={0}
+        max={1}
+        step={0.01}
+        value={value}
+        onChange={(event) => onChange(Number(event.currentTarget.value))}
+        style={{ width: 110 }}
+      />
+      <span className="muted" style={{ width: 34, textAlign: "right" }}>
+        {Math.round(value * 100)}%
+      </span>
+    </label>
   );
 }

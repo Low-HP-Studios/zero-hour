@@ -1,6 +1,6 @@
 import { loadAudioBuffer } from "./AssetLoader";
 
-type AudioVolumeSettings = {
+export type AudioVolumeSettings = {
   master: number;
   gunshot: number;
   footsteps: number;
@@ -13,7 +13,7 @@ type LoadedBuffers = {
   hit: AudioBuffer | null;
 };
 
-const DEFAULT_VOLUMES: AudioVolumeSettings = {
+export const DEFAULT_AUDIO_VOLUMES: AudioVolumeSettings = {
   master: 0.8,
   gunshot: 0.85,
   footsteps: 0.32,
@@ -33,7 +33,7 @@ export class AudioManager {
     footstep: null,
     hit: null,
   };
-  private volumes: AudioVolumeSettings = { ...DEFAULT_VOLUMES };
+  private volumes: AudioVolumeSettings = { ...DEFAULT_AUDIO_VOLUMES };
   private nextFootstepAtSeconds = 0;
   private whiteNoiseBuffer: AudioBuffer | null = null;
 

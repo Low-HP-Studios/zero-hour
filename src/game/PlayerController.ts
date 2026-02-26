@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import type { CollisionRect, PlayerSnapshot, WorldBounds } from "./types";
@@ -60,39 +60,43 @@ export function usePlayerController({
   const recoilPitchRef = useRef(0);
   const recoilYawRef = useRef(0);
   const snapshotAccumulatorRef = useRef(0);
-
-  const handleAction = useEffectEvent((action: PlayerAction) => {
-    onAction(action);
-  });
-
-  const handleTrigger = useEffectEvent((firing: boolean) => {
-    onTriggerChange(firing);
-  });
-
-  const emitSnapshot = useEffectEvent((snapshot: PlayerSnapshot) => {
-    onPlayerSnapshot(snapshot);
-  });
-
-  const handleUserGesture = useEffectEvent(() => {
-    onUserGesture();
-  });
+  const actionCallbackRef = useRef(onAction);
+  const triggerCallbackRef = useRef(onTriggerChange);
+  const snapshotCallbackRef = useRef(onPlayerSnapshot);
+  const userGestureCallbackRef = useRef(onUserGesture);
 
   useEffect(() => {
     camera.rotation.order = "YXZ";
   }, [camera]);
 
   useEffect(() => {
+    actionCallbackRef.current = onAction;
+  }, [onAction]);
+
+  useEffect(() => {
+    triggerCallbackRef.current = onTriggerChange;
+  }, [onTriggerChange]);
+
+  useEffect(() => {
+    snapshotCallbackRef.current = onPlayerSnapshot;
+  }, [onPlayerSnapshot]);
+
+  useEffect(() => {
+    userGestureCallbackRef.current = onUserGesture;
+  }, [onUserGesture]);
+
+  useEffect(() => {
     const element = gl.domElement;
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.code === "KeyE" && !event.repeat) {
-        handleAction("pickup");
+        actionCallbackRef.current("pickup");
       }
       if (event.code === "KeyG" && !event.repeat) {
-        handleAction("drop");
+        actionCallbackRef.current("drop");
       }
       if (event.code === "KeyR" && !event.repeat) {
-        handleAction("reset");
+        actionCallbackRef.current("reset");
       }
 
       keyStateRef.current[event.code] = true;
@@ -107,7 +111,7 @@ export function usePlayerController({
         return;
       }
 
-      handleUserGesture();
+      userGestureCallbackRef.current();
 
       if (!pointerLockedRef.current) {
         element.requestPointerLock();
@@ -116,7 +120,7 @@ export function usePlayerController({
 
       if (!triggerHeldRef.current) {
         triggerHeldRef.current = true;
-        handleTrigger(true);
+        triggerCallbackRef.current(true);
       }
     };
 
@@ -127,7 +131,7 @@ export function usePlayerController({
 
       if (triggerHeldRef.current) {
         triggerHeldRef.current = false;
-        handleTrigger(false);
+        triggerCallbackRef.current(false);
       }
     };
 
@@ -145,7 +149,7 @@ export function usePlayerController({
       pointerLockedRef.current = locked;
       if (!locked && triggerHeldRef.current) {
         triggerHeldRef.current = false;
-        handleTrigger(false);
+        triggerCallbackRef.current(false);
       }
     };
 
@@ -164,7 +168,7 @@ export function usePlayerController({
       window.removeEventListener("mousemove", onMouseMove);
       document.removeEventListener("pointerlockchange", onPointerLockChange);
     };
-  }, [gl.domElement, handleAction, handleTrigger, handleUserGesture]);
+  }, [gl.domElement]);
 
   useFrame((_, rawDelta) => {
     const delta = Math.min(rawDelta, 1 / 20);
@@ -251,7 +255,7 @@ export function usePlayerController({
     snapshotAccumulatorRef.current += delta;
     if (snapshotAccumulatorRef.current >= 0.05) {
       snapshotAccumulatorRef.current = 0;
-      emitSnapshot({
+      snapshotCallbackRef.current({
         x: positionRef.current.x,
         y: positionRef.current.y,
         z: positionRef.current.z,

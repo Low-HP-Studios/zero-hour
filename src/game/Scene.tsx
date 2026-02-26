@@ -9,7 +9,7 @@ import {
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Perf } from "r3f-perf";
 import * as THREE from "three";
-import { AudioManager } from "./Audio";
+import { AudioManager, type AudioVolumeSettings } from "./Audio";
 import { usePlayerController, type PlayerControllerApi } from "./PlayerController";
 import {
   Targets,
@@ -30,6 +30,7 @@ import type {
 
 type SceneProps = {
   settings: GameSettings;
+  audioVolumes: AudioVolumeSettings;
   stressCount: StressModeCount;
   onPlayerSnapshot: (snapshot: PlayerSnapshot) => void;
   onPerfMetrics: (metrics: PerfMetrics) => void;
@@ -100,6 +101,7 @@ const STATIC_COLLIDERS: CollisionRect[] = [
 
 export function Scene({
   settings,
+  audioVolumes,
   stressCount,
   onPlayerSnapshot,
   onPerfMetrics,
@@ -160,11 +162,12 @@ export function Scene({
   }, []);
 
   useEffect(() => {
+    const timeoutMap = resetTimeoutsRef.current;
     return () => {
-      for (const timeoutId of resetTimeoutsRef.current.values()) {
+      for (const timeoutId of timeoutMap.values()) {
         window.clearTimeout(timeoutId);
       }
-      resetTimeoutsRef.current.clear();
+      timeoutMap.clear();
     };
   }, []);
 
@@ -198,6 +201,7 @@ export function Scene({
       <GameplayRuntime
         collisionRects={STATIC_COLLIDERS}
         worldBounds={WORLD_BOUNDS}
+        audioVolumes={audioVolumes}
         targets={targets}
         onTargetHit={handleTargetHit}
         onResetTargets={handleResetTargets}
@@ -214,6 +218,7 @@ export function Scene({
 type GameplayRuntimeProps = {
   collisionRects: CollisionRect[];
   worldBounds: WorldBounds;
+  audioVolumes: AudioVolumeSettings;
   targets: TargetState[];
   onTargetHit: (targetId: string, nowMs: number) => void;
   onResetTargets: () => void;
@@ -226,6 +231,7 @@ type GameplayRuntimeProps = {
 function GameplayRuntime({
   collisionRects,
   worldBounds,
+  audioVolumes,
   targets,
   onTargetHit,
   onResetTargets,
@@ -294,10 +300,15 @@ function GameplayRuntime({
   }, [onWeaponEquippedChange]);
 
   useEffect(() => {
+    const audio = audioRef.current;
     return () => {
-      audioRef.current.dispose();
+      audio.dispose();
     };
   }, []);
+
+  useEffect(() => {
+    audioRef.current.setVolumes(audioVolumes);
+  }, [audioVolumes]);
 
   const controller = usePlayerController({
     collisionRects,
