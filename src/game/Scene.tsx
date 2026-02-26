@@ -1,9 +1,23 @@
-import { useEffect, useMemo, useRef } from "react";
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Perf } from "r3f-perf";
 import * as THREE from "three";
-import { usePlayerController } from "./PlayerController";
-import { Targets } from "./Targets";
+import { AudioManager } from "./Audio";
+import { usePlayerController, type PlayerControllerApi } from "./PlayerController";
+import {
+  Targets,
+  createDefaultTargets,
+  raycastTargets,
+  resetTargets,
+} from "./Targets";
+import { WeaponSystem } from "./Weapon";
 import type {
   CollisionRect,
   GameSettings,
@@ -19,6 +33,8 @@ type SceneProps = {
   stressCount: StressModeCount;
   onPlayerSnapshot: (snapshot: PlayerSnapshot) => void;
   onPerfMetrics: (metrics: PerfMetrics) => void;
+  onHitMarker: () => void;
+  onWeaponEquippedChange: (equipped: boolean) => void;
 };
 
 const WORLD_BOUNDS: WorldBounds = {
@@ -35,6 +51,9 @@ const BUILDING_HEIGHT = 3.2;
 const WALL_THICKNESS = 0.35;
 const DOOR_GAP_WIDTH = 2.2;
 const DOOR_HEIGHT = 2.2;
+const TRACER_DISTANCE = 70;
+const TARGET_FLASH_MS = 180;
+const TARGET_DISABLE_MS = 200;
 
 const STATIC_COLLIDERS: CollisionRect[] = [
   boxRect({ x: -6, z: -2 }, 2.4, 2.2),
@@ -42,13 +61,26 @@ const STATIC_COLLIDERS: CollisionRect[] = [
   boxRect({ x: 4, z: -11.5 }, 3.8, 2.2),
   boxRect({ x: 13, z: 5 }, 3, 2.2),
   // Building walls (door opening on the south wall)
-  boxRect({ x: BUILDING_CENTER.x - BUILDING_WIDTH / 2 + WALL_THICKNESS / 2, z: BUILDING_CENTER.z }, WALL_THICKNESS, BUILDING_DEPTH),
-  boxRect({ x: BUILDING_CENTER.x + BUILDING_WIDTH / 2 - WALL_THICKNESS / 2, z: BUILDING_CENTER.z }, WALL_THICKNESS, BUILDING_DEPTH),
-  boxRect({ x: BUILDING_CENTER.x, z: BUILDING_CENTER.z - BUILDING_DEPTH / 2 + WALL_THICKNESS / 2 }, BUILDING_WIDTH, WALL_THICKNESS),
+  boxRect(
+    { x: BUILDING_CENTER.x - BUILDING_WIDTH / 2 + WALL_THICKNESS / 2, z: BUILDING_CENTER.z },
+    WALL_THICKNESS,
+    BUILDING_DEPTH,
+  ),
+  boxRect(
+    { x: BUILDING_CENTER.x + BUILDING_WIDTH / 2 - WALL_THICKNESS / 2, z: BUILDING_CENTER.z },
+    WALL_THICKNESS,
+    BUILDING_DEPTH,
+  ),
+  boxRect(
+    { x: BUILDING_CENTER.x, z: BUILDING_CENTER.z - BUILDING_DEPTH / 2 + WALL_THICKNESS / 2 },
+    BUILDING_WIDTH,
+    WALL_THICKNESS,
+  ),
   boxRect(
     {
       x:
-        BUILDING_CENTER.x - (DOOR_GAP_WIDTH / 2 + (BUILDING_WIDTH - DOOR_GAP_WIDTH) / 4),
+        BUILDING_CENTER.x -
+        (DOOR_GAP_WIDTH / 2 + (BUILDING_WIDTH - DOOR_GAP_WIDTH) / 4),
       z: BUILDING_CENTER.z + BUILDING_DEPTH / 2 - WALL_THICKNESS / 2,
     },
     (BUILDING_WIDTH - DOOR_GAP_WIDTH) / 2,
@@ -57,7 +89,8 @@ const STATIC_COLLIDERS: CollisionRect[] = [
   boxRect(
     {
       x:
-        BUILDING_CENTER.x + (DOOR_GAP_WIDTH / 2 + (BUILDING_WIDTH - DOOR_GAP_WIDTH) / 4),
+        BUILDING_CENTER.x +
+        (DOOR_GAP_WIDTH / 2 + (BUILDING_WIDTH - DOOR_GAP_WIDTH) / 4),
       z: BUILDING_CENTER.z + BUILDING_DEPTH / 2 - WALL_THICKNESS / 2,
     },
     (BUILDING_WIDTH - DOOR_GAP_WIDTH) / 2,
@@ -65,17 +98,75 @@ const STATIC_COLLIDERS: CollisionRect[] = [
   ),
 ];
 
-const BASE_TARGETS: TargetState[] = [
-  { id: "t1", position: [-8, 1.5, -12], radius: 0.45, hitUntil: 0, disabled: false },
-  { id: "t2", position: [1, 1.5, -15], radius: 0.45, hitUntil: 0, disabled: false },
-  { id: "t3", position: [14, 1.5, -7], radius: 0.45, hitUntil: 0, disabled: false },
-];
+export function Scene({
+  settings,
+  stressCount,
+  onPlayerSnapshot,
+  onPerfMetrics,
+  onHitMarker,
+  onWeaponEquippedChange,
+}: SceneProps) {
+  const [targets, setTargets] = useState<TargetState[]>(() => createDefaultTargets());
+  const resetTimeoutsRef = useRef<Map<string, number>>(new Map());
 
-export function Scene({ settings, stressCount, onPlayerSnapshot, onPerfMetrics }: SceneProps) {
   const dpr = useMemo(() => {
-    const devicePixelRatio = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
+    const devicePixelRatio =
+      typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
     return Math.min(2, Math.max(0.5, devicePixelRatio * settings.pixelRatioScale));
   }, [settings.pixelRatioScale]);
+
+  const handleTargetHit = useCallback((targetId: string, nowMs: number) => {
+    startTransition(() => {
+      setTargets((previousTargets) =>
+        previousTargets.map((target) =>
+          target.id === targetId
+            ? {
+                ...target,
+                disabled: true,
+                hitUntil: nowMs + TARGET_FLASH_MS,
+              }
+            : target,
+        ),
+      );
+    });
+
+    const existing = resetTimeoutsRef.current.get(targetId);
+    if (existing !== undefined) {
+      window.clearTimeout(existing);
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      resetTimeoutsRef.current.delete(targetId);
+      startTransition(() => {
+        setTargets((previousTargets) =>
+          previousTargets.map((target) =>
+            target.id === targetId ? { ...target, disabled: false } : target,
+          ),
+        );
+      });
+    }, TARGET_DISABLE_MS);
+
+    resetTimeoutsRef.current.set(targetId, timeoutId);
+  }, []);
+
+  const handleResetTargets = useCallback(() => {
+    for (const timeoutId of resetTimeoutsRef.current.values()) {
+      window.clearTimeout(timeoutId);
+    }
+    resetTimeoutsRef.current.clear();
+    startTransition(() => {
+      setTargets((previousTargets) => resetTargets(previousTargets));
+    });
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      for (const timeoutId of resetTimeoutsRef.current.values()) {
+        window.clearTimeout(timeoutId);
+      }
+      resetTimeoutsRef.current.clear();
+    };
+  }, []);
 
   return (
     <Canvas
@@ -102,13 +193,18 @@ export function Scene({ settings, stressCount, onPlayerSnapshot, onPerfMetrics }
         shadow-camera-bottom={-24}
       />
       <MapEnvironment shadows={settings.shadows} />
-      <Targets targets={BASE_TARGETS} now={performance.now()} shadows={settings.shadows} />
+      <Targets targets={targets} shadows={settings.shadows} />
       <StressBoxes count={stressCount} shadows={settings.shadows} />
       <GameplayRuntime
         collisionRects={STATIC_COLLIDERS}
         worldBounds={WORLD_BOUNDS}
+        targets={targets}
+        onTargetHit={handleTargetHit}
+        onResetTargets={handleResetTargets}
         onPlayerSnapshot={onPlayerSnapshot}
         onPerfMetrics={onPerfMetrics}
+        onHitMarker={onHitMarker}
+        onWeaponEquippedChange={onWeaponEquippedChange}
       />
       {settings.showR3fPerf ? <Perf position="top-left" minimal /> : null}
     </Canvas>
@@ -118,69 +214,240 @@ export function Scene({ settings, stressCount, onPlayerSnapshot, onPerfMetrics }
 type GameplayRuntimeProps = {
   collisionRects: CollisionRect[];
   worldBounds: WorldBounds;
+  targets: TargetState[];
+  onTargetHit: (targetId: string, nowMs: number) => void;
+  onResetTargets: () => void;
   onPlayerSnapshot: (snapshot: PlayerSnapshot) => void;
   onPerfMetrics: (metrics: PerfMetrics) => void;
+  onHitMarker: () => void;
+  onWeaponEquippedChange: (equipped: boolean) => void;
 };
 
-function GameplayRuntime({ collisionRects, worldBounds, onPlayerSnapshot, onPerfMetrics }: GameplayRuntimeProps) {
+function GameplayRuntime({
+  collisionRects,
+  worldBounds,
+  targets,
+  onTargetHit,
+  onResetTargets,
+  onPlayerSnapshot,
+  onPerfMetrics,
+  onHitMarker,
+  onWeaponEquippedChange,
+}: GameplayRuntimeProps) {
+  const gl = useThree((state) => state.gl);
+  const camera = useThree((state) => state.camera);
+
+  const weaponRef = useRef<WeaponSystem>(new WeaponSystem());
+  const audioRef = useRef<AudioManager>(new AudioManager());
+  const controllerRef = useRef<PlayerControllerApi | null>(null);
+  const targetsRef = useRef(targets);
+
+  const playerSnapshotCallbackRef = useRef(onPlayerSnapshot);
   const perfCallbackRef = useRef(onPerfMetrics);
-  const playerCallbackRef = useRef(onPlayerSnapshot);
+  const targetHitCallbackRef = useRef(onTargetHit);
+  const resetTargetsCallbackRef = useRef(onResetTargets);
+  const hitMarkerCallbackRef = useRef(onHitMarker);
+  const weaponEquippedCallbackRef = useRef(onWeaponEquippedChange);
+
   const perfAccumulatorRef = useRef(0);
   const fpsFrameCountRef = useRef(0);
   const fpsTimeRef = useRef(0);
+  const lastWeaponEquippedRef = useRef<boolean | null>(null);
+
+  const worldGunRef = useRef<THREE.Group>(null);
+  const viewWeaponRef = useRef<THREE.Group>(null);
+  const muzzleFlashRef = useRef<THREE.Mesh>(null);
+  const tracerRef = useRef<THREE.Mesh>(null);
+
+  const tempEndRef = useRef(new THREE.Vector3());
+  const tempMidRef = useRef(new THREE.Vector3());
+  const tempTracerDirRef = useRef(new THREE.Vector3());
+  const tempOffsetRef = useRef(new THREE.Vector3());
+  const tempLookDirRef = useRef(new THREE.Vector3());
+
+  useEffect(() => {
+    targetsRef.current = targets;
+  }, [targets]);
+
+  useEffect(() => {
+    playerSnapshotCallbackRef.current = onPlayerSnapshot;
+  }, [onPlayerSnapshot]);
 
   useEffect(() => {
     perfCallbackRef.current = onPerfMetrics;
   }, [onPerfMetrics]);
 
   useEffect(() => {
-    playerCallbackRef.current = onPlayerSnapshot;
-  }, [onPlayerSnapshot]);
+    targetHitCallbackRef.current = onTargetHit;
+  }, [onTargetHit]);
 
-  usePlayerController({
+  useEffect(() => {
+    resetTargetsCallbackRef.current = onResetTargets;
+  }, [onResetTargets]);
+
+  useEffect(() => {
+    hitMarkerCallbackRef.current = onHitMarker;
+  }, [onHitMarker]);
+
+  useEffect(() => {
+    weaponEquippedCallbackRef.current = onWeaponEquippedChange;
+  }, [onWeaponEquippedChange]);
+
+  useEffect(() => {
+    return () => {
+      audioRef.current.dispose();
+    };
+  }, []);
+
+  const controller = usePlayerController({
     collisionRects,
     worldBounds,
-    onAction: () => {
-      // Step 4/5 wire this to weapon + target reset actions.
+    onAction: (action) => {
+      const weapon = weaponRef.current;
+      const playerPosition = controllerRef.current?.getPosition();
+      if (!playerPosition) {
+        return;
+      }
+
+      if (action === "pickup") {
+        if (weapon.tryPickup(playerPosition)) {
+          weaponEquippedCallbackRef.current(true);
+        }
+        return;
+      }
+
+      if (action === "drop") {
+        camera.getWorldDirection(tempLookDirRef.current);
+        if (weapon.drop(playerPosition, tempLookDirRef.current)) {
+          weaponEquippedCallbackRef.current(false);
+        }
+        return;
+      }
+
+      if (action === "reset") {
+        resetTargetsCallbackRef.current();
+      }
     },
     onPlayerSnapshot: (snapshot) => {
-      playerCallbackRef.current(snapshot);
+      const playerPosition = controllerRef.current?.getPosition();
+      const canInteract = playerPosition
+        ? weaponRef.current.canPickup(playerPosition)
+        : false;
+      playerSnapshotCallbackRef.current({
+        ...snapshot,
+        canInteract,
+      });
     },
-    onTriggerChange: () => {
-      // Step 4 wire this to automatic fire.
+    onTriggerChange: (firing) => {
+      weaponRef.current.setTriggerHeld(firing);
     },
     onUserGesture: () => {
-      // Step 6 initializes audio here.
+      audioRef.current.ensureStarted();
     },
   });
 
-  const gl = useThree((state) => state.gl);
+  controllerRef.current = controller;
 
   useFrame((_, delta) => {
-    perfAccumulatorRef.current += delta;
-    fpsTimeRef.current += delta;
-    fpsFrameCountRef.current += 1;
+    const clampedDelta = Math.min(delta, 1 / 20);
+    const nowMs = performance.now();
+    const weapon = weaponRef.current;
+    const audio = audioRef.current;
 
-    if (perfAccumulatorRef.current < 0.2) {
-      return;
+    audio.update(nowMs / 1000, controller.isMoving(), controller.isSprinting());
+
+    const shots = weapon.update(clampedDelta, nowMs, camera);
+    for (const shot of shots) {
+      audio.playGunshot();
+      controller.addRecoil(shot.recoilPitchRadians, shot.recoilYawRadians);
+
+      const hit = raycastTargets(shot.origin, shot.direction, targetsRef.current);
+      if (hit) {
+        tempEndRef.current.copy(hit.point);
+        targetHitCallbackRef.current(hit.id, nowMs);
+        hitMarkerCallbackRef.current();
+        audio.playHit();
+      } else {
+        tempEndRef.current
+          .copy(shot.origin)
+          .addScaledVector(shot.direction, TRACER_DISTANCE);
+      }
+
+      weapon.setTracer(shot.origin, tempEndRef.current, nowMs);
     }
 
-    const fps = fpsTimeRef.current > 0 ? fpsFrameCountRef.current / fpsTimeRef.current : 0;
-    fpsTimeRef.current = 0;
-    fpsFrameCountRef.current = 0;
-    perfAccumulatorRef.current = 0;
+    updateWorldGunMesh(worldGunRef.current, weapon, nowMs);
+    updateViewWeaponMesh(viewWeaponRef.current, muzzleFlashRef.current, weapon, camera, controller, nowMs, tempOffsetRef.current);
+    updateTracerMesh(tracerRef.current, weapon, nowMs, tempMidRef.current, tempTracerDirRef.current);
 
-    perfCallbackRef.current({
-      fps,
-      frameMs: delta * 1000,
-      drawCalls: gl.info.render.calls,
-      triangles: gl.info.render.triangles,
-      geometries: gl.info.memory.geometries,
-      textures: gl.info.memory.textures,
-    });
+    const equipped = weapon.isEquipped();
+    if (lastWeaponEquippedRef.current !== equipped) {
+      lastWeaponEquippedRef.current = equipped;
+      weaponEquippedCallbackRef.current(equipped);
+    }
+
+    perfAccumulatorRef.current += clampedDelta;
+    fpsTimeRef.current += clampedDelta;
+    fpsFrameCountRef.current += 1;
+
+    if (perfAccumulatorRef.current >= 0.2) {
+      const fps = fpsTimeRef.current > 0 ? fpsFrameCountRef.current / fpsTimeRef.current : 0;
+      perfCallbackRef.current({
+        fps,
+        frameMs: clampedDelta * 1000,
+        drawCalls: gl.info.render.calls,
+        triangles: gl.info.render.triangles,
+        geometries: gl.info.memory.geometries,
+        textures: gl.info.memory.textures,
+      });
+      perfAccumulatorRef.current = 0;
+      fpsTimeRef.current = 0;
+      fpsFrameCountRef.current = 0;
+    }
   });
 
-  return null;
+  return (
+    <>
+      <group ref={worldGunRef} visible>
+        <mesh castShadow receiveShadow>
+          <boxGeometry args={[0.7, 0.12, 0.18]} />
+          <meshStandardMaterial color="#30363c" roughness={0.6} metalness={0.35} />
+        </mesh>
+        <mesh position={[0.22, -0.08, 0]} castShadow receiveShadow>
+          <boxGeometry args={[0.22, 0.18, 0.06]} />
+          <meshStandardMaterial color="#514942" roughness={0.85} metalness={0.1} />
+        </mesh>
+        <mesh position={[-0.22, 0, 0]} rotation={[0, 0, Math.PI / 2]} castShadow receiveShadow>
+          <cylinderGeometry args={[0.02, 0.02, 0.55, 10]} />
+          <meshStandardMaterial color="#1e2328" roughness={0.5} metalness={0.55} />
+        </mesh>
+      </group>
+
+      <group ref={viewWeaponRef} visible={false}>
+        <mesh>
+          <boxGeometry args={[0.55, 0.09, 0.13]} />
+          <meshStandardMaterial color="#30363c" roughness={0.55} metalness={0.4} />
+        </mesh>
+        <mesh position={[0.16, -0.08, 0.01]} rotation={[0.15, 0, -0.2]}>
+          <boxGeometry args={[0.18, 0.17, 0.05]} />
+          <meshStandardMaterial color="#4d463f" roughness={0.85} metalness={0.1} />
+        </mesh>
+        <mesh position={[-0.24, 0.015, 0]} rotation={[0, 0, Math.PI / 2]}>
+          <cylinderGeometry args={[0.015, 0.015, 0.42, 8]} />
+          <meshStandardMaterial color="#20262b" roughness={0.4} metalness={0.6} />
+        </mesh>
+        <mesh ref={muzzleFlashRef} position={[-0.44, 0.02, 0]} visible={false}>
+          <sphereGeometry args={[0.05, 8, 8]} />
+          <meshBasicMaterial color="#ffd085" transparent opacity={0.9} />
+        </mesh>
+      </group>
+
+      <mesh ref={tracerRef} visible={false}>
+        <boxGeometry args={[0.02, 0.02, 1]} />
+        <meshBasicMaterial color="#ffe3a6" transparent opacity={0.75} />
+      </mesh>
+    </>
+  );
 }
 
 type MapEnvironmentProps = {
@@ -229,9 +496,6 @@ function CoverBlock({ position, size, shadows, color }: CoverBlockProps) {
 }
 
 function BuildingShell({ shadows }: { shadows: boolean }) {
-  const wallMaterial = <meshStandardMaterial color="#7f7462" roughness={0.85} metalness={0.05} />;
-  const roofMaterial = <meshStandardMaterial color="#5f5549" roughness={0.9} metalness={0.05} />;
-
   const leftSouthWidth = (BUILDING_WIDTH - DOOR_GAP_WIDTH) / 2;
   const rightSouthWidth = leftSouthWidth;
 
@@ -242,43 +506,69 @@ function BuildingShell({ shadows }: { shadows: boolean }) {
         <meshStandardMaterial color="#31302b" roughness={0.98} metalness={0} />
       </mesh>
 
-      <mesh position={[-BUILDING_WIDTH / 2 + WALL_THICKNESS / 2, BUILDING_HEIGHT / 2, 0]} castShadow={shadows} receiveShadow={shadows}>
+      <mesh
+        position={[-BUILDING_WIDTH / 2 + WALL_THICKNESS / 2, BUILDING_HEIGHT / 2, 0]}
+        castShadow={shadows}
+        receiveShadow={shadows}
+      >
         <boxGeometry args={[WALL_THICKNESS, BUILDING_HEIGHT, BUILDING_DEPTH]} />
-        {wallMaterial}
-      </mesh>
-      <mesh position={[BUILDING_WIDTH / 2 - WALL_THICKNESS / 2, BUILDING_HEIGHT / 2, 0]} castShadow={shadows} receiveShadow={shadows}>
-        <boxGeometry args={[WALL_THICKNESS, BUILDING_HEIGHT, BUILDING_DEPTH]} />
-        {wallMaterial}
-      </mesh>
-      <mesh position={[0, BUILDING_HEIGHT / 2, -BUILDING_DEPTH / 2 + WALL_THICKNESS / 2]} castShadow={shadows} receiveShadow={shadows}>
-        <boxGeometry args={[BUILDING_WIDTH, BUILDING_HEIGHT, WALL_THICKNESS]} />
-        {wallMaterial}
+        <meshStandardMaterial color="#7f7462" roughness={0.85} metalness={0.05} />
       </mesh>
       <mesh
-        position={[-DOOR_GAP_WIDTH / 2 - leftSouthWidth / 2, BUILDING_HEIGHT / 2, BUILDING_DEPTH / 2 - WALL_THICKNESS / 2]}
+        position={[BUILDING_WIDTH / 2 - WALL_THICKNESS / 2, BUILDING_HEIGHT / 2, 0]}
+        castShadow={shadows}
+        receiveShadow={shadows}
+      >
+        <boxGeometry args={[WALL_THICKNESS, BUILDING_HEIGHT, BUILDING_DEPTH]} />
+        <meshStandardMaterial color="#7f7462" roughness={0.85} metalness={0.05} />
+      </mesh>
+      <mesh
+        position={[0, BUILDING_HEIGHT / 2, -BUILDING_DEPTH / 2 + WALL_THICKNESS / 2]}
+        castShadow={shadows}
+        receiveShadow={shadows}
+      >
+        <boxGeometry args={[BUILDING_WIDTH, BUILDING_HEIGHT, WALL_THICKNESS]} />
+        <meshStandardMaterial color="#7f7462" roughness={0.85} metalness={0.05} />
+      </mesh>
+      <mesh
+        position={[
+          -DOOR_GAP_WIDTH / 2 - leftSouthWidth / 2,
+          BUILDING_HEIGHT / 2,
+          BUILDING_DEPTH / 2 - WALL_THICKNESS / 2,
+        ]}
         castShadow={shadows}
         receiveShadow={shadows}
       >
         <boxGeometry args={[leftSouthWidth, BUILDING_HEIGHT, WALL_THICKNESS]} />
-        {wallMaterial}
+        <meshStandardMaterial color="#7f7462" roughness={0.85} metalness={0.05} />
       </mesh>
       <mesh
-        position={[DOOR_GAP_WIDTH / 2 + rightSouthWidth / 2, BUILDING_HEIGHT / 2, BUILDING_DEPTH / 2 - WALL_THICKNESS / 2]}
+        position={[
+          DOOR_GAP_WIDTH / 2 + rightSouthWidth / 2,
+          BUILDING_HEIGHT / 2,
+          BUILDING_DEPTH / 2 - WALL_THICKNESS / 2,
+        ]}
         castShadow={shadows}
         receiveShadow={shadows}
       >
         <boxGeometry args={[rightSouthWidth, BUILDING_HEIGHT, WALL_THICKNESS]} />
-        {wallMaterial}
+        <meshStandardMaterial color="#7f7462" roughness={0.85} metalness={0.05} />
       </mesh>
 
       <mesh position={[0, BUILDING_HEIGHT + 0.1, 0]} castShadow={shadows} receiveShadow={shadows}>
         <boxGeometry args={[BUILDING_WIDTH + 0.5, 0.2, BUILDING_DEPTH + 0.5]} />
-        {roofMaterial}
+        <meshStandardMaterial color="#5f5549" roughness={0.9} metalness={0.05} />
       </mesh>
 
       <mesh position={[0, DOOR_HEIGHT / 2, BUILDING_DEPTH / 2 - 0.03]} castShadow={shadows} receiveShadow={shadows}>
         <boxGeometry args={[DOOR_GAP_WIDTH - 0.15, DOOR_HEIGHT, 0.05]} />
-        <meshStandardMaterial color="#39342e" roughness={0.7} metalness={0.12} transparent opacity={0.45} />
+        <meshStandardMaterial
+          color="#39342e"
+          roughness={0.7}
+          metalness={0.12}
+          transparent
+          opacity={0.45}
+        />
       </mesh>
     </group>
   );
@@ -287,10 +577,18 @@ function BuildingShell({ shadows }: { shadows: boolean }) {
 function StressBoxes({ count, shadows }: { count: StressModeCount; shadows: boolean }) {
   const instances = useMemo(() => {
     if (count === 0) {
-      return [] as Array<{ position: [number, number, number]; scale: [number, number, number]; color: string }>;
+      return [] as Array<{
+        position: [number, number, number];
+        scale: [number, number, number];
+        color: string;
+      }>;
     }
 
-    const next: Array<{ position: [number, number, number]; scale: [number, number, number]; color: string }> = [];
+    const next: Array<{
+      position: [number, number, number];
+      scale: [number, number, number];
+      color: string;
+    }> = [];
     const side = Math.ceil(Math.sqrt(count));
     for (let i = 0; i < count; i += 1) {
       const row = Math.floor(i / side);
@@ -314,13 +612,108 @@ function StressBoxes({ count, shadows }: { count: StressModeCount; shadows: bool
   return (
     <group>
       {instances.map((instance, index) => (
-        <mesh key={`${index}-${instance.position[0]}-${instance.position[2]}`} position={instance.position} castShadow={shadows} receiveShadow={shadows}>
+        <mesh
+          key={`${index}-${instance.position[0]}-${instance.position[2]}`}
+          position={instance.position}
+          castShadow={shadows}
+          receiveShadow={shadows}
+        >
           <boxGeometry args={instance.scale} />
           <meshStandardMaterial color={instance.color} roughness={0.8} metalness={0.08} />
         </mesh>
       ))}
     </group>
   );
+}
+
+function updateWorldGunMesh(
+  mesh: THREE.Group | null,
+  weapon: WeaponSystem,
+  nowMs: number,
+) {
+  if (!mesh) {
+    return;
+  }
+
+  const visible = !weapon.isEquipped();
+  mesh.visible = visible;
+  if (!visible) {
+    return;
+  }
+
+  const droppedPosition = weapon.getDroppedPosition();
+  mesh.position.set(
+    droppedPosition.x,
+    droppedPosition.y + Math.sin(nowMs * 0.006) * 0.04,
+    droppedPosition.z,
+  );
+  mesh.rotation.set(0.2, nowMs * 0.0016, 0);
+}
+
+function updateViewWeaponMesh(
+  viewMesh: THREE.Group | null,
+  muzzleFlashMesh: THREE.Mesh | null,
+  weapon: WeaponSystem,
+  camera: THREE.Camera,
+  controller: PlayerControllerApi,
+  nowMs: number,
+  tempOffset: THREE.Vector3,
+) {
+  if (!viewMesh) {
+    return;
+  }
+
+  const visible = weapon.isEquipped();
+  viewMesh.visible = visible;
+  if (!visible) {
+    if (muzzleFlashMesh) {
+      muzzleFlashMesh.visible = false;
+    }
+    return;
+  }
+
+  const swayX = controller.isMoving() ? Math.sin(nowMs * 0.01) * 0.015 : 0;
+  const swayY = controller.isMoving() ? Math.cos(nowMs * 0.016) * 0.008 : 0;
+  tempOffset.set(0.24 + swayX, -0.19 + swayY, -0.45);
+  tempOffset.applyQuaternion(camera.quaternion);
+
+  viewMesh.position.copy(camera.position).add(tempOffset);
+  viewMesh.quaternion.copy(camera.quaternion);
+
+  if (muzzleFlashMesh) {
+    muzzleFlashMesh.visible = weapon.hasMuzzleFlash(nowMs);
+  }
+}
+
+function updateTracerMesh(
+  tracerMesh: THREE.Mesh | null,
+  weapon: WeaponSystem,
+  nowMs: number,
+  tempMid: THREE.Vector3,
+  tempDir: THREE.Vector3,
+) {
+  if (!tracerMesh) {
+    return;
+  }
+
+  const tracer = weapon.getActiveTracer(nowMs);
+  if (!tracer) {
+    tracerMesh.visible = false;
+    return;
+  }
+
+  tempDir.copy(tracer.to).sub(tracer.from);
+  const length = tempDir.length();
+  if (length <= 0.0001) {
+    tracerMesh.visible = false;
+    return;
+  }
+
+  tracerMesh.visible = true;
+  tempMid.copy(tracer.from).lerp(tracer.to, 0.5);
+  tracerMesh.position.copy(tempMid);
+  tracerMesh.scale.set(1, 1, length);
+  tracerMesh.quaternion.setFromUnitVectors(Z_AXIS, tempDir.normalize());
 }
 
 function boxRect(center: { x: number; z: number }, width: number, depth: number): CollisionRect {
@@ -333,3 +726,5 @@ function boxRect(center: { x: number; z: number }, width: number, depth: number)
     maxZ: center.z + halfD,
   };
 }
+
+const Z_AXIS = new THREE.Vector3(0, 0, 1);

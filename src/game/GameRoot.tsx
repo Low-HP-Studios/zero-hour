@@ -24,7 +24,8 @@ export function GameRoot() {
   const [stressCount, setStressCount] = useState<StressModeCount>(0);
   const [perfMetrics, setPerfMetrics] = useState<PerfMetrics>(DEFAULT_PERF_METRICS);
   const [player, setPlayer] = useState<PlayerSnapshot>(DEFAULT_PLAYER_SNAPSHOT);
-  const hitMarkerUntil = 0;
+  const [weaponEquipped, setWeaponEquipped] = useState(false);
+  const [hitMarkerUntil, setHitMarkerUntil] = useState(0);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -59,6 +60,8 @@ export function GameRoot() {
         stressCount={stressCount}
         onPerfMetrics={setPerfMetrics}
         onPlayerSnapshot={setPlayer}
+        onHitMarker={() => setHitMarkerUntil(performance.now() + 90)}
+        onWeaponEquippedChange={setWeaponEquipped}
       />
 
       <div className="ui-overlay" aria-hidden>
@@ -81,7 +84,9 @@ export function GameRoot() {
             <dt>Move</dt>
             <dd>{player.moving ? (player.sprinting ? "Sprint" : "Walk") : "Idle"}</dd>
             <dt>Interact</dt>
-            <dd>{player.canInteract ? "Ready" : "-"}</dd>
+            <dd>{player.canInteract ? "Pickup (E)" : "-"}</dd>
+            <dt>Weapon</dt>
+            <dd>{weaponEquipped ? "Rifle equipped" : "On ground"}</dd>
           </dl>
         </div>
 
@@ -104,19 +109,19 @@ export function GameRoot() {
               <code>Mouse</code> look (after click / pointer lock)
             </li>
             <li>
-              <code>Left Click</code> fire (Step 4)
+              <code>Left Click</code> fire (hold)
             </li>
             <li>
               <code>Shift</code> sprint
             </li>
             <li>
-              <code>E</code> pickup (Step 4)
+              <code>E</code> pickup gun
             </li>
             <li>
-              <code>G</code> drop (Step 4)
+              <code>G</code> drop gun
             </li>
             <li>
-              <code>R</code> reset targets (Step 5)
+              <code>R</code> reset targets
             </li>
             <li>
               <code>Esc</code> unlock pointer
@@ -196,7 +201,7 @@ export function GameRoot() {
             </div>
           </div>
           <p className="muted" style={{ marginTop: 8 }}>
-            Current stress boxes are render-only. Physics load arrives later because suffering should be incremental.
+            Stress mode is mostly draw-call pain right now. Adding full physics later is how you end up benchmarking regret instead of gameplay.
           </p>
         </div>
       </div>
