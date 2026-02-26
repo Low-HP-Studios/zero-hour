@@ -1,5 +1,5 @@
 :root {
-  color-scheme: dark;
+  color-scheme: light;
   font-family: ui-sans-serif, system-ui, sans-serif;
 }
 
@@ -14,11 +14,11 @@ body,
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: #070a0d;
+  background: #e7f5ff;
 }
 
 body {
-  color: #e8f2f7;
+  color: #142230;
 }
 
 .app-shell {
@@ -26,9 +26,17 @@ body {
   width: 100%;
   height: 100%;
   background:
-    radial-gradient(circle at 15% 10%, rgba(64, 123, 158, 0.2), transparent 45%),
-    radial-gradient(circle at 85% 20%, rgba(160, 118, 65, 0.18), transparent 50%),
-    #070a0d;
+    radial-gradient(circle at 14% 12%, rgba(255, 229, 141, 0.65), transparent 34%),
+    radial-gradient(circle at 78% 10%, rgba(255, 205, 108, 0.38), transparent 44%),
+    linear-gradient(180deg, #dff2ff 0%, #f2fbff 42%, #f9f6eb 100%);
+}
+
+.app-shell.playing {
+  cursor: none;
+}
+
+.app-shell.paused {
+  cursor: auto;
 }
 
 .game-canvas {
@@ -49,13 +57,13 @@ body {
 
 .panel {
   pointer-events: auto;
-  border: 1px solid rgba(230, 244, 255, 0.12);
-  background: rgba(9, 14, 20, 0.82);
+  border: 1px solid rgba(84, 129, 160, 0.22);
+  background: rgba(249, 253, 255, 0.84);
   backdrop-filter: blur(10px);
   border-radius: 10px;
   padding: 10px 12px;
   max-width: 360px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 14px 30px rgba(66, 100, 128, 0.14);
 }
 
 .panel h1,
@@ -69,7 +77,7 @@ body {
   font-size: 14px;
   text-transform: uppercase;
   letter-spacing: 0.14em;
-  color: #c5d4dd;
+  color: #456275;
 }
 
 .panel p,
@@ -79,11 +87,11 @@ body {
 .panel select {
   font-size: 12px;
   line-height: 1.35;
-  color: #e8f2f7;
+  color: #142230;
 }
 
 .panel .muted {
-  color: #95a6b2;
+  color: #5d7281;
 }
 
 .stat-grid {
@@ -94,7 +102,7 @@ body {
 }
 
 .stat-grid dt {
-  color: #90a0aa;
+  color: #5b7382;
 }
 
 .stat-grid dd {
@@ -123,9 +131,9 @@ body {
 
 .btn {
   pointer-events: auto;
-  border: 1px solid rgba(232, 242, 247, 0.16);
-  background: rgba(22, 30, 37, 0.95);
-  color: #e8f2f7;
+  border: 1px solid rgba(84, 129, 160, 0.24);
+  background: rgba(255, 255, 255, 0.95);
+  color: #173043;
   border-radius: 8px;
   padding: 6px 9px;
   cursor: pointer;
@@ -133,7 +141,7 @@ body {
 }
 
 .btn:hover {
-  background: rgba(37, 50, 60, 0.96);
+  background: rgba(237, 247, 252, 0.98);
 }
 
 .btn:disabled {
@@ -142,8 +150,8 @@ body {
 }
 
 .btn.active {
-  border-color: rgba(104, 188, 255, 0.4);
-  background: rgba(23, 58, 82, 0.9);
+  border-color: rgba(61, 140, 197, 0.45);
+  background: rgba(221, 243, 255, 0.96);
 }
 
 .control-list {
@@ -154,7 +162,7 @@ body {
 }
 
 .control-list code {
-  color: #b9e3ff;
+  color: #17649b;
 }
 
 .corner-top-left {
@@ -201,8 +209,8 @@ body {
 .crosshair::after {
   content: "";
   position: absolute;
-  background: rgba(233, 245, 251, 0.92);
-  box-shadow: 0 0 8px rgba(179, 231, 255, 0.4);
+  background: rgba(17, 34, 46, 0.9);
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.7);
 }
 
 .crosshair::before {
@@ -226,19 +234,19 @@ body {
   border-radius: 999px;
   padding: 4px 8px;
   margin-top: 8px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.52);
+  border: 1px solid rgba(108, 147, 174, 0.16);
 }
 
 .status-dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #dd9f4c;
+  background: #e7a34c;
 }
 
 .status-dot.locked {
-  background: #68d485;
+  background: #5cbd74;
 }
 
 .hit-marker {
@@ -262,9 +270,24 @@ body {
   position: absolute;
   inset: 0;
   background:
-    linear-gradient(45deg, transparent 47%, #ffffff 47%, #ffffff 53%, transparent 53%),
-    linear-gradient(-45deg, transparent 47%, #ffffff 47%, #ffffff 53%, transparent 53%);
-  filter: drop-shadow(0 0 4px rgba(255, 255, 255, 0.25));
+    linear-gradient(45deg, transparent 47%, #0f202c 47%, #0f202c 53%, transparent 53%),
+    linear-gradient(-45deg, transparent 47%, #0f202c 47%, #0f202c 53%, transparent 53%);
+  filter: drop-shadow(0 0 4px rgba(255, 255, 255, 0.55));
+}
+
+.pause-menu {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  min-width: min(420px, calc(100vw - 24px));
+  max-width: min(460px, calc(100vw - 24px));
+  text-align: left;
+  background: rgba(255, 253, 246, 0.92);
+  border-color: rgba(225, 176, 70, 0.28);
+  box-shadow:
+    0 20px 60px rgba(63, 93, 118, 0.2),
+    0 0 0 1px rgba(255, 255, 255, 0.4) inset;
 }
 
 @media (max-width: 900px) {

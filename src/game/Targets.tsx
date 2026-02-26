@@ -1,3 +1,5 @@
+import { useRef } from "react";
+import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import type { TargetState } from "./types";
 
@@ -12,11 +14,16 @@ export type TargetRaycastHit = {
   distance: number;
 };
 
+const DAMAGE_PER_SHOT = 25;
+const RESPAWN_DELAY_MS = 2000;
+
 export function createDefaultTargets(): TargetState[] {
   return [
-    { id: "t1", position: [-8, 1.5, -12], radius: 0.45, hitUntil: 0, disabled: false },
-    { id: "t2", position: [1, 1.5, -15], radius: 0.45, hitUntil: 0, disabled: false },
-    { id: "t3", position: [14, 1.5, -7], radius: 0.45, hitUntil: 0, disabled: false },
+    { id: "t1", position: [-8, 0, -12], radius: 0.6, hitUntil: 0, disabled: false, hp: 100, maxHp: 100 },
+    { id: "t2", position: [1, 0, -15], radius: 0.6, hitUntil: 0, disabled: false, hp: 100, maxHp: 100 },
+    { id: "t3", position: [14, 0, -7], radius: 0.6, hitUntil: 0, disabled: false, hp: 100, maxHp: 100 },
+    { id: "t4", position: [-4, 0, -5], radius: 0.6, hitUntil: 0, disabled: false, hp: 100, maxHp: 100 },
+    { id: "t5", position: [6, 0, -18], radius: 0.6, hitUntil: 0, disabled: false, hp: 100, maxHp: 100 },
   ];
 }
 
@@ -25,8 +32,11 @@ export function resetTargets(targets: TargetState[]): TargetState[] {
     ...target,
     hitUntil: 0,
     disabled: false,
+    hp: target.maxHp,
   }));
 }
+
+export { DAMAGE_PER_SHOT, RESPAWN_DELAY_MS };
 
 export function raycastTargets(
   origin: THREE.Vector3,
@@ -40,10 +50,13 @@ export function raycastTargets(
       continue;
     }
 
-    const center = target.position;
-    const ox = origin.x - center[0];
-    const oy = origin.y - center[1];
-    const oz = origin.z - center[2];
+    const cx = target.position[0];
+    const cy = target.position[1] + 1.0;
+    const cz = target.position[2];
+
+    const ox = origin.x - cx;
+    const oy = origin.y - cy;
+    const oz = origin.z - cz;
 
     const b = ox * direction.x + oy * direction.y + oz * direction.z;
     const c = ox * ox + oy * oy + oz * oz - target.radius * target.radius;
@@ -78,33 +91,87 @@ export function raycastTargets(
   return closestHit;
 }
 
-export function Targets({ targets, shadows }: TargetsProps) {
-  const now = performance.now();
+function HPBar({ hp, maxHp }: { hp: number; maxHp: number }) {
+  const camera = useThree((state) => state.camera);
+  const groupRef = useRef<THREE.Group>(null);
+
+  useFrame(() => {
+    if (groupRef.current) {
+      groupRef.current.quaternion.copy(camera.quaternion);
+    }
+  });
+
+  const ratio = Math.max(0, hp / maxHp);
+  const barWidth = 1.0;
+  const barHeight = 0.12;
+  const fillWidth = barWidth * ratio;
+  const fillColor = ratio > 0.5 ? "#4ade80" : ratio > 0.25 ? "#facc15" : "#ef4444";
 
   return (
-    <group>
-      {targets.map((target) => {
-        const [x, y, z] = target.position;
-        const isHit = target.hitUntil > now;
-        const plateColor = target.disabled ? "#4a5158" : isHit ? "#ff7070" : "#d4dee7";
+    <group ref={groupRef} position={[0, 2.4, 0]}>
+      <mesh position={[0, 0, -0.005]}>
+        <planeGeometry args={[barWidth + 0.06, barHeight + 0.06]} />
+        <meshBasicMaterial color="#000000" opacity={0.6} transparent />
+      </mesh>
+      <mesh position={[0, 0, -0.003]}>
+        <planeGeometry args={[barWidth, barHeight]} />
+        <meshBasicMaterial color="#1a1a1a" />
+      </mesh>
+      {fillWidth > 0.001 ? (
+        <mesh position={[(fillWidth - barWidth) / 2, 0, 0]}>
+          <planeGeometry args={[fillWidth, barHeight]} />
+          <meshBasicMaterial color={fillColor} />
+        </mesh>
+      ) : null}
+    </group>
+  );
+}
 
-        return (
-          <group key={target.id} position={[x, y, z]}>
-            <mesh position={[0, -0.7, 0]} castShadow={shadows} receiveShadow={shadows}>
-              <cylinderGeometry args={[0.05, 0.05, 1.4, 8]} />
-              <meshStandardMaterial color="#6a747d" metalness={0.2} roughness={0.7} />
-            </mesh>
-            <mesh rotation={[0, 0, 0]} castShadow={shadows} receiveShadow={shadows}>
-              <cylinderGeometry args={[0.45, 0.45, 0.08, 24]} />
-              <meshStandardMaterial color={plateColor} metalness={0.15} roughness={0.5} />
-            </mesh>
-            <mesh position={[0, 0, -0.02]}>
-              <ringGeometry args={[0.15, 0.2, 24]} />
-              <meshBasicMaterial color="#23313b" side={THREE.DoubleSide} />
-            </mesh>
-          </group>
-        );
-      })}
+function TargetDummy({ target, shadows }: { target: TargetState; shadows: boolean }) {
+  const [x, baseY, z] = target.position;
+  const now = performance.now();
+  const isHit = target.hitUntil > now;
+
+  if (target.disabled) {
+    return null;
+  }
+
+  const bodyColor = isHit ? "#ff5555" : "#e8d5b7";
+  const shirtColor = isHit ? "#cc3333" : "#4a6fa5";
+  const pantsColor = isHit ? "#aa2222" : "#2d3a4a";
+
+  return (
+    <group position={[x, baseY, z]}>
+      <mesh position={[0, 1.6, 0]} castShadow={shadows} receiveShadow={shadows}>
+        <sphereGeometry args={[0.22, 12, 12]} />
+        <meshStandardMaterial color={bodyColor} />
+      </mesh>
+
+      <mesh position={[0, 1.05, 0]} castShadow={shadows} receiveShadow={shadows}>
+        <boxGeometry args={[0.5, 0.7, 0.3]} />
+        <meshStandardMaterial color={shirtColor} />
+      </mesh>
+
+      <mesh position={[-0.2, 0.35, 0]} castShadow={shadows} receiveShadow={shadows}>
+        <boxGeometry args={[0.16, 0.7, 0.16]} />
+        <meshStandardMaterial color={pantsColor} />
+      </mesh>
+      <mesh position={[0.2, 0.35, 0]} castShadow={shadows} receiveShadow={shadows}>
+        <boxGeometry args={[0.16, 0.7, 0.16]} />
+        <meshStandardMaterial color={pantsColor} />
+      </mesh>
+
+      <HPBar hp={target.hp} maxHp={target.maxHp} />
+    </group>
+  );
+}
+
+export function Targets({ targets, shadows }: TargetsProps) {
+  return (
+    <group>
+      {targets.map((target) => (
+        <TargetDummy key={target.id} target={target} shadows={shadows} />
+      ))}
     </group>
   );
 }

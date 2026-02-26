@@ -12,9 +12,10 @@
   "app": {
     "windows": [
       {
-        "title": "tauri-app",
-        "width": 800,
-        "height": 600
+        "title": "Practice TPS Prototype",
+        "width": 1600,
+        "height": 900,
+        "fullscreen": true
       }
     ],
     "security": {

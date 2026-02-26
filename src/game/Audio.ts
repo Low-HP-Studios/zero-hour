@@ -125,7 +125,9 @@ export class AudioManager {
       return;
     }
 
-    // Fallback synth shot: short oscillator pop + filtered noise burst.
+    voice.gain.setValueAtTime(1, now);
+    voice.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
+
     const osc = this.context.createOscillator();
     const oscGain = this.context.createGain();
     osc.type = "sawtooth";

@@ -28,10 +28,12 @@ export function GameRoot() {
   const [player, setPlayer] = useState<PlayerSnapshot>(DEFAULT_PLAYER_SNAPSHOT);
   const [weaponEquipped, setWeaponEquipped] = useState(false);
   const [hitMarkerUntil, setHitMarkerUntil] = useState(0);
+  const [showOverlay, setShowOverlay] = useState(true);
+  const isPaused = !player.pointerLocked;
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.code !== "KeyF" || event.repeat) {
+      if (event.code !== "KeyP" || event.repeat) {
         return;
       }
 
@@ -44,7 +46,7 @@ export function GameRoot() {
 
   const hitMarkerVisible = hitMarkerUntil > performance.now();
   const stressLabel = stressCount === 0 ? "Off" : `${stressCount} boxes`;
-  const lockLabel = player.pointerLocked ? "Pointer locked" : "Pointer unlocked";
+  const lockLabel = player.pointerLocked ? "Live look mode" : "Paused / cursor shown";
 
   const playerSummary = useMemo(() => {
     return {
@@ -56,7 +58,7 @@ export function GameRoot() {
   }, [player.speed, player.x, player.y, player.z]);
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${isPaused ? "paused" : "playing"}`}>
       <Scene
         settings={settings}
         audioVolumes={audioVolumes}
@@ -67,75 +69,113 @@ export function GameRoot() {
         onWeaponEquippedChange={setWeaponEquipped}
       />
 
-      <div className="ui-overlay" aria-hidden>
-        <div className="corner-top-left panel">
-          <h1>Practice FPS Prototype</h1>
-          <p className="muted" style={{ marginTop: 4 }}>
-            Web/Tauri performance sandbox. Minimal on purpose. Future legacy guaranteed.
-          </p>
-          <div className="status-pill">
-            <span className={`status-dot ${player.pointerLocked ? "locked" : ""}`} />
-            <span>{lockLabel}</span>
+      <div className="ui-overlay">
+        {showOverlay ? (
+          <div className="corner-top-left panel">
+            <h1>Practice TPS Prototype</h1>
+            <p className="muted" style={{ marginTop: 4 }}>
+              Web/Tauri performance sandbox. Minimal on purpose. Future legacy guaranteed.
+            </p>
+            <div className="status-pill">
+              <span className={`status-dot ${player.pointerLocked ? "locked" : ""}`} />
+              <span>{lockLabel}</span>
+            </div>
+            <dl className="stat-grid">
+              <dt>Player</dt>
+              <dd>
+                {playerSummary.x}, {playerSummary.y}, {playerSummary.z}
+              </dd>
+              <dt>Speed</dt>
+              <dd>{playerSummary.speed} u/s</dd>
+              <dt>Move</dt>
+              <dd>
+                {player.grounded
+                  ? player.moving
+                    ? player.sprinting
+                      ? "Sprint"
+                      : "Walk"
+                    : "Idle"
+                  : "Jump / Air"}
+              </dd>
+              <dt>Interact</dt>
+              <dd>{player.canInteract ? "Pickup (F)" : "-"}</dd>
+              <dt>Weapon</dt>
+              <dd>{weaponEquipped ? "Rifle equipped" : "On ground"}</dd>
+            </dl>
           </div>
-          <dl className="stat-grid">
-            <dt>Player</dt>
-            <dd>
-              {playerSummary.x}, {playerSummary.y}, {playerSummary.z}
-            </dd>
-            <dt>Speed</dt>
-            <dd>{playerSummary.speed} u/s</dd>
-            <dt>Move</dt>
-            <dd>{player.moving ? (player.sprinting ? "Sprint" : "Walk") : "Idle"}</dd>
-            <dt>Interact</dt>
-            <dd>{player.canInteract ? "Pickup (E)" : "-"}</dd>
-            <dt>Weapon</dt>
-            <dd>{weaponEquipped ? "Rifle equipped" : "On ground"}</dd>
-          </dl>
-        </div>
+        ) : null}
 
-        <div className="corner-top-right">
-          <PerfHUD metrics={perfMetrics} visible={settings.showPerfHud} />
-        </div>
+        {showOverlay ? (
+          <div className="corner-top-right">
+            <PerfHUD metrics={perfMetrics} visible={settings.showPerfHud} />
+          </div>
+        ) : null}
 
         <div className="center-stack">
-          <div className="crosshair" />
-          <div className={`hit-marker ${hitMarkerVisible ? "visible" : ""}`} />
+          {!isPaused ? <div className="crosshair" /> : null}
+          {!isPaused ? <div className={`hit-marker ${hitMarkerVisible ? "visible" : ""}`} /> : null}
+          {isPaused ? (
+            <div className="pause-menu panel" role="dialog" aria-label="Pause menu" style={{ pointerEvents: "none" }}>
+              <h2>Paused</h2>
+              <p className="muted" style={{ marginTop: 6 }}>
+                Click anywhere to resume. Press <code>Esc</code> to pause.
+              </p>
+              <div className="settings-row" style={{ marginTop: 10, gap: 8, pointerEvents: "auto" }}>
+                <button
+                  type="button"
+                  className={`btn ${showOverlay ? "" : "active"}`}
+                  onClick={() => setShowOverlay((prev) => !prev)}
+                >
+                  {showOverlay ? "Hide HUD" : "Show HUD"}
+                </button>
+              </div>
+            </div>
+          ) : null}
         </div>
 
-        <div className="corner-bottom-left panel">
-          <h2>Controls</h2>
-          <ul className="control-list">
-            <li>
-              <code>WASD</code> move
-            </li>
-            <li>
-              <code>Mouse</code> look (after click / pointer lock)
-            </li>
-            <li>
-              <code>Left Click</code> fire (hold)
-            </li>
-            <li>
-              <code>Shift</code> sprint
-            </li>
-            <li>
-              <code>E</code> pickup gun
-            </li>
-            <li>
-              <code>G</code> drop gun
-            </li>
-            <li>
-              <code>R</code> reset targets
-            </li>
-            <li>
-              <code>Esc</code> unlock pointer
-            </li>
-            <li>
-              <code>F</code> toggle perf HUD
-            </li>
-          </ul>
-        </div>
+        {showOverlay ? (
+          <div className="corner-bottom-left panel">
+            <h2>Controls</h2>
+            <ul className="control-list">
+              <li>
+                <code>WASD</code> move
+              </li>
+              <li>
+                <code>Mouse</code> look (always while unpaused)
+              </li>
+              <li>
+                <code>Left Click</code> fire (hold)
+              </li>
+              <li>
+                <code>Right Click</code> ADS (hold)
+              </li>
+              <li>
+                <code>Shift</code> sprint
+              </li>
+              <li>
+                <code>Space</code> jump
+              </li>
+              <li>
+                <code>F</code> pickup gun
+              </li>
+              <li>
+                <code>G</code> drop gun
+              </li>
+              <li>
+                <code>R</code> reset targets
+              </li>
+              <li>
+                <code>Esc</code> pause menu
+              </li>
+              <li>
+                <code>P</code> toggle perf HUD
+              </li>
+            </ul>
+          </div>
+        ) : null}
 
-        <div className="corner-bottom-right panel">
+        {showOverlay ? (
+          <div className="corner-bottom-right panel">
           <h2>Settings</h2>
           <div className="settings-grid">
             <div className="settings-row">
@@ -251,6 +291,7 @@ export function GameRoot() {
             Stress mode is mostly draw-call pain right now. Adding full physics later is how you end up benchmarking regret instead of gameplay.
           </p>
         </div>
+        ) : null}
       </div>
     </div>
   );

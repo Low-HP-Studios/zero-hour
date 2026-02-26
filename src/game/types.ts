@@ -33,17 +33,19 @@ export type PlayerSnapshot = {
   speed: number;
   sprinting: boolean;
   moving: boolean;
+  grounded: boolean;
   pointerLocked: boolean;
   canInteract: boolean;
 };
 
 export const DEFAULT_PLAYER_SNAPSHOT: PlayerSnapshot = {
   x: 0,
-  y: 1.65,
+  y: 0,
   z: 6,
   speed: 0,
   sprinting: false,
   moving: false,
+  grounded: true,
   pointerLocked: false,
   canInteract: false,
 };
@@ -68,4 +70,6 @@ export type TargetState = {
   radius: number;
   hitUntil: number;
   disabled: boolean;
+  hp: number;
+  maxHp: number;
 };

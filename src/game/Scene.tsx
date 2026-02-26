@@ -16,6 +16,8 @@ import {
   createDefaultTargets,
   raycastTargets,
   resetTargets,
+  DAMAGE_PER_SHOT,
+  RESPAWN_DELAY_MS,
 } from "./Targets";
 import { WeaponSystem } from "./Weapon";
 import type {
@@ -54,7 +56,6 @@ const DOOR_GAP_WIDTH = 2.2;
 const DOOR_HEIGHT = 2.2;
 const TRACER_DISTANCE = 70;
 const TARGET_FLASH_MS = 180;
-const TARGET_DISABLE_MS = 200;
 
 const STATIC_COLLIDERS: CollisionRect[] = [
   boxRect({ x: -6, z: -2 }, 2.4, 2.2),
@@ -120,35 +121,41 @@ export function Scene({
   const handleTargetHit = useCallback((targetId: string, nowMs: number) => {
     startTransition(() => {
       setTargets((previousTargets) =>
-        previousTargets.map((target) =>
-          target.id === targetId
-            ? {
-                ...target,
-                disabled: true,
-                hitUntil: nowMs + TARGET_FLASH_MS,
-              }
-            : target,
-        ),
+        previousTargets.map((target) => {
+          if (target.id !== targetId) return target;
+          const newHp = Math.max(0, target.hp - DAMAGE_PER_SHOT);
+          const destroyed = newHp <= 0;
+          return {
+            ...target,
+            hp: newHp,
+            disabled: destroyed,
+            hitUntil: nowMs + TARGET_FLASH_MS,
+          };
+        }),
       );
     });
 
-    const existing = resetTimeoutsRef.current.get(targetId);
-    if (existing !== undefined) {
-      window.clearTimeout(existing);
-    }
-
-    const timeoutId = window.setTimeout(() => {
-      resetTimeoutsRef.current.delete(targetId);
-      startTransition(() => {
-        setTargets((previousTargets) =>
-          previousTargets.map((target) =>
-            target.id === targetId ? { ...target, disabled: false } : target,
-          ),
-        );
-      });
-    }, TARGET_DISABLE_MS);
-
-    resetTimeoutsRef.current.set(targetId, timeoutId);
+    setTargets((prev) => {
+      const target = prev.find((t) => t.id === targetId);
+      if (target && target.hp - DAMAGE_PER_SHOT <= 0) {
+        const existing = resetTimeoutsRef.current.get(targetId);
+        if (existing !== undefined) {
+          window.clearTimeout(existing);
+        }
+        const timeoutId = window.setTimeout(() => {
+          resetTimeoutsRef.current.delete(targetId);
+          startTransition(() => {
+            setTargets((previousTargets) =>
+              previousTargets.map((t) =>
+                t.id === targetId ? { ...t, disabled: false, hp: t.maxHp } : t,
+              ),
+            );
+          });
+        }, RESPAWN_DELAY_MS);
+        resetTimeoutsRef.current.set(targetId, timeoutId);
+      }
+      return prev;
+    });
   }, []);
 
   const handleResetTargets = useCallback(() => {
@@ -176,24 +183,26 @@ export function Scene({
       className="game-canvas"
       shadows={settings.shadows}
       dpr={dpr}
-      camera={{ fov: 75, near: 0.1, far: 160, position: [0, 1.65, 6] }}
+      camera={{ fov: 65, near: 0.1, far: 160, position: [0, 3.5, 12] }}
       gl={{ antialias: true, powerPreference: "high-performance" }}
     >
-      <color attach="background" args={["#0b1014"]} />
-      <fog attach="fog" args={["#0b1014", 24, 90]} />
-      <ambientLight intensity={0.55} />
+      <color attach="background" args={["#d5eeff"]} />
+      <fog attach="fog" args={["#dff2ff", 42, 140]} />
+      <hemisphereLight args={["#f0fbff", "#d0c4a2", 0.65]} />
+      <ambientLight intensity={0.48} />
       <directionalLight
-        position={[10, 16, 6]}
-        intensity={1.2}
+        position={[22, 28, 12]}
+        intensity={2.1}
+        color="#fff0c4"
         castShadow={settings.shadows}
         shadow-mapSize-width={2048}
         shadow-mapSize-height={2048}
         shadow-camera-near={1}
-        shadow-camera-far={60}
-        shadow-camera-left={-24}
-        shadow-camera-right={24}
-        shadow-camera-top={24}
-        shadow-camera-bottom={-24}
+        shadow-camera-far={90}
+        shadow-camera-left={-34}
+        shadow-camera-right={34}
+        shadow-camera-top={34}
+        shadow-camera-bottom={-34}
       />
       <MapEnvironment shadows={settings.shadows} />
       <Targets targets={targets} shadows={settings.shadows} />
@@ -261,15 +270,16 @@ function GameplayRuntime({
   const lastWeaponEquippedRef = useRef<boolean | null>(null);
 
   const worldGunRef = useRef<THREE.Group>(null);
-  const viewWeaponRef = useRef<THREE.Group>(null);
-  const muzzleFlashRef = useRef<THREE.Mesh>(null);
+  const playerCharacterRef = useRef<THREE.Group>(null);
+  const characterWeaponRef = useRef<THREE.Group>(null);
+  const characterMuzzleRef = useRef<THREE.Mesh>(null);
   const tracerRef = useRef<THREE.Mesh>(null);
 
   const tempEndRef = useRef(new THREE.Vector3());
   const tempMidRef = useRef(new THREE.Vector3());
   const tempTracerDirRef = useRef(new THREE.Vector3());
-  const tempOffsetRef = useRef(new THREE.Vector3());
   const tempLookDirRef = useRef(new THREE.Vector3());
+  const tempTracerOriginRef = useRef(new THREE.Vector3());
 
   useEffect(() => {
     targetsRef.current = targets;
@@ -365,7 +375,11 @@ function GameplayRuntime({
     const weapon = weaponRef.current;
     const audio = audioRef.current;
 
-    audio.update(nowMs / 1000, controller.isMoving(), controller.isSprinting());
+    audio.update(
+      nowMs / 1000,
+      controller.isMoving() && controller.isGrounded(),
+      controller.isSprinting(),
+    );
 
     const shots = weapon.update(clampedDelta, nowMs, camera);
     for (const shot of shots) {
@@ -373,6 +387,12 @@ function GameplayRuntime({
       controller.addRecoil(shot.recoilPitchRadians, shot.recoilYawRadians);
 
       const hit = raycastTargets(shot.origin, shot.direction, targetsRef.current);
+
+      const playerPos = controller.getPosition();
+      const tracerOrigin = tempTracerOriginRef.current;
+      tracerOrigin.set(playerPos.x, playerPos.y + 1.0, playerPos.z);
+      tracerOrigin.addScaledVector(shot.direction, 0.6);
+
       if (hit) {
         tempEndRef.current.copy(hit.point);
         targetHitCallbackRef.current(hit.id, nowMs);
@@ -380,15 +400,22 @@ function GameplayRuntime({
         audio.playHit();
       } else {
         tempEndRef.current
-          .copy(shot.origin)
+          .copy(tracerOrigin)
           .addScaledVector(shot.direction, TRACER_DISTANCE);
       }
 
-      weapon.setTracer(shot.origin, tempEndRef.current, nowMs);
+      weapon.setTracer(tracerOrigin, tempEndRef.current, nowMs);
+    }
+
+    const playerChar = playerCharacterRef.current;
+    if (playerChar) {
+      const pos = controller.getPosition();
+      playerChar.position.set(pos.x, pos.y, pos.z);
+      playerChar.rotation.y = controller.getYaw();
     }
 
     updateWorldGunMesh(worldGunRef.current, weapon, nowMs);
-    updateViewWeaponMesh(viewWeaponRef.current, muzzleFlashRef.current, weapon, camera, controller, nowMs, tempOffsetRef.current);
+    updateCharacterWeaponMesh(characterWeaponRef.current, characterMuzzleRef.current, weapon, nowMs);
     updateTracerMesh(tracerRef.current, weapon, nowMs, tempMidRef.current, tempTracerDirRef.current);
 
     const equipped = weapon.isEquipped();
@@ -419,6 +446,60 @@ function GameplayRuntime({
 
   return (
     <>
+      <group ref={playerCharacterRef}>
+        {/* Torso */}
+        <mesh position={[0, 1.0, 0]} castShadow receiveShadow>
+          <boxGeometry args={[0.4, 0.55, 0.25]} />
+          <meshStandardMaterial color="#4a6b82" roughness={0.7} metalness={0.1} />
+        </mesh>
+        {/* Head */}
+        <mesh position={[0, 1.48, 0]} castShadow receiveShadow>
+          <sphereGeometry args={[0.14, 12, 12]} />
+          <meshStandardMaterial color="#e8c9a4" roughness={0.85} metalness={0} />
+        </mesh>
+        {/* Left leg */}
+        <mesh position={[-0.1, 0.3, 0]} castShadow receiveShadow>
+          <boxGeometry args={[0.14, 0.6, 0.16]} />
+          <meshStandardMaterial color="#3a4d5c" roughness={0.8} metalness={0.05} />
+        </mesh>
+        {/* Right leg */}
+        <mesh position={[0.1, 0.3, 0]} castShadow receiveShadow>
+          <boxGeometry args={[0.14, 0.6, 0.16]} />
+          <meshStandardMaterial color="#3a4d5c" roughness={0.8} metalness={0.05} />
+        </mesh>
+        {/* Left arm */}
+        <mesh position={[-0.28, 0.92, 0]} castShadow receiveShadow>
+          <boxGeometry args={[0.12, 0.48, 0.12]} />
+          <meshStandardMaterial color="#4a6b82" roughness={0.7} metalness={0.1} />
+        </mesh>
+        {/* Right arm */}
+        <mesh position={[0.28, 0.92, 0]} castShadow receiveShadow>
+          <boxGeometry args={[0.12, 0.48, 0.12]} />
+          <meshStandardMaterial color="#4a6b82" roughness={0.7} metalness={0.1} />
+        </mesh>
+
+        {/* Character-held weapon */}
+        <group ref={characterWeaponRef} position={[0.34, 0.82, -0.2]} visible={false}>
+          <mesh castShadow receiveShadow>
+            <boxGeometry args={[0.55, 0.09, 0.13]} />
+            <meshStandardMaterial color="#30363c" roughness={0.55} metalness={0.4} />
+          </mesh>
+          <mesh position={[0.16, -0.08, 0.01]} rotation={[0.15, 0, -0.2]}>
+            <boxGeometry args={[0.18, 0.17, 0.05]} />
+            <meshStandardMaterial color="#4d463f" roughness={0.85} metalness={0.1} />
+          </mesh>
+          <mesh position={[-0.24, 0.015, 0]} rotation={[0, 0, Math.PI / 2]}>
+            <cylinderGeometry args={[0.015, 0.015, 0.42, 8]} />
+            <meshStandardMaterial color="#20262b" roughness={0.4} metalness={0.6} />
+          </mesh>
+          <mesh ref={characterMuzzleRef} position={[-0.44, 0.02, 0]} visible={false}>
+            <sphereGeometry args={[0.05, 8, 8]} />
+            <meshBasicMaterial color="#ffd085" transparent opacity={0.9} />
+          </mesh>
+        </group>
+      </group>
+
+      {/* World gun (dropped state) */}
       <group ref={worldGunRef} visible>
         <mesh castShadow receiveShadow>
           <boxGeometry args={[0.7, 0.12, 0.18]} />
@@ -431,25 +512,6 @@ function GameplayRuntime({
         <mesh position={[-0.22, 0, 0]} rotation={[0, 0, Math.PI / 2]} castShadow receiveShadow>
           <cylinderGeometry args={[0.02, 0.02, 0.55, 10]} />
           <meshStandardMaterial color="#1e2328" roughness={0.5} metalness={0.55} />
-        </mesh>
-      </group>
-
-      <group ref={viewWeaponRef} visible={false}>
-        <mesh>
-          <boxGeometry args={[0.55, 0.09, 0.13]} />
-          <meshStandardMaterial color="#30363c" roughness={0.55} metalness={0.4} />
-        </mesh>
-        <mesh position={[0.16, -0.08, 0.01]} rotation={[0.15, 0, -0.2]}>
-          <boxGeometry args={[0.18, 0.17, 0.05]} />
-          <meshStandardMaterial color="#4d463f" roughness={0.85} metalness={0.1} />
-        </mesh>
-        <mesh position={[-0.24, 0.015, 0]} rotation={[0, 0, Math.PI / 2]}>
-          <cylinderGeometry args={[0.015, 0.015, 0.42, 8]} />
-          <meshStandardMaterial color="#20262b" roughness={0.4} metalness={0.6} />
-        </mesh>
-        <mesh ref={muzzleFlashRef} position={[-0.44, 0.02, 0]} visible={false}>
-          <sphereGeometry args={[0.05, 8, 8]} />
-          <meshBasicMaterial color="#ffd085" transparent opacity={0.9} />
         </mesh>
       </group>
 
@@ -468,23 +530,28 @@ type MapEnvironmentProps = {
 function MapEnvironment({ shadows }: MapEnvironmentProps) {
   return (
     <group>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow={shadows}>
-        <planeGeometry args={[80, 80]} />
-        <meshStandardMaterial color="#2a3432" roughness={0.95} metalness={0.02} />
+      <mesh position={[54, 42, -32]}>
+        <sphereGeometry args={[4.8, 20, 20]} />
+        <meshBasicMaterial color="#ffe28f" />
       </mesh>
 
-      <gridHelper args={[80, 40, "#2f4f61", "#1a232a"]} position={[0, 0.02, 0]} />
+      <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow={shadows}>
+        <planeGeometry args={[80, 80]} />
+        <meshStandardMaterial color="#94b68d" roughness={0.96} metalness={0.02} />
+      </mesh>
 
-      <CoverBlock position={[-6, 1.1, -2]} size={[2.4, 2.2, 2.2]} shadows={shadows} color="#5a6269" />
-      <CoverBlock position={[-2, 0.9, -8]} size={[2.5, 1.8, 1.8]} shadows={shadows} color="#53606b" />
-      <CoverBlock position={[4, 1.1, -11.5]} size={[3.8, 2.2, 2.2]} shadows={shadows} color="#616c77" />
-      <CoverBlock position={[13, 1.1, 5]} size={[3, 2.2, 2.2]} shadows={shadows} color="#6f6d62" />
+      <gridHelper args={[80, 40, "#8db4c6", "#cde3ee"]} position={[0, 0.02, 0]} />
+
+      <CoverBlock position={[-6, 1.1, -2]} size={[2.4, 2.2, 2.2]} shadows={shadows} color="#b7bcc3" />
+      <CoverBlock position={[-2, 0.9, -8]} size={[2.5, 1.8, 1.8]} shadows={shadows} color="#a8b6c0" />
+      <CoverBlock position={[4, 1.1, -11.5]} size={[3.8, 2.2, 2.2]} shadows={shadows} color="#bcc7d0" />
+      <CoverBlock position={[13, 1.1, 5]} size={[3, 2.2, 2.2]} shadows={shadows} color="#c9c1b0" />
 
       <BuildingShell shadows={shadows} />
 
       <mesh position={[0, 0.02, -24]} receiveShadow={shadows}>
         <boxGeometry args={[24, 0.05, 12]} />
-        <meshStandardMaterial color="#1e2327" roughness={1} metalness={0} />
+        <meshStandardMaterial color="#7f8d95" roughness={0.95} metalness={0} />
       </mesh>
     </group>
   );
@@ -514,7 +581,7 @@ function BuildingShell({ shadows }: { shadows: boolean }) {
     <group position={[BUILDING_CENTER.x, 0, BUILDING_CENTER.z]}>
       <mesh position={[0, 0.01, 0]} receiveShadow={shadows}>
         <boxGeometry args={[BUILDING_WIDTH, 0.02, BUILDING_DEPTH]} />
-        <meshStandardMaterial color="#31302b" roughness={0.98} metalness={0} />
+        <meshStandardMaterial color="#a6a295" roughness={0.98} metalness={0} />
       </mesh>
 
       <mesh
@@ -523,7 +590,7 @@ function BuildingShell({ shadows }: { shadows: boolean }) {
         receiveShadow={shadows}
       >
         <boxGeometry args={[WALL_THICKNESS, BUILDING_HEIGHT, BUILDING_DEPTH]} />
-        <meshStandardMaterial color="#7f7462" roughness={0.85} metalness={0.05} />
+        <meshStandardMaterial color="#ddd0b7" roughness={0.82} metalness={0.03} />
       </mesh>
       <mesh
         position={[BUILDING_WIDTH / 2 - WALL_THICKNESS / 2, BUILDING_HEIGHT / 2, 0]}
@@ -531,7 +598,7 @@ function BuildingShell({ shadows }: { shadows: boolean }) {
         receiveShadow={shadows}
       >
         <boxGeometry args={[WALL_THICKNESS, BUILDING_HEIGHT, BUILDING_DEPTH]} />
-        <meshStandardMaterial color="#7f7462" roughness={0.85} metalness={0.05} />
+        <meshStandardMaterial color="#ddd0b7" roughness={0.82} metalness={0.03} />
       </mesh>
       <mesh
         position={[0, BUILDING_HEIGHT / 2, -BUILDING_DEPTH / 2 + WALL_THICKNESS / 2]}
@@ -539,7 +606,7 @@ function BuildingShell({ shadows }: { shadows: boolean }) {
         receiveShadow={shadows}
       >
         <boxGeometry args={[BUILDING_WIDTH, BUILDING_HEIGHT, WALL_THICKNESS]} />
-        <meshStandardMaterial color="#7f7462" roughness={0.85} metalness={0.05} />
+        <meshStandardMaterial color="#ddd0b7" roughness={0.82} metalness={0.03} />
       </mesh>
       <mesh
         position={[
@@ -551,7 +618,7 @@ function BuildingShell({ shadows }: { shadows: boolean }) {
         receiveShadow={shadows}
       >
         <boxGeometry args={[leftSouthWidth, BUILDING_HEIGHT, WALL_THICKNESS]} />
-        <meshStandardMaterial color="#7f7462" roughness={0.85} metalness={0.05} />
+        <meshStandardMaterial color="#ddd0b7" roughness={0.82} metalness={0.03} />
       </mesh>
       <mesh
         position={[
@@ -563,18 +630,18 @@ function BuildingShell({ shadows }: { shadows: boolean }) {
         receiveShadow={shadows}
       >
         <boxGeometry args={[rightSouthWidth, BUILDING_HEIGHT, WALL_THICKNESS]} />
-        <meshStandardMaterial color="#7f7462" roughness={0.85} metalness={0.05} />
+        <meshStandardMaterial color="#ddd0b7" roughness={0.82} metalness={0.03} />
       </mesh>
 
       <mesh position={[0, BUILDING_HEIGHT + 0.1, 0]} castShadow={shadows} receiveShadow={shadows}>
         <boxGeometry args={[BUILDING_WIDTH + 0.5, 0.2, BUILDING_DEPTH + 0.5]} />
-        <meshStandardMaterial color="#5f5549" roughness={0.9} metalness={0.05} />
+        <meshStandardMaterial color="#af8868" roughness={0.86} metalness={0.04} />
       </mesh>
 
       <mesh position={[0, DOOR_HEIGHT / 2, BUILDING_DEPTH / 2 - 0.03]} castShadow={shadows} receiveShadow={shadows}>
         <boxGeometry args={[DOOR_GAP_WIDTH - 0.15, DOOR_HEIGHT, 0.05]} />
         <meshStandardMaterial
-          color="#39342e"
+          color="#8a7a66"
           roughness={0.7}
           metalness={0.12}
           transparent
@@ -610,7 +677,7 @@ function StressBoxes({ count, shadows }: { count: StressModeCount; shadows: bool
       next.push({
         position: [x, height / 2, z],
         scale: [0.9, height, 0.9],
-        color: i % 2 === 0 ? "#465663" : "#59696c",
+        color: i % 2 === 0 ? "#a3b6c0" : "#b8c7c7",
       });
     }
     return next;
@@ -661,35 +728,24 @@ function updateWorldGunMesh(
   mesh.rotation.set(0.2, nowMs * 0.0016, 0);
 }
 
-function updateViewWeaponMesh(
-  viewMesh: THREE.Group | null,
+function updateCharacterWeaponMesh(
+  weaponGroup: THREE.Group | null,
   muzzleFlashMesh: THREE.Mesh | null,
   weapon: WeaponSystem,
-  camera: THREE.Camera,
-  controller: PlayerControllerApi,
   nowMs: number,
-  tempOffset: THREE.Vector3,
 ) {
-  if (!viewMesh) {
+  if (!weaponGroup) {
     return;
   }
 
-  const visible = weapon.isEquipped();
-  viewMesh.visible = visible;
-  if (!visible) {
+  const equipped = weapon.isEquipped();
+  weaponGroup.visible = equipped;
+  if (!equipped) {
     if (muzzleFlashMesh) {
       muzzleFlashMesh.visible = false;
     }
     return;
   }
-
-  const swayX = controller.isMoving() ? Math.sin(nowMs * 0.01) * 0.015 : 0;
-  const swayY = controller.isMoving() ? Math.cos(nowMs * 0.016) * 0.008 : 0;
-  tempOffset.set(0.24 + swayX, -0.19 + swayY, -0.45);
-  tempOffset.applyQuaternion(camera.quaternion);
-
-  viewMesh.position.copy(camera.position).add(tempOffset);
-  viewMesh.quaternion.copy(camera.quaternion);
 
   if (muzzleFlashMesh) {
     muzzleFlashMesh.visible = weapon.hasMuzzleFlash(nowMs);

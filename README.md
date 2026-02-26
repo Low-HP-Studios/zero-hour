@@ -15,7 +15,7 @@ Stack:
 - WASD movement + sprint
 - Small walkable map with cover and an enterable building (door opening)
 - Simple collision blocking (custom AABB/circle collision, no physics engine)
-- Pickup/drop rifle (`E` / `G`)
+- Pickup/drop rifle (`F` / `G`)
 - Automatic fire with recoil climb + horizontal drift (spray feel)
 - Hitscan shooting
 - 3 shootable targets with hit flash + reset (`R`)
@@ -76,11 +76,12 @@ pnpm build
 - `Mouse` look (after pointer lock)
 - `Left Click` fire (hold for auto)
 - `Shift` sprint
-- `E` pickup gun (when near)
+- `Space` jump
+- `F` pickup gun (when near)
 - `G` drop gun
 - `R` reset targets
-- `Esc` unlock pointer
-- `F` toggle perf HUD
+- `Esc` pause menu / show cursor
+- `P` toggle perf HUD
 
 ## Assets
 
