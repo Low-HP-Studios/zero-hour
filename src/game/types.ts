@@ -1,11 +1,74 @@
 export type PixelRatioScale = 0.75 | 1 | 1.25;
 export type StressModeCount = 0 | 50 | 100 | 200;
 
+export type AimSensitivitySettings = {
+  look: number;
+  rifleAds: number;
+  sniperAds: number;
+  vertical: number;
+};
+
+export const DEFAULT_AIM_SENSITIVITY_SETTINGS: AimSensitivitySettings = {
+  look: 100,
+  rifleAds: 80,
+  sniperAds: 55,
+  vertical: 100,
+};
+
+export type ControlBindings = {
+  moveForward: string;
+  moveBackward: string;
+  moveLeft: string;
+  moveRight: string;
+  sprint: string;
+  jump: string;
+  pickup: string;
+  drop: string;
+  reset: string;
+  equipRifle: string;
+  equipSniper: string;
+  toggleView: string;
+  shoulderLeft: string;
+  shoulderRight: string;
+};
+
+export const DEFAULT_CONTROL_BINDINGS: ControlBindings = {
+  moveForward: "KeyW",
+  moveBackward: "KeyS",
+  moveLeft: "KeyA",
+  moveRight: "KeyD",
+  sprint: "ShiftLeft",
+  jump: "Space",
+  pickup: "KeyF",
+  drop: "KeyG",
+  reset: "KeyR",
+  equipRifle: "Digit1",
+  equipSniper: "Digit2",
+  toggleView: "KeyV",
+  shoulderLeft: "KeyQ",
+  shoulderRight: "KeyE",
+};
+
+export type HudOverlayToggles = {
+  practice: boolean;
+  controls: boolean;
+  settings: boolean;
+  performance: boolean;
+};
+
+export const DEFAULT_HUD_OVERLAY_TOGGLES: HudOverlayToggles = {
+  practice: false,
+  controls: false,
+  settings: false,
+  performance: true,
+};
+
 export type GameSettings = {
   shadows: boolean;
   pixelRatioScale: PixelRatioScale;
-  showPerfHud: boolean;
   showR3fPerf: boolean;
+  sensitivity: AimSensitivitySettings;
+  keybinds: ControlBindings;
 };
 
 export type PerfMetrics = {

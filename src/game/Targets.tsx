@@ -10,20 +10,29 @@ type TargetsProps = {
 
 export type TargetRaycastHit = {
   id: string;
+  zone: TargetHitZone;
   point: THREE.Vector3;
+  normal: THREE.Vector3;
   distance: number;
 };
+
+export type TargetHitZone = "head" | "body" | "leg";
 
 const DAMAGE_PER_SHOT = 25;
 const RESPAWN_DELAY_MS = 2000;
 
 export function createDefaultTargets(): TargetState[] {
   return [
-    { id: "t1", position: [-8, 0, -12], radius: 0.6, hitUntil: 0, disabled: false, hp: 100, maxHp: 100 },
-    { id: "t2", position: [1, 0, -15], radius: 0.6, hitUntil: 0, disabled: false, hp: 100, maxHp: 100 },
-    { id: "t3", position: [14, 0, -7], radius: 0.6, hitUntil: 0, disabled: false, hp: 100, maxHp: 100 },
-    { id: "t4", position: [-4, 0, -5], radius: 0.6, hitUntil: 0, disabled: false, hp: 100, maxHp: 100 },
-    { id: "t5", position: [6, 0, -18], radius: 0.6, hitUntil: 0, disabled: false, hp: 100, maxHp: 100 },
+    { id: "t1", position: [-8, 0, -18], radius: 0.6, hitUntil: 0, disabled: false, hp: 100, maxHp: 100 },
+    { id: "t2", position: [6, 0, -26], radius: 0.6, hitUntil: 0, disabled: false, hp: 100, maxHp: 100 },
+    { id: "t3", position: [-18, 0, -34], radius: 0.6, hitUntil: 0, disabled: false, hp: 100, maxHp: 100 },
+    { id: "t4", position: [22, 0, -44], radius: 0.6, hitUntil: 0, disabled: false, hp: 100, maxHp: 100 },
+    { id: "t5", position: [-30, 0, -52], radius: 0.6, hitUntil: 0, disabled: false, hp: 100, maxHp: 100 },
+    { id: "t6", position: [0, 0, -62], radius: 0.6, hitUntil: 0, disabled: false, hp: 100, maxHp: 100 },
+    { id: "t7", position: [34, 0, -72], radius: 0.6, hitUntil: 0, disabled: false, hp: 100, maxHp: 100 },
+    { id: "t8", position: [-42, 0, -66], radius: 0.6, hitUntil: 0, disabled: false, hp: 100, maxHp: 100 },
+    { id: "t9", position: [48, 0, -34], radius: 0.6, hitUntil: 0, disabled: false, hp: 100, maxHp: 100 },
+    { id: "t10", position: [-54, 0, -28], radius: 0.6, hitUntil: 0, disabled: false, hp: 100, maxHp: 100 },
   ];
 }
 
@@ -50,45 +59,144 @@ export function raycastTargets(
       continue;
     }
 
-    const cx = target.position[0];
-    const cy = target.position[1] + 1.0;
-    const cz = target.position[2];
+    const [x, baseY, z] = target.position;
 
-    const ox = origin.x - cx;
-    const oy = origin.y - cy;
-    const oz = origin.z - cz;
+    const partHits: Array<TargetRaycastHit | null> = [
+      raycastSpherePart(target.id, "head", origin, direction, x, baseY + 1.6, z, 0.22),
+      raycastAabbPart(target.id, "body", origin, direction, x, baseY + 1.05, z, 0.25, 0.35, 0.15),
+      raycastAabbPart(target.id, "leg", origin, direction, x - 0.2, baseY + 0.35, z, 0.08, 0.35, 0.08),
+      raycastAabbPart(target.id, "leg", origin, direction, x + 0.2, baseY + 0.35, z, 0.08, 0.35, 0.08),
+    ];
 
-    const b = ox * direction.x + oy * direction.y + oz * direction.z;
-    const c = ox * ox + oy * oy + oz * oz - target.radius * target.radius;
-    const discriminant = b * b - c;
-
-    if (discriminant < 0) {
-      continue;
+    let targetClosestHit: TargetRaycastHit | null = null;
+    for (const partHit of partHits) {
+      if (!partHit) {
+        continue;
+      }
+      if (!targetClosestHit || partHit.distance < targetClosestHit.distance) {
+        targetClosestHit = partHit;
+      }
     }
 
-    const sqrtDisc = Math.sqrt(discriminant);
-    const nearT = -b - sqrtDisc;
-    const farT = -b + sqrtDisc;
-    const distance = nearT > 0 ? nearT : farT > 0 ? farT : -1;
-
-    if (distance <= 0) {
-      continue;
-    }
-
-    if (!closestHit || distance < closestHit.distance) {
-      closestHit = {
-        id: target.id,
-        point: new THREE.Vector3(
-          origin.x + direction.x * distance,
-          origin.y + direction.y * distance,
-          origin.z + direction.z * distance,
-        ),
-        distance,
-      };
+    if (targetClosestHit && (!closestHit || targetClosestHit.distance < closestHit.distance)) {
+      closestHit = targetClosestHit;
     }
   }
 
   return closestHit;
+}
+
+function raycastSpherePart(
+  id: string,
+  zone: TargetHitZone,
+  origin: THREE.Vector3,
+  direction: THREE.Vector3,
+  cx: number,
+  cy: number,
+  cz: number,
+  radius: number,
+): TargetRaycastHit | null {
+  const ox = origin.x - cx;
+  const oy = origin.y - cy;
+  const oz = origin.z - cz;
+
+  const b = ox * direction.x + oy * direction.y + oz * direction.z;
+  const c = ox * ox + oy * oy + oz * oz - radius * radius;
+  const discriminant = b * b - c;
+  if (discriminant < 0) {
+    return null;
+  }
+
+  const sqrtDisc = Math.sqrt(discriminant);
+  const nearT = -b - sqrtDisc;
+  const farT = -b + sqrtDisc;
+  const distance = nearT > 0 ? nearT : farT > 0 ? farT : -1;
+  if (distance <= 0) {
+    return null;
+  }
+
+  const point = new THREE.Vector3(
+    origin.x + direction.x * distance,
+    origin.y + direction.y * distance,
+    origin.z + direction.z * distance,
+  );
+  const normal = new THREE.Vector3(point.x - cx, point.y - cy, point.z - cz).normalize();
+
+  return { id, zone, point, normal, distance };
+}
+
+function raycastAabbPart(
+  id: string,
+  zone: TargetHitZone,
+  origin: THREE.Vector3,
+  direction: THREE.Vector3,
+  cx: number,
+  cy: number,
+  cz: number,
+  hx: number,
+  hy: number,
+  hz: number,
+): TargetRaycastHit | null {
+  let tMin = -Infinity;
+  let tMax = Infinity;
+  const nearNormal = new THREE.Vector3();
+  const farNormal = new THREE.Vector3();
+
+  const hitAxis = (
+    originCoord: number,
+    dirCoord: number,
+    min: number,
+    max: number,
+    minNormal: [number, number, number],
+    maxNormal: [number, number, number],
+  ): boolean => {
+    if (Math.abs(dirCoord) < 1e-8) {
+      return originCoord >= min && originCoord <= max;
+    }
+
+    let t1 = (min - originCoord) / dirCoord;
+    let t2 = (max - originCoord) / dirCoord;
+    let n1 = minNormal;
+    let n2 = maxNormal;
+
+    if (t1 > t2) {
+      [t1, t2] = [t2, t1];
+      [n1, n2] = [n2, n1];
+    }
+
+    if (t1 > tMin) {
+      tMin = t1;
+      nearNormal.set(n1[0], n1[1], n1[2]);
+    }
+    if (t2 < tMax) {
+      tMax = t2;
+      farNormal.set(n2[0], n2[1], n2[2]);
+    }
+
+    return tMin <= tMax;
+  };
+
+  if (
+    !hitAxis(origin.x, direction.x, cx - hx, cx + hx, [-1, 0, 0], [1, 0, 0]) ||
+    !hitAxis(origin.y, direction.y, cy - hy, cy + hy, [0, -1, 0], [0, 1, 0]) ||
+    !hitAxis(origin.z, direction.z, cz - hz, cz + hz, [0, 0, -1], [0, 0, 1])
+  ) {
+    return null;
+  }
+
+  const distance = tMin > 0 ? tMin : tMax > 0 ? tMax : -1;
+  if (distance <= 0) {
+    return null;
+  }
+
+  const point = new THREE.Vector3(
+    origin.x + direction.x * distance,
+    origin.y + direction.y * distance,
+    origin.z + direction.z * distance,
+  );
+  const normal = (tMin > 0 ? nearNormal : farNormal).clone();
+
+  return { id, zone, point, normal, distance };
 }
 
 function HPBar({ hp, maxHp }: { hp: number; maxHp: number }) {

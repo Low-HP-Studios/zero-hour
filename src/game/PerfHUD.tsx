@@ -11,7 +11,7 @@ export function PerfHUD({ metrics, visible }: PerfHUDProps) {
   }
 
   return (
-    <div className="panel">
+    <div className="panel tactical-panel compact-panel perf-panel">
       <h2>Perf HUD</h2>
       <dl className="stat-grid">
         <dt>FPS</dt>

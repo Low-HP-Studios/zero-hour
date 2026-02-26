@@ -1,23 +1,39 @@
 import { useEffect, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
-import type { CollisionRect, PlayerSnapshot, WorldBounds } from "./types";
+import type { WeaponKind } from "./Weapon";
+import type {
+  AimSensitivitySettings,
+  CollisionRect,
+  ControlBindings,
+  PlayerSnapshot,
+  WorldBounds,
+} from "./types";
 
-type PlayerAction = "pickup" | "drop" | "reset";
+type PlayerAction =
+  | "pickup"
+  | "drop"
+  | "reset"
+  | "equipRifle"
+  | "equipSniper";
 
 type UsePlayerControllerOptions = {
   collisionRects: CollisionRect[];
   worldBounds: WorldBounds;
+  sensitivity: AimSensitivitySettings;
+  keybinds: ControlBindings;
   onAction: (action: PlayerAction) => void;
   onPlayerSnapshot: (snapshot: PlayerSnapshot) => void;
   onTriggerChange: (firing: boolean) => void;
   onUserGesture: () => void;
+  getActiveWeapon: () => WeaponKind;
 };
 
 export type PlayerControllerApi = {
   addRecoil: (pitchRadians: number, yawRadians: number) => void;
   getPosition: () => THREE.Vector3;
   getYaw: () => number;
+  isFirstPerson: () => boolean;
   isADS: () => boolean;
   isSprinting: () => boolean;
   isMoving: () => boolean;
@@ -31,33 +47,47 @@ const PLAYER_RADIUS = 0.35;
 const GROUND_Y = 0;
 const WALK_SPEED = 5.3;
 const SPRINT_SPEED = 8.2;
-const ACCEL = 18;
-const AIR_DAMP = 12;
 const LOOK_SENSITIVITY = 0.0022;
 const MAX_PITCH = 0.85;
 const MIN_PITCH = -0.5;
-const GRAVITY_UP = -22;
-const GRAVITY_PEAK = -10;
-const GRAVITY_DOWN = -38;
-const PEAK_VELOCITY_THRESHOLD = 2.0;
-const JUMP_SPEED = 11.5;
+const GRAVITY_UP = -28;
+const GRAVITY_PEAK = -16;
+const GRAVITY_DOWN = -48;
+const PEAK_VELOCITY_THRESHOLD = 1.4;
+const JUMP_SPEED = 10.4;
 
-const CAMERA_ARM_LENGTH = 6;
-const CAMERA_ARM_LENGTH_ADS = 3.0;
+const CAMERA_ARM_LENGTH = 2.25;
+const CAMERA_ARM_LENGTH_ADS = 1.55;
+const CAMERA_ARM_LENGTH_SNIPER_ADS = 0.78;
 const CAMERA_DEFAULT_ELEVATION = 0.35;
 const CAMERA_MIN_ELEVATION = 0.05;
 const CAMERA_MAX_ELEVATION = 1.2;
 const LOOK_AT_HEIGHT = 1.2;
-const SHOULDER_OFFSET = 1.2;
-const SHOULDER_OFFSET_ADS = 0.5;
+const SHOULDER_OFFSET = 0.5;
+const SHOULDER_OFFSET_ADS = 0.3;
+const SHOULDER_OFFSET_SNIPER_ADS = 0.16;
+const AIM_LOOK_DISTANCE = 120;
+const FIRST_PERSON_CAMERA_HEIGHT = 1.55;
+const FIRST_PERSON_CAMERA_FORWARD_OFFSET = 0.06;
+const BASE_CAMERA_FOV = 65;
+const RIFLE_ADS_FOV = 58;
+const SNIPER_ADS_FOV = 26;
+const VIEW_MODE_TRANSITION_SPEED = 10;
+const SHOULDER_SWAP_TRANSITION_SPEED = 12;
+// Hide the character early on FPP enter and show it later on FPP exit to reduce camera/model popping.
+const FPP_ENTER_VISUAL_THRESHOLD = 0.35;
+const FPP_EXIT_VISUAL_THRESHOLD = 0.75;
 
 export function usePlayerController({
   collisionRects,
   worldBounds,
+  sensitivity,
+  keybinds,
   onAction,
   onPlayerSnapshot,
   onTriggerChange,
   onUserGesture,
+  getActiveWeapon,
 }: UsePlayerControllerOptions): PlayerControllerApi {
   const camera = useThree((state) => state.camera);
   const gl = useThree((state) => state.gl);
@@ -81,14 +111,24 @@ export function usePlayerController({
   const pendingMouseRef = useRef(new THREE.Vector2(0, 0));
   const recoilPitchRef = useRef(0);
   const recoilYawRef = useRef(0);
+  const firstPersonRef = useRef(false);
   const adsRef = useRef(false);
   const adsLerpRef = useRef(0);
+  const viewModeLerpRef = useRef(0);
+  const shoulderSideTargetRef = useRef(1);
+  const shoulderSideLerpRef = useRef(1);
   const tempLookAtRef = useRef(new THREE.Vector3());
+  const tempAimDirRef = useRef(new THREE.Vector3());
+  const tempFirstPersonCameraPosRef = useRef(new THREE.Vector3());
+  const tempThirdPersonCameraPosRef = useRef(new THREE.Vector3());
   const snapshotAccumulatorRef = useRef(0);
   const actionCallbackRef = useRef(onAction);
   const triggerCallbackRef = useRef(onTriggerChange);
   const snapshotCallbackRef = useRef(onPlayerSnapshot);
   const userGestureCallbackRef = useRef(onUserGesture);
+  const activeWeaponGetterRef = useRef(getActiveWeapon);
+  const sensitivityRef = useRef(sensitivity);
+  const keybindsRef = useRef(keybinds);
 
   useEffect(() => {
     actionCallbackRef.current = onAction;
@@ -105,6 +145,18 @@ export function usePlayerController({
   useEffect(() => {
     userGestureCallbackRef.current = onUserGesture;
   }, [onUserGesture]);
+
+  useEffect(() => {
+    activeWeaponGetterRef.current = getActiveWeapon;
+  }, [getActiveWeapon]);
+
+  useEffect(() => {
+    sensitivityRef.current = sensitivity;
+  }, [sensitivity]);
+
+  useEffect(() => {
+    keybindsRef.current = keybinds;
+  }, [keybinds]);
 
   const fallbackActiveRef = useRef(false);
 
@@ -154,22 +206,39 @@ export function usePlayerController({
     };
 
     const onKeyDown = (event: KeyboardEvent) => {
+      const bindings = keybindsRef.current;
+
       if (event.code === "Escape" && !event.repeat && fallbackActiveRef.current) {
         exitFallbackCapture();
         return;
       }
 
-      if (event.code === "KeyF" && !event.repeat) {
+      if (event.code === bindings.pickup && !event.repeat) {
         actionCallbackRef.current("pickup");
       }
-      if (event.code === "KeyG" && !event.repeat) {
+      if (event.code === bindings.drop && !event.repeat) {
         actionCallbackRef.current("drop");
       }
-      if (event.code === "KeyR" && !event.repeat) {
+      if (event.code === bindings.reset && !event.repeat) {
         actionCallbackRef.current("reset");
       }
+      if (event.code === bindings.equipRifle && !event.repeat) {
+        actionCallbackRef.current("equipRifle");
+      }
+      if (event.code === bindings.equipSniper && !event.repeat) {
+        actionCallbackRef.current("equipSniper");
+      }
+      if (event.code === bindings.toggleView && !event.repeat) {
+        firstPersonRef.current = !firstPersonRef.current;
+      }
+      if (event.code === bindings.shoulderLeft && !event.repeat) {
+        shoulderSideTargetRef.current = -1;
+      }
+      if (event.code === bindings.shoulderRight && !event.repeat) {
+        shoulderSideTargetRef.current = 1;
+      }
 
-      if (event.code === "Space" && !event.repeat && pointerLockedRef.current && groundedRef.current) {
+      if (event.code === bindings.jump && !event.repeat && pointerLockedRef.current && groundedRef.current) {
         jumpQueuedRef.current = true;
       }
 
@@ -274,23 +343,34 @@ export function usePlayerController({
     const delta = Math.min(rawDelta, 1 / 20);
     const keys = keyStateRef.current;
     const controlsEnabled = pointerLockedRef.current;
+    const activeWeapon = activeWeaponGetterRef.current();
+    const lookSensitivity = resolveLookSensitivity(
+      sensitivityRef.current,
+      activeWeapon,
+      adsRef.current,
+    );
 
     const mouse = pendingMouseRef.current;
     if (controlsEnabled && (mouse.x !== 0 || mouse.y !== 0)) {
-      targetYawRef.current -= mouse.x * LOOK_SENSITIVITY;
+      targetYawRef.current -= mouse.x * lookSensitivity.horizontal;
       targetPitchRef.current = THREE.MathUtils.clamp(
-        targetPitchRef.current - mouse.y * LOOK_SENSITIVITY,
+        targetPitchRef.current - mouse.y * lookSensitivity.vertical,
         MIN_PITCH,
         MAX_PITCH,
       );
       mouse.set(0, 0);
     }
 
-    yawRef.current = THREE.MathUtils.damp(yawRef.current, targetYawRef.current, 18, delta);
-    pitchRef.current = THREE.MathUtils.damp(pitchRef.current, targetPitchRef.current, 22, delta);
+    yawRef.current = targetYawRef.current;
+    pitchRef.current = targetPitchRef.current;
 
-    const forward = controlsEnabled ? (keys.KeyW ? 1 : 0) + (keys.KeyS ? -1 : 0) : 0;
-    const strafe = controlsEnabled ? (keys.KeyD ? 1 : 0) + (keys.KeyA ? -1 : 0) : 0;
+    const bindings = keybindsRef.current;
+    const forward = controlsEnabled
+      ? (isBindingDown(keys, bindings.moveForward) ? 1 : 0) + (isBindingDown(keys, bindings.moveBackward) ? -1 : 0)
+      : 0;
+    const strafe = controlsEnabled
+      ? (isBindingDown(keys, bindings.moveRight) ? 1 : 0) + (isBindingDown(keys, bindings.moveLeft) ? -1 : 0)
+      : 0;
     moveInputRef.current.set(strafe, forward);
     if (moveInputRef.current.lengthSq() > 1) {
       moveInputRef.current.normalize();
@@ -298,7 +378,7 @@ export function usePlayerController({
 
     const sprinting =
       controlsEnabled &&
-      Boolean(keys.ShiftLeft || keys.ShiftRight) &&
+      isBindingDown(keys, bindings.sprint) &&
       moveInputRef.current.y >= 0 &&
       groundedRef.current;
     const moveSpeed = sprinting ? SPRINT_SPEED : WALK_SPEED;
@@ -311,18 +391,8 @@ export function usePlayerController({
     const desiredZ = -localX * sinYaw - localZ * cosYaw;
 
     if (controlsEnabled) {
-      velocityRef.current.x = THREE.MathUtils.damp(
-        velocityRef.current.x,
-        desiredX * moveSpeed,
-        desiredX !== 0 ? ACCEL : AIR_DAMP,
-        delta,
-      );
-      velocityRef.current.y = THREE.MathUtils.damp(
-        velocityRef.current.y,
-        desiredZ * moveSpeed,
-        desiredZ !== 0 ? ACCEL : AIR_DAMP,
-        delta,
-      );
+      velocityRef.current.x = desiredX * moveSpeed;
+      velocityRef.current.y = desiredZ * moveSpeed;
     } else {
       velocityRef.current.set(0, 0);
     }
@@ -344,7 +414,7 @@ export function usePlayerController({
     );
     resolveCollisions(resolvedXZRef.current, PLAYER_RADIUS, collisionRects);
 
-    positionRef.current.set(resolvedXZRef.current.x, GROUND_Y, resolvedXZRef.current.y);
+    positionRef.current.set(resolvedXZRef.current.x, positionRef.current.y, resolvedXZRef.current.y);
 
     if (controlsEnabled && jumpQueuedRef.current && groundedRef.current) {
       jumpQueuedRef.current = false;
@@ -379,17 +449,58 @@ export function usePlayerController({
     const adsTarget = adsRef.current ? 1 : 0;
     adsLerpRef.current = THREE.MathUtils.damp(adsLerpRef.current, adsTarget, 12, delta);
     const adsT = adsLerpRef.current;
+    const sniperADS = activeWeapon === "sniper" ? adsT : 0;
+    const viewTarget = firstPersonRef.current ? 1 : 0;
+    viewModeLerpRef.current = THREE.MathUtils.damp(
+      viewModeLerpRef.current,
+      viewTarget,
+      VIEW_MODE_TRANSITION_SPEED,
+      delta,
+    );
+    const viewT = viewModeLerpRef.current;
+    shoulderSideLerpRef.current = THREE.MathUtils.damp(
+      shoulderSideLerpRef.current,
+      shoulderSideTargetRef.current,
+      SHOULDER_SWAP_TRANSITION_SPEED,
+      delta,
+    );
+    const shoulderSide = shoulderSideLerpRef.current;
 
     const currentYaw = yawRef.current + recoilYawRef.current;
     const currentPitch = pitchRef.current + recoilPitchRef.current;
+    const aimDir = tempAimDirRef.current;
+    const pitchCos = Math.cos(currentPitch);
+    aimDir.set(
+      -Math.sin(currentYaw) * pitchCos,
+      Math.sin(currentPitch),
+      -Math.cos(currentYaw) * pitchCos,
+    ).normalize();
+
+    const fppCameraPos = tempFirstPersonCameraPosRef.current;
+    fppCameraPos.set(
+      positionRef.current.x,
+      positionRef.current.y + FIRST_PERSON_CAMERA_HEIGHT,
+      positionRef.current.z,
+    );
+    fppCameraPos.addScaledVector(aimDir, FIRST_PERSON_CAMERA_FORWARD_OFFSET);
+    if (sniperADS > 0) {
+      const rightX = Math.cos(currentYaw);
+      const rightZ = -Math.sin(currentYaw);
+      fppCameraPos.x += rightX * (0.045 * shoulderSide) * sniperADS;
+      fppCameraPos.y -= 0.02 * sniperADS;
+      fppCameraPos.z += rightZ * (0.045 * shoulderSide) * sniperADS;
+    }
+
     const elevationAngle = clamp(
-      CAMERA_DEFAULT_ELEVATION - currentPitch * 0.6,
+      CAMERA_DEFAULT_ELEVATION - currentPitch * 0.6 - sniperADS * 0.05,
       CAMERA_MIN_ELEVATION,
       CAMERA_MAX_ELEVATION,
     );
 
-    const armLen = THREE.MathUtils.lerp(CAMERA_ARM_LENGTH, CAMERA_ARM_LENGTH_ADS, adsT);
-    const shoulder = THREE.MathUtils.lerp(SHOULDER_OFFSET, SHOULDER_OFFSET_ADS, adsT);
+    const armLenAdsTarget = activeWeapon === "sniper" ? CAMERA_ARM_LENGTH_SNIPER_ADS : CAMERA_ARM_LENGTH_ADS;
+    const shoulderAdsTarget = activeWeapon === "sniper" ? SHOULDER_OFFSET_SNIPER_ADS : SHOULDER_OFFSET_ADS;
+    const armLen = THREE.MathUtils.lerp(CAMERA_ARM_LENGTH, armLenAdsTarget, adsT);
+    const shoulder = THREE.MathUtils.lerp(SHOULDER_OFFSET, shoulderAdsTarget, adsT) * shoulderSide;
 
     const horizontalDist = armLen * Math.cos(elevationAngle);
     const verticalDist = armLen * Math.sin(elevationAngle);
@@ -399,18 +510,28 @@ export function usePlayerController({
     const rightX = Math.cos(currentYaw);
     const rightZ = -Math.sin(currentYaw);
 
-    camera.position.set(
+    const tppCameraPos = tempThirdPersonCameraPosRef.current;
+    tppCameraPos.set(
       positionRef.current.x + horizontalDist * backX + shoulder * rightX,
-      positionRef.current.y + LOOK_AT_HEIGHT + verticalDist,
+      positionRef.current.y + LOOK_AT_HEIGHT + verticalDist - sniperADS * 0.08,
       positionRef.current.z + horizontalDist * backZ + shoulder * rightZ,
     );
 
+    camera.position.copy(tppCameraPos).lerp(fppCameraPos, viewT);
+
+    if ("isPerspectiveCamera" in camera && camera.isPerspectiveCamera) {
+      const adsFovTarget = activeWeapon === "sniper" ? SNIPER_ADS_FOV : RIFLE_ADS_FOV;
+      const targetFov = THREE.MathUtils.lerp(BASE_CAMERA_FOV, adsFovTarget, adsT);
+      const perspectiveCamera = camera as THREE.PerspectiveCamera;
+      const nextFov = THREE.MathUtils.damp(perspectiveCamera.fov, targetFov, 14, delta);
+      if (Math.abs(nextFov - perspectiveCamera.fov) > 0.01) {
+        perspectiveCamera.fov = nextFov;
+        perspectiveCamera.updateProjectionMatrix();
+      }
+    }
+
     const lookAt = tempLookAtRef.current;
-    lookAt.set(
-      positionRef.current.x + shoulder * rightX,
-      positionRef.current.y + LOOK_AT_HEIGHT,
-      positionRef.current.z + shoulder * rightZ,
-    );
+    lookAt.copy(camera.position).addScaledVector(aimDir, AIM_LOOK_DISTANCE);
     camera.lookAt(lookAt);
 
     const speed = Math.hypot(velocityRef.current.x, velocityRef.current.y);
@@ -447,6 +568,10 @@ export function usePlayerController({
     },
     getPosition: () => positionRef.current,
     getYaw: () => yawRef.current,
+    isFirstPerson: () =>
+      firstPersonRef.current
+        ? viewModeLerpRef.current >= FPP_ENTER_VISUAL_THRESHOLD
+        : viewModeLerpRef.current > FPP_EXIT_VISUAL_THRESHOLD,
     isADS: () => adsRef.current,
     isSprinting: () => sprintingRef.current,
     isMoving: () => movingRef.current,
@@ -479,6 +604,28 @@ function resolveCollisions(positionXZ: THREE.Vector2, radius: number, collisionR
   for (const rect of collisionRects) {
     resolveCircleRect(positionXZ, radius, rect);
   }
+}
+
+function isBindingDown(keys: KeyState, bindingCode: string) {
+  return Boolean(bindingCode && keys[bindingCode]);
+}
+
+function resolveLookSensitivity(
+  sensitivity: AimSensitivitySettings,
+  activeWeapon: WeaponKind,
+  adsActive: boolean,
+) {
+  const baseMultiplier = clamp(sensitivity.look, 1, 400) / 100;
+  const adsMultiplier = adsActive
+    ? clamp(activeWeapon === "sniper" ? sensitivity.sniperAds : sensitivity.rifleAds, 1, 400) / 100
+    : 1;
+  const verticalMultiplier = clamp(sensitivity.vertical, 20, 300) / 100;
+  const horizontal = LOOK_SENSITIVITY * baseMultiplier * adsMultiplier;
+
+  return {
+    horizontal,
+    vertical: horizontal * verticalMultiplier,
+  };
 }
 
 function resolveCircleRect(positionXZ: THREE.Vector2, radius: number, rect: CollisionRect) {

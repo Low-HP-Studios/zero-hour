@@ -3,11 +3,15 @@ import * as THREE from "three";
 export type WeaponShotEvent = {
   timestamp: number;
   shotIndex: number;
+  weaponType: WeaponKind;
+  damage: number;
   origin: THREE.Vector3;
   direction: THREE.Vector3;
   recoilPitchRadians: number;
   recoilYawRadians: number;
 };
+
+export type WeaponKind = "rifle" | "sniper";
 
 export type WeaponWorldState = {
   equipped: boolean;
@@ -20,20 +24,46 @@ type TracerState = {
   until: number;
 };
 
-const FIRE_INTERVAL_MS = 78;
-const PICKUP_RANGE = 1.8;
 const TRACER_LIFETIME_MS = 55;
-const MUZZLE_FLASH_MS = 45;
+
+type WeaponConfig = {
+  fireIntervalMs: number;
+  damage: number;
+  muzzleFlashMs: number;
+  rechamberMs?: number;
+};
+
+const WEAPON_CONFIG: Record<WeaponKind, WeaponConfig> = {
+  rifle: {
+    fireIntervalMs: 78,
+    damage: 25,
+    muzzleFlashMs: 45,
+  },
+  sniper: {
+    fireIntervalMs: 700,
+    damage: 90,
+    muzzleFlashMs: 70,
+    rechamberMs: 980,
+  },
+};
+
+export type SniperRechamberState = {
+  active: boolean;
+  progress: number;
+  remainingMs: number;
+};
 
 export class WeaponSystem {
-  private equipped = false;
+  private equipped = true;
+  private activeWeapon: WeaponKind = "rifle";
   private droppedPosition = new THREE.Vector3(1.5, 0.35, 3.5);
   private triggerHeld = false;
   private nextShotInMs = 0;
   private shotIndex = 0;
   private muzzleFlashUntil = 0;
   private tracer: TracerState | null = null;
-  private readonly tempForward = new THREE.Vector3();
+  private sniperRechamberStartedAtMs = 0;
+  private sniperRechamberUntilMs = 0;
 
   setTriggerHeld(next: boolean) {
     this.triggerHeld = next;
@@ -49,12 +79,19 @@ export class WeaponSystem {
       return shotEvents;
     }
 
+    const config = WEAPON_CONFIG[this.activeWeapon];
     this.nextShotInMs -= deltaSeconds * 1000;
+
+    if (this.activeWeapon === "sniper" && this.sniperRechamberUntilMs > nowMs) {
+      this.nextShotInMs = Math.max(this.nextShotInMs, this.sniperRechamberUntilMs - nowMs);
+      return shotEvents;
+    }
+
     let burstGuard = 0;
 
     while (this.nextShotInMs <= 0 && burstGuard < 4) {
       burstGuard += 1;
-      this.nextShotInMs += FIRE_INTERVAL_MS;
+      this.nextShotInMs += config.fireIntervalMs;
 
       const shotIndex = this.shotIndex;
       this.shotIndex += 1;
@@ -65,64 +102,67 @@ export class WeaponSystem {
       const direction = new THREE.Vector3();
       camera.getWorldDirection(direction).normalize();
 
-      const recoilPitchDegrees = 0.18 + Math.min(1.1, shotIndex * 0.055);
-      const horizontalDriftDegrees =
-        (Math.random() - 0.5) * (0.12 + Math.min(0.65, shotIndex * 0.016));
-
       shotEvents.push({
         timestamp: nowMs,
         shotIndex,
+        weaponType: this.activeWeapon,
+        damage: config.damage,
         origin,
         direction,
-        recoilPitchRadians: THREE.MathUtils.degToRad(recoilPitchDegrees),
-        recoilYawRadians: THREE.MathUtils.degToRad(horizontalDriftDegrees),
+        recoilPitchRadians: 0,
+        recoilYawRadians: 0,
       });
 
-      this.muzzleFlashUntil = nowMs + MUZZLE_FLASH_MS;
+      this.muzzleFlashUntil = nowMs + config.muzzleFlashMs;
+      if (this.activeWeapon === "sniper" && config.rechamberMs) {
+        this.sniperRechamberStartedAtMs = nowMs;
+        this.sniperRechamberUntilMs = nowMs + config.rechamberMs;
+      }
     }
 
     return shotEvents;
   }
 
-  tryPickup(playerPosition: THREE.Vector3): boolean {
-    if (this.equipped) {
+  switchWeapon(next: WeaponKind): boolean {
+    if (this.activeWeapon === next) {
       return false;
     }
-
-    if (playerPosition.distanceTo(this.droppedPosition) > PICKUP_RANGE) {
-      return false;
-    }
-
-    this.equipped = true;
+    this.activeWeapon = next;
+    this.setTriggerHeld(false);
     return true;
+  }
+
+  getActiveWeapon(): WeaponKind {
+    return this.activeWeapon;
+  }
+
+  getSniperRechamberState(nowMs: number): SniperRechamberState {
+    if (this.sniperRechamberUntilMs <= nowMs) {
+      return { active: false, progress: 1, remainingMs: 0 };
+    }
+    const durationMs = Math.max(1, this.sniperRechamberUntilMs - this.sniperRechamberStartedAtMs);
+    const elapsedMs = Math.max(0, nowMs - this.sniperRechamberStartedAtMs);
+    return {
+      active: true,
+      progress: Math.min(1, elapsedMs / durationMs),
+      remainingMs: Math.max(0, this.sniperRechamberUntilMs - nowMs),
+    };
+  }
+
+  tryPickup(playerPosition: THREE.Vector3): boolean {
+    void playerPosition;
+    return false;
   }
 
   drop(playerPosition: THREE.Vector3, cameraForward: THREE.Vector3): boolean {
-    if (!this.equipped) {
-      return false;
-    }
-
-    this.equipped = false;
-    this.setTriggerHeld(false);
-
-    this.tempForward.copy(cameraForward);
-    this.tempForward.y = 0;
-    if (this.tempForward.lengthSq() < 1e-5) {
-      this.tempForward.set(0, 0, -1);
-    } else {
-      this.tempForward.normalize();
-    }
-
-    this.droppedPosition
-      .copy(playerPosition)
-      .addScaledVector(this.tempForward, 1.25)
-      .setY(0.35);
-
-    return true;
+    void playerPosition;
+    void cameraForward;
+    return false;
   }
 
   canPickup(playerPosition: THREE.Vector3): boolean {
-    return !this.equipped && playerPosition.distanceTo(this.droppedPosition) <= PICKUP_RANGE;
+    void playerPosition;
+    return false;
   }
 
   isEquipped(): boolean {
@@ -169,6 +209,6 @@ export class WeaponSystem {
 }
 
 export const DEFAULT_WEAPON_WORLD_STATE: WeaponWorldState = {
-  equipped: false,
-  droppedPosition: [1.5, 0.35, 3.5],
+  equipped: true,
+  droppedPosition: null,
 };

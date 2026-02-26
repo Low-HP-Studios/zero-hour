@@ -1,4 +1,5 @@
 import { loadAudioBuffer } from "./AssetLoader";
+import type { WeaponKind } from "./Weapon";
 
 export type AudioVolumeSettings = {
   master: number;
@@ -101,7 +102,7 @@ export class AudioManager {
     }
   }
 
-  playGunshot() {
+  playGunshot(kind: WeaponKind = "rifle") {
     if (!this.context || this.context.state !== "running" || !this.gunGain) {
       return;
     }
@@ -116,12 +117,64 @@ export class AudioManager {
     if (this.buffers.gunshot) {
       const source = this.context.createBufferSource();
       source.buffer = this.buffers.gunshot;
-      source.playbackRate.value = 0.96 + Math.random() * 0.1;
+      source.playbackRate.value =
+        kind === "sniper"
+          ? 0.66 + Math.random() * 0.06
+          : 0.96 + Math.random() * 0.1;
       source.connect(voice);
       voice.gain.setValueAtTime(1, now);
-      voice.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
+      voice.gain.exponentialRampToValueAtTime(0.0001, now + (kind === "sniper" ? 0.32 : 0.18));
       source.start(now);
-      source.stop(now + Math.min(0.35, source.buffer.duration));
+      source.stop(now + Math.min(kind === "sniper" ? 0.5 : 0.35, source.buffer.duration));
+      return;
+    }
+
+    if (kind === "sniper") {
+      voice.gain.setValueAtTime(1, now);
+      voice.gain.exponentialRampToValueAtTime(0.0001, now + 0.28);
+
+      const thump = this.context.createOscillator();
+      const thumpGain = this.context.createGain();
+      thump.type = "triangle";
+      thump.frequency.setValueAtTime(130 + Math.random() * 18, now);
+      thump.frequency.exponentialRampToValueAtTime(42, now + 0.14);
+      thumpGain.gain.setValueAtTime(0.001, now);
+      thumpGain.gain.exponentialRampToValueAtTime(0.5, now + 0.004);
+      thumpGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.16);
+      thump.connect(thumpGain);
+      thumpGain.connect(voice);
+      thump.start(now);
+      thump.stop(now + 0.18);
+
+      const crack = this.context.createOscillator();
+      const crackGain = this.context.createGain();
+      crack.type = "square";
+      crack.frequency.setValueAtTime(880 + Math.random() * 110, now);
+      crack.frequency.exponentialRampToValueAtTime(220, now + 0.045);
+      crackGain.gain.setValueAtTime(0.001, now);
+      crackGain.gain.exponentialRampToValueAtTime(0.22, now + 0.002);
+      crackGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.05);
+      crack.connect(crackGain);
+      crackGain.connect(voice);
+      crack.start(now);
+      crack.stop(now + 0.06);
+
+      if (this.whiteNoiseBuffer) {
+        const noiseSource = this.context.createBufferSource();
+        noiseSource.buffer = this.whiteNoiseBuffer;
+        const highpass = this.context.createBiquadFilter();
+        const noiseGain = this.context.createGain();
+        highpass.type = "highpass";
+        highpass.frequency.value = 1400;
+        noiseGain.gain.setValueAtTime(0.001, now);
+        noiseGain.gain.exponentialRampToValueAtTime(0.38, now + 0.003);
+        noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.075);
+        noiseSource.connect(highpass);
+        highpass.connect(noiseGain);
+        noiseGain.connect(voice);
+        noiseSource.start(now);
+        noiseSource.stop(now + 0.09);
+      }
       return;
     }
 
@@ -161,7 +214,7 @@ export class AudioManager {
     osc.stop(now + 0.09);
   }
 
-  playHit() {
+  playHit(kind: "body" | "head" = "body") {
     if (!this.context || this.context.state !== "running" || !this.hitGain) {
       return;
     }
@@ -171,9 +224,12 @@ export class AudioManager {
     if (this.buffers.hit) {
       const source = this.context.createBufferSource();
       source.buffer = this.buffers.hit;
-      source.playbackRate.value = 0.95 + Math.random() * 0.15;
+      source.playbackRate.value =
+        kind === "head"
+          ? 1.2 + Math.random() * 0.08
+          : 0.95 + Math.random() * 0.15;
       const gain = this.context.createGain();
-      gain.gain.value = 0.9;
+      gain.gain.value = kind === "head" ? 1.05 : 0.9;
       source.connect(gain);
       gain.connect(this.hitGain);
       source.start(now);
@@ -184,15 +240,53 @@ export class AudioManager {
     const osc = this.context.createOscillator();
     const gain = this.context.createGain();
     osc.type = "triangle";
-    osc.frequency.setValueAtTime(720, now);
-    osc.frequency.exponentialRampToValueAtTime(480, now + 0.05);
+    osc.frequency.setValueAtTime(kind === "head" ? 1120 : 720, now);
+    osc.frequency.exponentialRampToValueAtTime(kind === "head" ? 620 : 480, now + 0.05);
     gain.gain.setValueAtTime(0.001, now);
-    gain.gain.exponentialRampToValueAtTime(0.25, now + 0.004);
+    gain.gain.exponentialRampToValueAtTime(kind === "head" ? 0.32 : 0.25, now + 0.004);
     gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.06);
     osc.connect(gain);
     gain.connect(this.hitGain);
     osc.start(now);
     osc.stop(now + 0.07);
+  }
+
+  playKill() {
+    if (!this.context || this.context.state !== "running" || !this.hitGain) {
+      return;
+    }
+
+    const now = this.context.currentTime;
+    const gain = this.context.createGain();
+    gain.gain.value = 0.55;
+    gain.connect(this.hitGain);
+
+    const low = this.context.createOscillator();
+    low.type = "triangle";
+    low.frequency.setValueAtTime(420, now);
+    low.frequency.exponentialRampToValueAtTime(520, now + 0.05);
+    const lowGain = this.context.createGain();
+    lowGain.gain.setValueAtTime(0.001, now);
+    lowGain.gain.exponentialRampToValueAtTime(0.16, now + 0.006);
+    lowGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.09);
+    low.connect(lowGain);
+    lowGain.connect(gain);
+
+    const high = this.context.createOscillator();
+    high.type = "sine";
+    high.frequency.setValueAtTime(980, now + 0.028);
+    high.frequency.exponentialRampToValueAtTime(1240, now + 0.085);
+    const highGain = this.context.createGain();
+    highGain.gain.setValueAtTime(0.001, now + 0.02);
+    highGain.gain.exponentialRampToValueAtTime(0.2, now + 0.03);
+    highGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
+    high.connect(highGain);
+    highGain.connect(gain);
+
+    low.start(now);
+    low.stop(now + 0.1);
+    high.start(now + 0.018);
+    high.stop(now + 0.13);
   }
 
   dispose() {
