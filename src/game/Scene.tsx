@@ -92,6 +92,9 @@ const BULLET_IMPACT_LIFETIME_MS = 5000;
 const BULLET_IMPACT_CLEANUP_INTERVAL_MS = 250;
 const BULLET_IMPACT_MARK_RADIUS = 0.05;
 const BULLET_IMPACT_MARK_SURFACE_OFFSET = 0.01;
+const MAX_BLOOD_SPLAT_MARKS = 280;
+const BLOOD_SPLAT_LIFETIME_MS = 1100;
+const BLOOD_SPLAT_SURFACE_OFFSET = 0.014;
 const BULLET_HIT_EPSILON = 0.0001;
 
 type BulletImpactMark = {
@@ -99,6 +102,15 @@ type BulletImpactMark = {
   expiresAt: number;
   position: [number, number, number];
   quaternion: [number, number, number, number];
+};
+
+type BloodSplatMark = {
+  id: number;
+  expiresAt: number;
+  position: [number, number, number];
+  quaternion: [number, number, number, number];
+  radius: number;
+  opacity: number;
 };
 
 type WorldRaycastHit = {
@@ -347,6 +359,43 @@ type WeaponModelResult = {
   sniper: THREE.Group | null;
 };
 
+const WALK_ANIM_TIME_SCALE = 1.18;
+const SPRINT_ANIM_TIME_SCALE = 1.9;
+const BASE_FOOTSTEP_INTERVAL_SECONDS = 0.566;
+
+function resolveCharacterAnimTimeScale(state: CharacterAnimState): number {
+  if (state === "sprint") {
+    return SPRINT_ANIM_TIME_SCALE;
+  }
+  if (state === "idle" || state === "rifleIdle") {
+    return 1;
+  }
+  return WALK_ANIM_TIME_SCALE;
+}
+
+function resolveFootstepIntervalSeconds(state: CharacterAnimState): number {
+  const animTimeScale = resolveCharacterAnimTimeScale(state);
+  return BASE_FOOTSTEP_INTERVAL_SECONDS / Math.max(0.1, animTimeScale);
+}
+
+function resolveFootstepPlaybackRate(state: CharacterAnimState): number {
+  if (state === "sprint") {
+    return 1.22;
+  }
+  if (state === "walkBack" || state === "rifleWalkBack") {
+    return 0.92;
+  }
+  if (
+    state === "walkLeft" ||
+    state === "walkRight" ||
+    state === "rifleWalkLeft" ||
+    state === "rifleWalkRight"
+  ) {
+    return 1.06;
+  }
+  return 1;
+}
+
 function useCharacterModel(): CharacterModelResult {
   const [model, setModel] = useState<THREE.Group | null>(null);
   const mixerRef = useRef<THREE.AnimationMixer | null>(null);
@@ -438,7 +487,7 @@ function useCharacterModel(): CharacterModelResult {
 
   const setAnimState = useCallback((state: CharacterAnimState) => {
     const targetName = state === "sprint" ? "walk" : state;
-    const targetSpeed = state === "sprint" ? 1.55 : 1;
+    const targetSpeed = resolveCharacterAnimTimeScale(state);
     const stateKey = state;
 
     if (currentAnimRef.current === stateKey) return;
@@ -740,6 +789,7 @@ function GameplayRuntime({
   const controllerRef = useRef<PlayerControllerApi | null>(null);
   const targetsRef = useRef(targets);
   const [impactMarks, setImpactMarks] = useState<BulletImpactMark[]>([]);
+  const [bloodSplats, setBloodSplats] = useState<BloodSplatMark[]>([]);
 
   const playerSnapshotCallbackRef = useRef(onPlayerSnapshot);
   const perfCallbackRef = useRef(onPerfMetrics);
@@ -782,11 +832,16 @@ function GameplayRuntime({
   const tempImpactNormalMatrixRef = useRef(new THREE.Matrix3());
   const tempImpactQuaternionRef = useRef(new THREE.Quaternion());
   const tempImpactPositionRef = useRef(new THREE.Vector3());
+  const tempBloodTangentRef = useRef(new THREE.Vector3());
+  const tempBloodBitangentRef = useRef(new THREE.Vector3());
+  const tempBloodSpreadOffsetRef = useRef(new THREE.Vector3());
+  const tempBloodRollQuaternionRef = useRef(new THREE.Quaternion());
   const tempCameraForwardRef = useRef(new THREE.Vector3());
   const tempCameraRightRef = useRef(new THREE.Vector3());
   const tempCameraUpRef = useRef(new THREE.Vector3());
   const raycasterRef = useRef(new THREE.Raycaster());
   const impactIdRef = useRef(0);
+  const bloodSplatIdRef = useRef(0);
   const lastImpactCleanupAtRef = useRef(0);
   const lastSniperRechamberActiveRef = useRef<boolean | null>(null);
   const lastSniperRechamberProgressStepRef = useRef(-1);
@@ -905,6 +960,63 @@ function GameplayRuntime({
     });
   }, []);
 
+  const pushBloodSpray = useCallback((point: THREE.Vector3, normal: THREE.Vector3, hitType: "body" | "head") => {
+    const safeNormal = tempImpactNormalRef.current;
+    safeNormal.copy(normal);
+    if (safeNormal.lengthSq() < 1e-6) {
+      safeNormal.set(0, 1, 0);
+    } else {
+      safeNormal.normalize();
+    }
+
+    const tangent = tempBloodTangentRef.current;
+    tangent.set(Math.abs(safeNormal.y) > 0.9 ? 1 : 0, Math.abs(safeNormal.y) > 0.9 ? 0 : 1, 0);
+    tangent.cross(safeNormal).normalize();
+    const bitangent = tempBloodBitangentRef.current.copy(safeNormal).cross(tangent).normalize();
+
+    const nowMs = performance.now();
+    const splatCount = hitType === "head" ? 9 : 6;
+    const spread = hitType === "head" ? 0.2 : 0.13;
+    const lifetimeMs = hitType === "head" ? BLOOD_SPLAT_LIFETIME_MS + 220 : BLOOD_SPLAT_LIFETIME_MS;
+    const nextSplats: BloodSplatMark[] = [];
+
+    for (let i = 0; i < splatCount; i += 1) {
+      const angle = Math.random() * Math.PI * 2;
+      const radial = (0.018 + Math.random() * spread) * (0.55 + Math.random() * 0.65);
+      const offset = tempBloodSpreadOffsetRef.current
+        .copy(tangent)
+        .multiplyScalar(Math.cos(angle) * radial)
+        .addScaledVector(bitangent, Math.sin(angle) * radial)
+        .addScaledVector(safeNormal, BLOOD_SPLAT_SURFACE_OFFSET + Math.random() * 0.012);
+
+      const position = tempImpactPositionRef.current.copy(point).add(offset);
+      const quaternion = tempImpactQuaternionRef.current.setFromUnitVectors(Z_AXIS, safeNormal);
+      tempBloodRollQuaternionRef.current.setFromAxisAngle(safeNormal, (Math.random() - 0.5) * Math.PI);
+      quaternion.multiply(tempBloodRollQuaternionRef.current);
+
+      nextSplats.push({
+        id: bloodSplatIdRef.current,
+        expiresAt: nowMs + lifetimeMs + Math.random() * 140,
+        position: [position.x, position.y, position.z],
+        quaternion: [quaternion.x, quaternion.y, quaternion.z, quaternion.w],
+        radius: (hitType === "head" ? 0.065 : 0.05) * (0.5 + Math.random() * 0.9),
+        opacity: hitType === "head" ? 0.92 - Math.random() * 0.2 : 0.8 - Math.random() * 0.2,
+      });
+      bloodSplatIdRef.current += 1;
+    }
+
+    startTransition(() => {
+      setBloodSplats((previous) => {
+        const alive = previous.filter((splat) => splat.expiresAt > nowMs);
+        const merged = [...alive, ...nextSplats];
+        if (merged.length > MAX_BLOOD_SPLAT_MARKS) {
+          return merged.slice(merged.length - MAX_BLOOD_SPLAT_MARKS);
+        }
+        return merged;
+      });
+    });
+  }, []);
+
   const controller = usePlayerController({
     collisionRects,
     worldBounds,
@@ -986,24 +1098,58 @@ function GameplayRuntime({
         const alive = previous.filter((mark) => mark.expiresAt > nowMs);
         return alive.length === previous.length ? previous : alive;
       });
+      setBloodSplats((previous) => {
+        const alive = previous.filter((splat) => splat.expiresAt > nowMs);
+        return alive.length === previous.length ? previous : alive;
+      });
     }
 
     const sniperRechamber = weapon.getSniperRechamberState(nowMs);
     const sniperRechamberProgressStep = Math.floor(sniperRechamber.progress * 100);
+    const previousSniperRechamberActive = lastSniperRechamberActiveRef.current;
     if (
-      lastSniperRechamberActiveRef.current !== sniperRechamber.active ||
+      previousSniperRechamberActive !== sniperRechamber.active ||
       lastSniperRechamberProgressStepRef.current !== sniperRechamberProgressStep
     ) {
       lastSniperRechamberActiveRef.current = sniperRechamber.active;
       lastSniperRechamberProgressStepRef.current = sniperRechamberProgressStep;
       sniperRechamberCallbackRef.current(sniperRechamber);
+      if (!previousSniperRechamberActive && sniperRechamber.active && weapon.getActiveWeapon() === "sniper") {
+        audio.playSniperShelling();
+      }
     }
 
-    audio.update(
-      nowMs / 1000,
-      controller.isMoving() && controller.isGrounded(),
-      controller.isSprinting(),
-    );
+    const moving = controller.isMoving() && controller.isGrounded();
+    const sprinting = controller.isSprinting();
+    const weaponEquipped = weapon.isEquipped();
+    const moveInput = controller.getMoveInput();
+    const moveX = moveInput.x;
+    const moveY = moveInput.y;
+    const hasDirectionalInput = Math.abs(moveX) > 0.05 || Math.abs(moveY) > 0.05;
+    const movementActive = moving && hasDirectionalInput;
+
+    let nextAnimState: CharacterAnimState = weaponEquipped ? "rifleIdle" : "idle";
+    if (movementActive) {
+      if (!weaponEquipped && sprinting && moveY > 0.2 && Math.abs(moveX) < 0.35) {
+        nextAnimState = "sprint";
+      } else if (Math.abs(moveY) >= Math.abs(moveX)) {
+        if (moveY >= 0) {
+          nextAnimState = weaponEquipped ? "rifleWalk" : "walk";
+        } else {
+          nextAnimState = weaponEquipped ? "rifleWalkBack" : "walkBack";
+        }
+      } else if (moveX >= 0) {
+        nextAnimState = weaponEquipped ? "rifleWalkRight" : "walkRight";
+      } else {
+        nextAnimState = weaponEquipped ? "rifleWalkLeft" : "walkLeft";
+      }
+    }
+
+    setCharacterAnim(nextAnimState);
+    audio.update(nowMs / 1000, movementActive, nextAnimState === "sprint", {
+      stepIntervalSeconds: resolveFootstepIntervalSeconds(nextAnimState),
+      filePlaybackRate: resolveFootstepPlaybackRate(nextAnimState),
+    });
 
     const firstPerson = controller.isFirstPerson();
     const adsActive = controller.isADS();
@@ -1032,32 +1178,6 @@ function GameplayRuntime({
       const mixer = characterModel.userData.__mixer as THREE.AnimationMixer | undefined;
       if (mixer) {
         mixer.update(clampedDelta);
-      }
-
-      const moving = controller.isMoving() && controller.isGrounded();
-      const sprinting = controller.isSprinting();
-      const weaponEquipped = weapon.isEquipped();
-      const moveInput = controller.getMoveInput();
-      const moveX = moveInput.x;
-      const moveY = moveInput.y;
-      const hasDirectionalInput = Math.abs(moveX) > 0.05 || Math.abs(moveY) > 0.05;
-
-      if (!moving || !hasDirectionalInput) {
-        setCharacterAnim(weaponEquipped ? "rifleIdle" : "idle");
-      } else if (!weaponEquipped && sprinting && moveY > 0.2 && Math.abs(moveX) < 0.35) {
-        setCharacterAnim("sprint");
-      } else if (Math.abs(moveY) >= Math.abs(moveX)) {
-        if (moveY >= 0) {
-          setCharacterAnim(weaponEquipped ? "rifleWalk" : "walk");
-        } else {
-          setCharacterAnim(weaponEquipped ? "rifleWalkBack" : "walkBack");
-        }
-      } else {
-        if (moveX >= 0) {
-          setCharacterAnim(weaponEquipped ? "rifleWalkRight" : "walkRight");
-        } else {
-          setCharacterAnim(weaponEquipped ? "rifleWalkLeft" : "walkLeft");
-        }
       }
     }
 
@@ -1136,15 +1256,14 @@ function GameplayRuntime({
 
       if (targetHit && targetVisible) {
         tempEndRef.current.copy(targetHit.point);
-        pushImpactMark(targetHit.point, targetHit.normal);
         const resolvedDamage = resolveShotDamage(shot, targetHit);
         const targetBeforeHit = targetsRef.current.find((target) => target.id === targetHit.id);
         const killed = targetBeforeHit ? targetBeforeHit.hp - resolvedDamage <= 0 : false;
         const hitType = targetHit.zone === "head" ? "head" : "body";
 
+        pushBloodSpray(targetHit.point, targetHit.normal, hitType);
         targetHitCallbackRef.current(targetHit.id, resolvedDamage, nowMs);
         hitMarkerCallbackRef.current(killed ? "kill" : hitType);
-        audio.playHit(hitType);
         if (killed) {
           audio.playKill();
         }
@@ -1413,6 +1532,7 @@ function GameplayRuntime({
         />
       </mesh>
 
+      <BloodImpactMarks impacts={bloodSplats} />
       <BulletImpactMarks impacts={impactMarks} />
     </>
   );
@@ -1853,6 +1973,34 @@ function StressBoxes({ count, shadows }: { count: StressModeCount; shadows: bool
   return null;
 }
 
+function BloodImpactMarks({ impacts }: { impacts: BloodSplatMark[] }) {
+  if (impacts.length === 0) {
+    return null;
+  }
+
+  return (
+    <group>
+      {impacts.map((impact) => (
+        <mesh
+          key={impact.id}
+          position={impact.position}
+          quaternion={impact.quaternion}
+          renderOrder={4}
+        >
+          <circleGeometry args={[impact.radius, 10]} />
+          <meshBasicMaterial
+            color="#7c0c0c"
+            transparent
+            opacity={impact.opacity}
+            depthWrite={false}
+            side={THREE.DoubleSide}
+          />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
 function BulletImpactMarks({ impacts }: { impacts: BulletImpactMark[] }) {
   if (impacts.length === 0) {
     return null;
@@ -1868,7 +2016,7 @@ function BulletImpactMarks({ impacts }: { impacts: BulletImpactMark[] }) {
           renderOrder={3}
         >
           <circleGeometry args={[BULLET_IMPACT_MARK_RADIUS, 10]} />
-          <meshBasicMaterial color="#ff2d20" transparent opacity={0.95} depthWrite={false} />
+          <meshBasicMaterial color="#1f1f1f" transparent opacity={0.82} depthWrite={false} />
         </mesh>
       ))}
     </group>

@@ -36,7 +36,7 @@ type WeaponConfig = {
 
 const WEAPON_CONFIG: Record<WeaponKind, WeaponConfig> = {
   rifle: {
-    fireIntervalMs: 78,
+    fireIntervalMs: 112,
     damage: 25,
     muzzleFlashMs: 45,
   },
