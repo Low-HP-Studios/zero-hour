@@ -37,70 +37,67 @@ const MAX_FOOTSTEP_FILE_GAIN = 12;
 
 const AUDIO_URL_CANDIDATES = {
   rifleShot: [
-    "/audio/rifle-shoot.wav",
-    "/audio/rifle-shoot.ogg",
-    "/audio/rifle-shoot.mp3",
-    "/assets/audio/rifle-shoot.wav",
-    "/assets/audio/rifle-shoot.ogg",
     "/assets/audio/rifle-shoot.mp3",
-    "/audio/gunshot.wav",
-    "/audio/gunshot.ogg",
-    "/audio/gunshot.mp3",
-    "/assets/audio/gunshot.wav",
-    "/assets/audio/gunshot.ogg",
+    "/assets/audio/rifle-shoot.ogg",
+    "/assets/audio/rifle-shoot.wav",
     "/assets/audio/gunshot.mp3",
+    "/assets/audio/gunshot.ogg",
+    "/assets/audio/gunshot.wav",
+    "/audio/rifle-shoot.mp3",
+    "/audio/rifle-shoot.ogg",
+    "/audio/rifle-shoot.wav",
+    "/audio/gunshot.mp3",
+    "/audio/gunshot.ogg",
+    "/audio/gunshot.wav",
   ],
   sniperShot: [
-    "/audio/sniper-shooting.wav",
-    "/audio/sniper-shooting.ogg",
-    "/audio/sniper-shooting.mp3",
-    "/assets/audio/sniper-shooting.wav",
-    "/assets/audio/sniper-shooting.ogg",
     "/assets/audio/sniper-shooting.mp3",
-    "/audio/sniper-shoot.wav",
-    "/audio/sniper-shoot.ogg",
-    "/audio/sniper-shoot.mp3",
-    "/assets/audio/sniper-shoot.wav",
-    "/assets/audio/sniper-shoot.ogg",
+    "/assets/audio/sniper-shooting.ogg",
+    "/assets/audio/sniper-shooting.wav",
     "/assets/audio/sniper-shoot.mp3",
+    "/assets/audio/sniper-shoot.ogg",
+    "/assets/audio/sniper-shoot.wav",
+    "/audio/sniper-shooting.mp3",
+    "/audio/sniper-shooting.ogg",
+    "/audio/sniper-shooting.wav",
   ],
   sniperShell: [
-    "/audio/sniper-shelling.wav",
-    "/audio/sniper-shelling.ogg",
-    "/audio/sniper-shelling.mp3",
-    "/assets/audio/sniper-shelling.wav",
-    "/assets/audio/sniper-shelling.ogg",
     "/assets/audio/sniper-shelling.mp3",
+    "/assets/audio/sniper-shelling.ogg",
+    "/assets/audio/sniper-shelling.wav",
+    "/audio/sniper-shelling.mp3",
+    "/audio/sniper-shelling.ogg",
+    "/audio/sniper-shelling.wav",
   ],
   footstep: [
-    "/audio/dirt-steps.wav",
-    "/audio/dirt-steps.ogg",
-    "/audio/dirt-steps.mp3",
-    "/assets/audio/dirt-steps.wav",
     "/assets/audio/dirt-steps.ogg",
     "/assets/audio/dirt-steps.mp3",
-    "/audio/footstep.wav",
-    "/audio/footstep.ogg",
-    "/audio/footstep.mp3",
-    "/assets/audio/footstep.wav",
-    "/assets/audio/footstep.ogg",
+    "/assets/audio/dirt-steps.wav",
     "/assets/audio/footstep.mp3",
+    "/assets/audio/footstep.ogg",
+    "/assets/audio/footstep.wav",
+    "/audio/dirt-steps.ogg",
+    "/audio/dirt-steps.mp3",
+    "/audio/dirt-steps.wav",
+    "/audio/footstep.mp3",
+    "/audio/footstep.ogg",
+    "/audio/footstep.wav",
   ],
   kill: [
-    "/audio/kill-sound.wav",
-    "/audio/kill-sound.ogg",
-    "/audio/kill-sound.mp3",
-    "/assets/audio/kill-sound.wav",
-    "/assets/audio/kill-sound.ogg",
     "/assets/audio/kill-sound.mp3",
+    "/assets/audio/kill-sound.ogg",
+    "/assets/audio/kill-sound.wav",
+    "/audio/kill-sound.mp3",
+    "/audio/kill-sound.ogg",
+    "/audio/kill-sound.wav",
   ],
   hit: [
-    "/audio/hit.wav",
-    "/audio/hit.ogg",
-    "/audio/hit.mp3",
-    "/assets/audio/hit.wav",
-    "/assets/audio/hit.ogg",
     "/assets/audio/hit.mp3",
+    "/assets/audio/hit.ogg",
+    "/assets/audio/hit.wav",
+    "/audio/hit.mp3",
+    "/audio/hit.ogg",
+    "/audio/hit.wav",
   ],
 } as const;
 
@@ -143,6 +140,8 @@ export class AudioManager {
   private warnedSynthFootstepFallback = false;
   private gunshotDebugCounter = 0;
   private shellingDebugCounter = 0;
+  private shellingSource: AudioBufferSourceNode | null = null;
+  private shellingGain: GainNode | null = null;
 
   ensureStarted() {
     if (!this.context) {
@@ -346,10 +345,25 @@ export class AudioManager {
     osc.stop(now + 0.09);
   }
 
+  cancelSniperShelling() {
+    if (this.shellingSource) {
+      try { this.shellingSource.stop(); } catch { /* already stopped */ }
+      this.shellingSource = null;
+    }
+    if (this.shellingGain && this.context) {
+      const now = this.context.currentTime;
+      this.shellingGain.gain.cancelScheduledValues(now);
+      this.shellingGain.gain.setValueAtTime(0, now);
+      this.shellingGain = null;
+    }
+  }
+
   playSniperShelling() {
     if (!this.context || this.context.state !== "running" || !this.gunGain) {
       return;
     }
+
+    this.cancelSniperShelling();
 
     const now = this.context.currentTime;
     if (this.buffers.sniperShell) {
@@ -361,7 +375,14 @@ export class AudioManager {
       source.connect(gain);
       gain.connect(this.gunGain);
       source.start(now);
-      source.stop(now + Math.min(0.5, source.buffer.duration));
+      this.shellingSource = source;
+      this.shellingGain = gain;
+      source.onended = () => {
+        if (this.shellingSource === source) {
+          this.shellingSource = null;
+          this.shellingGain = null;
+        }
+      };
       if (AUDIO_DEBUG) {
         this.shellingDebugCounter += 1;
         if (this.shellingDebugCounter % 4 === 0) {

@@ -780,6 +780,24 @@ function GameplayRuntime({
 
   const { model: characterModel, setAnimState: setCharacterAnim } = useCharacterModel();
   const weaponModels = useWeaponModels();
+  const rifleMuzzleOffsetRef = useRef(new THREE.Vector3(-0.44, 0.02, 0));
+  const sniperMuzzleOffsetRef = useRef(new THREE.Vector3(-0.66, 0.02, 0));
+
+  useEffect(() => {
+    if (weaponModels.rifle) {
+      rifleMuzzleOffsetRef.current = computeWeaponMuzzleOffset(
+        weaponModels.rifle,
+        WEAPON_MODEL_TRANSFORMS.character.rifle,
+      );
+    }
+    if (weaponModels.sniper) {
+      sniperMuzzleOffsetRef.current = computeWeaponMuzzleOffset(
+        weaponModels.sniper,
+        WEAPON_MODEL_TRANSFORMS.character.sniper,
+      );
+    }
+  }, [weaponModels]);
+
   const weaponRef = useRef<WeaponSystem>(new WeaponSystem());
   const audioRef = useRef<AudioManager>(new AudioManager());
   const controllerRef = useRef<PlayerControllerApi | null>(null);
@@ -819,6 +837,8 @@ function GameplayRuntime({
   const tempMidRef = useRef(new THREE.Vector3());
   const tempTracerDirRef = useRef(new THREE.Vector3());
   const tempLookDirRef = useRef(new THREE.Vector3());
+  const tempAimPointRef = useRef(new THREE.Vector3());
+  const tempFireDirectionRef = useRef(new THREE.Vector3());
   const tempTracerOriginRef = useRef(new THREE.Vector3());
   const tempImpactNormalRef = useRef(new THREE.Vector3());
   const tempImpactNormalMatrixRef = useRef(new THREE.Matrix3());
@@ -1032,10 +1052,12 @@ function GameplayRuntime({
     onAction: (action) => {
       const weapon = weaponRef.current;
       if (action === "equipRifle") {
+        audioRef.current.cancelSniperShelling();
         weapon.switchWeapon("rifle", performance.now());
         return;
       }
       if (action === "equipSniper") {
+        audioRef.current.cancelSniperShelling();
         weapon.switchWeapon("sniper", performance.now());
         return;
       }
@@ -1214,6 +1236,8 @@ function GameplayRuntime({
       switchState,
       characterWeaponAnchor,
       weaponAlignment,
+      rifleMuzzleOffsetRef.current,
+      sniperMuzzleOffsetRef.current,
     );
 
     const shots = weapon.update(clampedDelta, nowMs, camera);
@@ -1224,8 +1248,8 @@ function GameplayRuntime({
         controller.addRecoil(shot.recoilPitchRadians, shot.recoilYawRadians);
       }
 
-      const targetHit = raycastTargets(shot.origin, shot.direction, targetsRef.current);
-      const worldHit = raycastBulletWorld(
+      const cameraTargetHit = raycastTargets(shot.origin, shot.direction, targetsRef.current);
+      const cameraWorldHit = raycastBulletWorld(
         scene,
         shot.origin,
         shot.direction,
@@ -1234,18 +1258,64 @@ function GameplayRuntime({
         tempImpactNormalMatrixRef.current,
       );
 
-      const targetVisible =
-        !!targetHit &&
-        (!worldHit || targetHit.distance <= worldHit.distance + BULLET_HIT_EPSILON);
-
       const tracerOrigin = tempTracerOriginRef.current;
       const muzzle = characterMuzzleRef.current;
-      if (muzzle && playerChar?.visible) {
+      const usedMuzzle = !!muzzle && !!playerChar?.visible;
+      if (usedMuzzle) {
         muzzle.getWorldPosition(tracerOrigin);
-        tracerOrigin.addScaledVector(shot.direction, TRACER_MUZZLE_FORWARD_OFFSET);
       } else {
         tracerOrigin.copy(shot.origin);
       }
+
+      const cameraTargetVisible =
+        !!cameraTargetHit &&
+        (!cameraWorldHit || cameraTargetHit.distance <= cameraWorldHit.distance + BULLET_HIT_EPSILON);
+
+      const aimPoint = tempAimPointRef.current;
+      if (cameraTargetHit && cameraTargetVisible) {
+        aimPoint.copy(cameraTargetHit.point);
+      } else if (cameraWorldHit) {
+        aimPoint.copy(cameraWorldHit.point);
+      } else {
+        aimPoint.copy(shot.origin).addScaledVector(shot.direction, TRACER_DISTANCE);
+      }
+
+      const fireDirection = tempFireDirectionRef.current;
+      fireDirection.copy(aimPoint).sub(tracerOrigin);
+      let fireDistance = fireDirection.length();
+      if (fireDistance > BULLET_HIT_EPSILON) {
+        fireDirection.multiplyScalar(1 / fireDistance);
+      } else {
+        fireDirection.copy(shot.direction);
+        fireDistance = TRACER_DISTANCE;
+      }
+
+      if (usedMuzzle) {
+        tracerOrigin.addScaledVector(fireDirection, TRACER_MUZZLE_FORWARD_OFFSET);
+        fireDirection.copy(aimPoint).sub(tracerOrigin);
+        fireDistance = fireDirection.length();
+        if (fireDistance > BULLET_HIT_EPSILON) {
+          fireDirection.multiplyScalar(1 / fireDistance);
+        } else {
+          fireDirection.copy(shot.direction);
+          fireDistance = TRACER_DISTANCE;
+        }
+      }
+
+      const maxFireDistance = fireDistance + BULLET_HIT_EPSILON;
+      const targetHit = raycastTargets(tracerOrigin, fireDirection, targetsRef.current, maxFireDistance);
+      const worldHit = raycastBulletWorld(
+        scene,
+        tracerOrigin,
+        fireDirection,
+        raycasterRef.current,
+        tempImpactNormalRef.current,
+        tempImpactNormalMatrixRef.current,
+        maxFireDistance,
+      );
+      const targetVisible =
+        !!targetHit &&
+        (!worldHit || targetHit.distance <= worldHit.distance + BULLET_HIT_EPSILON);
 
       if (targetHit && targetVisible) {
         tempEndRef.current.copy(targetHit.point);
@@ -1264,17 +1334,14 @@ function GameplayRuntime({
         tempEndRef.current.copy(worldHit.point);
         pushImpactMark(worldHit.point, worldHit.normal);
       } else {
-        tempEndRef.current
-          .copy(shot.origin)
-          .addScaledVector(shot.direction, TRACER_DISTANCE);
+        tempEndRef.current.copy(aimPoint);
       }
 
-      const usedMuzzle = muzzle && playerChar?.visible;
       if (
         !usedMuzzle &&
         tracerOrigin.distanceToSquared(tempEndRef.current) > (TRACER_CAMERA_START_OFFSET + 0.04) ** 2
       ) {
-        tracerOrigin.addScaledVector(shot.direction, TRACER_CAMERA_START_OFFSET);
+        tracerOrigin.addScaledVector(fireDirection, TRACER_CAMERA_START_OFFSET);
       }
 
       const tracerDistance = tracerOrigin.distanceTo(tempEndRef.current);
@@ -1416,7 +1483,7 @@ function GameplayRuntime({
             </>
           )}
         </group>
-        <mesh ref={characterMuzzleRef} position={[-0.44, 0.02, 0]} visible={false}>
+        <mesh ref={characterMuzzleRef} position={[0, 0, 0]} visible={false}>
           <sphereGeometry args={[0.05, 8, 8]} />
           <meshBasicMaterial color="#ffd085" transparent opacity={0.9} />
         </mesh>
@@ -2026,6 +2093,26 @@ function updateWorldGunMesh(
   mesh.rotation.set(0.2, nowMs * 0.0016, 0);
 }
 
+function computeWeaponMuzzleOffset(
+  model: THREE.Group,
+  transform: WeaponModelTransform,
+): THREE.Vector3 {
+  const tempGroup = new THREE.Group();
+  tempGroup.position.set(...transform.position);
+  tempGroup.rotation.set(...(transform.rotation as [number, number, number]));
+  tempGroup.scale.setScalar(transform.scale);
+  const clone = model.clone(true);
+  tempGroup.add(clone);
+  tempGroup.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(tempGroup);
+  tempGroup.remove(clone);
+  return new THREE.Vector3(
+    box.min.x,
+    (box.min.y + box.max.y) / 2,
+    (box.min.z + box.max.z) / 2,
+  );
+}
+
 function updateCharacterWeaponMesh(
   weaponGroup: THREE.Group | null,
   rifleModel: THREE.Group | null,
@@ -2036,6 +2123,8 @@ function updateCharacterWeaponMesh(
   switchState: WeaponSwitchState,
   anchor: { position: THREE.Vector3; quaternion: THREE.Quaternion } | null,
   alignment: WeaponAlignmentOffset,
+  rifleMuzzleOffset: THREE.Vector3,
+  sniperMuzzleOffset: THREE.Vector3,
 ) {
   if (!weaponGroup) {
     return;
@@ -2086,10 +2175,10 @@ function updateCharacterWeaponMesh(
 
   if (muzzleFlashMesh) {
     if (displayedWeapon === "sniper") {
-      muzzleFlashMesh.position.set(-0.66, 0.02, 0);
+      muzzleFlashMesh.position.copy(sniperMuzzleOffset);
       muzzleFlashMesh.scale.setScalar(1.15);
     } else {
-      muzzleFlashMesh.position.set(-0.44, 0.02, 0);
+      muzzleFlashMesh.position.copy(rifleMuzzleOffset);
       muzzleFlashMesh.scale.setScalar(1);
     }
     muzzleFlashMesh.visible = weapon.hasMuzzleFlash(nowMs);
@@ -2141,7 +2230,14 @@ function raycastBulletWorld(
   raycaster: THREE.Raycaster,
   tempNormal: THREE.Vector3,
   tempNormalMatrix: THREE.Matrix3,
+  maxDistance = Number.POSITIVE_INFINITY,
 ): WorldRaycastHit | null {
+  if (maxDistance <= 0) {
+    return null;
+  }
+
+  raycaster.near = 0;
+  raycaster.far = maxDistance;
   raycaster.set(origin, direction);
   const intersections = raycaster.intersectObjects(scene.children, true);
 
@@ -2154,6 +2250,9 @@ function raycastBulletWorld(
       continue;
     }
     if (intersection.distance <= 0) {
+      continue;
+    }
+    if (intersection.distance > maxDistance) {
       continue;
     }
 

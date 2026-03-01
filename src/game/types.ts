@@ -73,12 +73,12 @@ export type WeaponAlignmentOffset = {
 };
 
 export const DEFAULT_WEAPON_ALIGNMENT: WeaponAlignmentOffset = {
-  posX: 0,
-  posY: 0,
-  posZ: 0,
-  rotX: 0,
-  rotY: 0,
-  rotZ: 0,
+  posX: 0.150,
+  posY: 0.240,
+  posZ: 0.040,
+  rotX: -2.96,
+  rotY: 0.13,
+  rotZ: -1.23,
 };
 
 export type GameSettings = {
