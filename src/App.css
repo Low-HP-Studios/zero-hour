@@ -852,6 +852,59 @@ code {
   text-transform: capitalize;
 }
 
+.update-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.update-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-pill-inline {
+  border-radius: 999px;
+  padding: 5px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: #dce8f1;
+}
+
+.status-idle {
+  color: #dce8f1;
+}
+
+.status-warn {
+  color: #ffd396;
+  border-color: rgba(255, 171, 66, 0.24);
+  background: rgba(255, 171, 66, 0.14);
+}
+
+.status-ok {
+  color: #adf2c6;
+  border-color: rgba(67, 213, 135, 0.26);
+  background: rgba(67, 213, 135, 0.14);
+}
+
+.status-error {
+  color: #ffc2c8;
+  border-color: rgba(255, 111, 122, 0.28);
+  background: rgba(255, 111, 122, 0.14);
+}
+
+.update-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.update-action-row .btn {
+  min-width: 168px;
+}
+
 .preset-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1267,7 +1320,8 @@ code {
   }
 
   .metric-cards,
-  .preset-grid {
+  .preset-grid,
+  .update-summary-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1283,6 +1337,11 @@ code {
   }
 
   .keybind-btn {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .update-action-row .btn {
     width: 100%;
     min-width: 0;
   }

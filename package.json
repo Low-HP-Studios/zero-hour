@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "main": "electron/main.js",
+  "repository": "https://github.com/ayushrameja/threeJS",
   "scripts": {
     "dev": "vite",
     "dev:electron": "concurrently -k \"vite\" \"wait-on http://localhost:1420 && electron .\"",
@@ -19,6 +20,7 @@
   "dependencies": {
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.5.0",
+    "electron-updater": "^6.7.0",
     "r3f-perf": "^7.2.3",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
@@ -45,9 +47,17 @@
   "build": {
     "appId": "com.ayushrameja.zerohour",
     "productName": "Zero Hour",
+    "artifactName": "Zero-Hour-${version}-${os}-${arch}.${ext}",
     "directories": {
       "output": "release"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "ayushrameja",
+        "repo": "threeJS"
+      }
+    ],
     "files": [
       "dist/**/*",
       "electron/**/*"
@@ -69,6 +79,14 @@
     "linux": {
       "target": "AppImage",
       "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Zero Hour",
+      "perMachine": false
     }
   },
   "pnpm": {

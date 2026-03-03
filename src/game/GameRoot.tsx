@@ -40,7 +40,8 @@ type PauseMenuTab =
   | "audio"
   | "controls"
   | "graphics"
-  | "hud";
+  | "hud"
+  | "updates";
 type BindingKey = keyof ControlBindings;
 
 type MenuTabOption = {
@@ -62,6 +63,7 @@ const MENU_TABS: MenuTabOption[] = [
   { id: "controls", label: "Controls", hint: "Keybinds" },
   { id: "graphics", label: "Graphics", hint: "Render" },
   { id: "hud", label: "HUD", hint: "Panels" },
+  { id: "updates", label: "Updates", hint: "Patch & repair" },
 ];
 
 const BINDING_ROWS: BindingDefinition[] = [
@@ -112,6 +114,12 @@ const DEFAULT_GAME_SETTINGS: GameSettings = {
   keybinds: { ...DEFAULT_CONTROL_BINDINGS },
   fov: 65,
   weaponAlignment: { ...DEFAULT_WEAPON_ALIGNMENT },
+};
+
+const DEFAULT_UPDATER_STATUS: UpdaterStatusPayload = {
+  phase: "idle",
+  currentVersion: "dev",
+  message: "Updater is idle.",
 };
 
 type PersistedSettings = {
@@ -446,6 +454,14 @@ export function GameRoot() {
     until: 0,
     kind: "body",
   });
+  const [updaterStatus, setUpdaterStatus] = useState<UpdaterStatusPayload>(
+    DEFAULT_UPDATER_STATUS,
+  );
+  const [updaterBusyAction, setUpdaterBusyAction] = useState<
+    "check" | "install" | "repair" | null
+  >(null);
+  const updaterApi = window.electronAPI?.updater;
+  const updaterAvailable = Boolean(updaterApi);
   const isPaused = !player.pointerLocked;
 
   const handleCloseMenuAndResume = useCallback(() => {
@@ -470,6 +486,84 @@ export function GameRoot() {
       until: performance.now() + (kind === "kill" ? 170 : kind === "head" ? 120 : 90),
     });
   }, []);
+
+  useEffect(() => {
+    if (!updaterApi) {
+      return;
+    }
+
+    let mounted = true;
+    const unsubscribe = updaterApi.onStatus((status: UpdaterStatusPayload) => {
+      if (!mounted) {
+        return;
+      }
+      setUpdaterStatus(status);
+    });
+
+    void updaterApi.getStatus()
+      .then((status: UpdaterStatusPayload) => {
+        if (!mounted) {
+          return;
+        }
+        setUpdaterStatus(status);
+      })
+      .catch((error: unknown) => {
+        if (!mounted) {
+          return;
+        }
+        setUpdaterStatus((prev) => ({
+          ...prev,
+          phase: "error",
+          message: `Updater unavailable: ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+        }));
+      });
+
+    return () => {
+      mounted = false;
+      unsubscribe();
+    };
+  }, [updaterApi]);
+
+  const handleCheckForUpdates = useCallback(async () => {
+    if (!updaterApi) {
+      return;
+    }
+
+    setUpdaterBusyAction("check");
+    try {
+      await updaterApi.check();
+    } finally {
+      setUpdaterBusyAction(null);
+    }
+  }, [updaterApi]);
+
+  const handleInstallUpdate = useCallback(async () => {
+    if (!updaterApi) {
+      return;
+    }
+
+    setUpdaterBusyAction("install");
+    try {
+      await updaterApi.installNow();
+    } finally {
+      setUpdaterBusyAction(null);
+    }
+  }, [updaterApi]);
+
+  const handleRepairInstall = useCallback(async () => {
+    if (!updaterApi) {
+      return;
+    }
+
+    setUpdaterBusyAction("repair");
+    try {
+      await updaterApi.repair();
+    } finally {
+      setUpdaterBusyAction(null);
+    }
+  }, [updaterApi]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -589,6 +683,19 @@ export function GameRoot() {
       "Esc pause",
     ];
   }, [settings.keybinds]);
+  const updaterPhaseLabel = formatUpdaterPhase(updaterStatus.phase);
+  const updaterPhaseClass = updaterStatus.phase === "error"
+    ? "error"
+    : updaterStatus.phase === "downloaded"
+    ? "ok"
+    : updaterStatus.phase === "downloading" || updaterStatus.phase === "checking"
+    ? "warn"
+    : "idle";
+  const canInstallUpdate = updaterStatus.phase === "downloaded";
+  const downloaderProgressLabel = updaterStatus.phase === "downloading" &&
+      typeof updaterStatus.progress === "number"
+    ? `${updaterStatus.progress}%`
+    : null;
 
   return (
     <div className={`app-shell ${isPaused ? "paused" : "playing"}`}>
@@ -1372,6 +1479,103 @@ export function GameRoot() {
                         </div>
                       )
                       : null}
+
+                    {menuTab === "updates"
+                      ? (
+                        <div className="menu-sections">
+                          <MenuSection
+                            title="Version Status"
+                            blurb="Discord-style background updater, but with fewer corporate layers."
+                          >
+                            <div className="update-summary-grid">
+                              <div className="metric-card">
+                                <span>Current build</span>
+                                <strong>{updaterStatus.currentVersion}</strong>
+                              </div>
+                              <div className="metric-card">
+                                <span>Latest known</span>
+                                <strong>{updaterStatus.targetVersion ?? "-"}</strong>
+                              </div>
+                              <div className="metric-card">
+                                <span>Platform</span>
+                                <strong>{window.electronAPI?.platform ?? "web"}</strong>
+                              </div>
+                              <div className="metric-card">
+                                <span>Status</span>
+                                <strong>{updaterPhaseLabel}</strong>
+                              </div>
+                            </div>
+                            <div className="update-status-row">
+                              <span
+                                className={`status-pill status-pill-inline status-${updaterPhaseClass}`}
+                              >
+                                {updaterPhaseLabel}
+                              </span>
+                              {downloaderProgressLabel
+                                ? (
+                                  <span className="pill-chip">
+                                    Download {downloaderProgressLabel}
+                                  </span>
+                                )
+                                : null}
+                            </div>
+                            <p className="muted compact-note">
+                              {updaterStatus.message ?? "No updater message."}
+                            </p>
+                          </MenuSection>
+
+                          <MenuSection
+                            title="Actions"
+                            blurb="Check now, install now, or run repair/reinstall flow."
+                          >
+                            <div className="update-action-row">
+                              <button
+                                type="button"
+                                className="btn"
+                                onClick={handleCheckForUpdates}
+                                disabled={!updaterAvailable || updaterBusyAction !== null}
+                              >
+                                {updaterBusyAction === "check"
+                                  ? "Checking..."
+                                  : "Check for updates"}
+                              </button>
+                              <button
+                                type="button"
+                                className="btn"
+                                onClick={handleInstallUpdate}
+                                disabled={!updaterAvailable || !canInstallUpdate || updaterBusyAction !== null}
+                              >
+                                {updaterBusyAction === "install"
+                                  ? "Installing..."
+                                  : "Restart to install"}
+                              </button>
+                              <button
+                                type="button"
+                                className="btn"
+                                onClick={handleRepairInstall}
+                                disabled={!updaterAvailable || updaterBusyAction !== null}
+                              >
+                                {updaterBusyAction === "repair"
+                                  ? "Repairing..."
+                                  : "Repair installation"}
+                              </button>
+                            </div>
+                            {!updaterAvailable
+                              ? (
+                                <p className="warning-note">
+                                  Updater API is unavailable in this runtime.
+                                </p>
+                              )
+                              : null}
+                            <p className="muted compact-note">
+                              Repair verifies download integrity via updater
+                              metadata and runs update/reinstall flow. It is not
+                              a full disk-level forensic scan.
+                            </p>
+                          </MenuSection>
+                        </div>
+                      )
+                      : null}
                   </section>
                 </div>
               </div>
@@ -1606,8 +1810,31 @@ function menuTitle(tab: PauseMenuTab) {
       return "Graphics Settings";
     case "hud":
       return "HUD Settings";
+    case "updates":
+      return "Updates & Repair";
     default:
       return "Settings";
+  }
+}
+
+function formatUpdaterPhase(phase: UpdaterStatusPayload["phase"]) {
+  switch (phase) {
+    case "idle":
+      return "Idle";
+    case "checking":
+      return "Checking";
+    case "available":
+      return "Update available";
+    case "downloading":
+      return "Downloading";
+    case "downloaded":
+      return "Ready to install";
+    case "none":
+      return "Up to date";
+    case "error":
+      return "Error";
+    default:
+      return "Unknown";
   }
 }
 
