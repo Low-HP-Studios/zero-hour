@@ -1,9 +1,19 @@
-import { app, BrowserWindow, globalShortcut, protocol, net } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  globalShortcut,
+  ipcMain,
+  protocol,
+  net,
+} from 'electron';
+import { createRequire } from 'module';
 import { fileURLToPath, pathToFileURL } from 'url';
 import path from 'path';
 import fs from 'fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
+const { createUpdaterService } = require('./updater.cjs');
 const isDev = !app.isPackaged;
 const distPath = path.join(__dirname, '..', 'dist');
 
@@ -48,6 +58,7 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 let mainWindow = null;
+let updaterService = null;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -76,6 +87,41 @@ function createWindow() {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
+  });
+}
+
+function registerUpdaterHandlers() {
+  ipcMain.handle('updater:get-status', () => {
+    if (updaterService) {
+      return updaterService.getStatus();
+    }
+
+    return {
+      phase: 'idle',
+      currentVersion: app.getVersion(),
+      message: 'Updater not initialized.',
+    };
+  });
+
+  ipcMain.handle('updater:check', async () => {
+    if (!updaterService) {
+      return { status: 'error', version: undefined };
+    }
+    return updaterService.checkForUpdates();
+  });
+
+  ipcMain.handle('updater:install-now', async () => {
+    if (!updaterService) {
+      return;
+    }
+    await updaterService.installNow();
+  });
+
+  ipcMain.handle('updater:repair', async () => {
+    if (!updaterService) {
+      return { mode: 'manual' };
+    }
+    return updaterService.repairInstallation();
   });
 }
 
@@ -108,6 +154,11 @@ app.whenReady().then(() => {
   }
 
   createWindow();
+  updaterService = createUpdaterService({
+    getMainWindow: () => mainWindow,
+  });
+  registerUpdaterHandlers();
+  updaterService.scheduleStartupCheck();
 
   globalShortcut.register('F11', () => {
     if (mainWindow) {

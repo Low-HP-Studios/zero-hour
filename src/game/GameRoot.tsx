@@ -1,5 +1,6 @@
 import {
   type CSSProperties,
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -9,16 +10,6 @@ import {
 import { type AudioVolumeSettings, DEFAULT_AUDIO_VOLUMES } from "./Audio";
 import { PerfHUD } from "./PerfHUD";
 import { type AimingState, type HitMarkerKind, Scene } from "./Scene";
-import {
-  MenuSection,
-  MetricCard,
-  SwitchRow,
-  RangeField,
-  VolumeSlider,
-  type PauseMenuTab,
-  menuTitle,
-  formatKeyCode,
-} from "./SettingsPanels";
 import type { SniperRechamberState, WeaponKind } from "./Weapon";
 import {
   type ControlBindings,
@@ -43,6 +34,14 @@ const PIXEL_RATIO_OPTIONS: Array<{ value: PixelRatioScale; label: string }> = [
   { value: 1, label: "High" },
 ];
 
+type PauseMenuTab =
+  | "practice"
+  | "gameplay"
+  | "audio"
+  | "controls"
+  | "graphics"
+  | "hud"
+  | "updates";
 type BindingKey = keyof ControlBindings;
 
 type MenuTabOption = {
@@ -64,6 +63,7 @@ const MENU_TABS: MenuTabOption[] = [
   { id: "controls", label: "Controls", hint: "Keybinds" },
   { id: "graphics", label: "Graphics", hint: "Render" },
   { id: "hud", label: "HUD", hint: "Panels" },
+  { id: "updates", label: "Updates", hint: "Patch & repair" },
 ];
 
 const BINDING_ROWS: BindingDefinition[] = [
@@ -114,6 +114,12 @@ const DEFAULT_GAME_SETTINGS: GameSettings = {
   keybinds: { ...DEFAULT_CONTROL_BINDINGS },
   fov: 65,
   weaponAlignment: { ...DEFAULT_WEAPON_ALIGNMENT },
+};
+
+const DEFAULT_UPDATER_STATUS: UpdaterStatusPayload = {
+  phase: "idle",
+  currentVersion: "dev",
+  message: "Updater is idle.",
 };
 
 type PersistedSettings = {
@@ -389,11 +395,7 @@ function savePersistedSettings(settings: PersistedSettings) {
   }
 }
 
-type GameRootProps = {
-  onReturnToLobby: () => void;
-};
-
-export function GameRoot({ onReturnToLobby }: GameRootProps) {
+export function GameRoot() {
   const persistedSettings = useMemo(loadPersistedSettings, []);
   const [settings, setSettings] = useState<GameSettings>(
     persistedSettings.settings,
@@ -412,7 +414,9 @@ export function GameRoot({ onReturnToLobby }: GameRootProps) {
   const [perfMetrics, setPerfMetrics] = useState<PerfMetrics>(
     DEFAULT_PERF_METRICS,
   );
-  const [player, setPlayerRaw] = useState<PlayerSnapshot>(DEFAULT_PLAYER_SNAPSHOT);
+  const [player, setPlayerRaw] = useState<PlayerSnapshot>(
+    DEFAULT_PLAYER_SNAPSHOT,
+  );
   const playerRef = useRef(player);
   const setPlayer = useCallback((snapshot: PlayerSnapshot) => {
     const prev = playerRef.current;
@@ -452,6 +456,14 @@ export function GameRoot({ onReturnToLobby }: GameRootProps) {
     until: 0,
     kind: "body",
   });
+  const [updaterStatus, setUpdaterStatus] = useState<UpdaterStatusPayload>(
+    DEFAULT_UPDATER_STATUS,
+  );
+  const [updaterBusyAction, setUpdaterBusyAction] = useState<
+    "check" | "install" | "repair" | null
+  >(null);
+  const updaterApi = window.electronAPI?.updater;
+  const updaterAvailable = Boolean(updaterApi);
   const isPaused = !player.pointerLocked;
 
   const handleCloseMenuAndResume = useCallback(() => {
@@ -473,9 +485,88 @@ export function GameRoot({ onReturnToLobby }: GameRootProps) {
   const handleHitMarker = useCallback((kind: HitMarkerKind) => {
     setHitMarker({
       kind,
-      until: performance.now() + (kind === "kill" ? 170 : kind === "head" ? 120 : 90),
+      until: performance.now() +
+        (kind === "kill" ? 170 : kind === "head" ? 120 : 90),
     });
   }, []);
+
+  useEffect(() => {
+    if (!updaterApi) {
+      return;
+    }
+
+    let mounted = true;
+    const unsubscribe = updaterApi.onStatus((status: UpdaterStatusPayload) => {
+      if (!mounted) {
+        return;
+      }
+      setUpdaterStatus(status);
+    });
+
+    void updaterApi.getStatus()
+      .then((status: UpdaterStatusPayload) => {
+        if (!mounted) {
+          return;
+        }
+        setUpdaterStatus(status);
+      })
+      .catch((error: unknown) => {
+        if (!mounted) {
+          return;
+        }
+        setUpdaterStatus((prev) => ({
+          ...prev,
+          phase: "error",
+          message: `Updater unavailable: ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+        }));
+      });
+
+    return () => {
+      mounted = false;
+      unsubscribe();
+    };
+  }, [updaterApi]);
+
+  const handleCheckForUpdates = useCallback(async () => {
+    if (!updaterApi) {
+      return;
+    }
+
+    setUpdaterBusyAction("check");
+    try {
+      await updaterApi.check();
+    } finally {
+      setUpdaterBusyAction(null);
+    }
+  }, [updaterApi]);
+
+  const handleInstallUpdate = useCallback(async () => {
+    if (!updaterApi) {
+      return;
+    }
+
+    setUpdaterBusyAction("install");
+    try {
+      await updaterApi.installNow();
+    } finally {
+      setUpdaterBusyAction(null);
+    }
+  }, [updaterApi]);
+
+  const handleRepairInstall = useCallback(async () => {
+    if (!updaterApi) {
+      return;
+    }
+
+    setUpdaterBusyAction("repair");
+    try {
+      await updaterApi.repair();
+    } finally {
+      setUpdaterBusyAction(null);
+    }
+  }, [updaterApi]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -595,6 +686,20 @@ export function GameRoot({ onReturnToLobby }: GameRootProps) {
       "Esc pause",
     ];
   }, [settings.keybinds]);
+  const updaterPhaseLabel = formatUpdaterPhase(updaterStatus.phase);
+  const updaterPhaseClass = updaterStatus.phase === "error"
+    ? "error"
+    : updaterStatus.phase === "downloaded"
+    ? "ok"
+    : updaterStatus.phase === "downloading" ||
+        updaterStatus.phase === "checking"
+    ? "warn"
+    : "idle";
+  const canInstallUpdate = updaterStatus.phase === "downloaded";
+  const downloaderProgressLabel = updaterStatus.phase === "downloading" &&
+      typeof updaterStatus.progress === "number"
+    ? `${updaterStatus.progress}%`
+    : null;
 
   return (
     <div className={`app-shell ${isPaused ? "paused" : "playing"}`}>
@@ -806,13 +911,6 @@ export function GameRoot({ onReturnToLobby }: GameRootProps) {
                     <div className="pause-footer-note muted">
                       Press <code>Esc</code> to pause again after resuming.
                     </div>
-                    <button
-                      type="button"
-                      className="btn btn-lobby-return"
-                      onClick={onReturnToLobby}
-                    >
-                      Return to Lobby
-                    </button>
                   </aside>
 
                   <section
@@ -1385,6 +1483,111 @@ export function GameRoot({ onReturnToLobby }: GameRootProps) {
                         </div>
                       )
                       : null}
+
+                    {menuTab === "updates"
+                      ? (
+                        <div className="menu-sections">
+                          <MenuSection
+                            title="Version Status"
+                            blurb="Discord-style background updater, but with fewer corporate layers."
+                          >
+                            <div className="update-summary-grid">
+                              <div className="metric-card">
+                                <span>Current build</span>
+                                <strong>{updaterStatus.currentVersion}</strong>
+                              </div>
+                              <div className="metric-card">
+                                <span>Latest known</span>
+                                <strong>
+                                  {updaterStatus.targetVersion ?? "-"}
+                                </strong>
+                              </div>
+                              <div className="metric-card">
+                                <span>Platform</span>
+                                <strong>
+                                  {window.electronAPI?.platform ?? "web"}
+                                </strong>
+                              </div>
+                              <div className="metric-card">
+                                <span>Status</span>
+                                <strong>{updaterPhaseLabel}</strong>
+                              </div>
+                            </div>
+                            <div className="update-status-row">
+                              <span
+                                className={`status-pill status-pill-inline status-${updaterPhaseClass}`}
+                              >
+                                {updaterPhaseLabel}
+                              </span>
+                              {downloaderProgressLabel
+                                ? (
+                                  <span className="pill-chip">
+                                    Download {downloaderProgressLabel}
+                                  </span>
+                                )
+                                : null}
+                            </div>
+                            <p className="muted compact-note">
+                              {updaterStatus.message ?? "No updater message."}
+                            </p>
+                          </MenuSection>
+
+                          <MenuSection
+                            title="Actions"
+                            blurb="Check now, install now, or run repair/reinstall flow."
+                          >
+                            <div className="update-action-row">
+                              <button
+                                type="button"
+                                className="btn"
+                                onClick={handleCheckForUpdates}
+                                disabled={!updaterAvailable ||
+                                  updaterBusyAction !== null}
+                              >
+                                {updaterBusyAction === "check"
+                                  ? "Checking..."
+                                  : "Check for updates"}
+                              </button>
+                              <button
+                                type="button"
+                                className="btn"
+                                onClick={handleInstallUpdate}
+                                disabled={!updaterAvailable ||
+                                  !canInstallUpdate ||
+                                  updaterBusyAction !== null}
+                              >
+                                {updaterBusyAction === "install"
+                                  ? "Installing..."
+                                  : "Restart to install"}
+                              </button>
+                              <button
+                                type="button"
+                                className="btn"
+                                onClick={handleRepairInstall}
+                                disabled={!updaterAvailable ||
+                                  updaterBusyAction !== null}
+                              >
+                                {updaterBusyAction === "repair"
+                                  ? "Repairing..."
+                                  : "Repair installation"}
+                              </button>
+                            </div>
+                            {!updaterAvailable
+                              ? (
+                                <p className="warning-note">
+                                  Updater API is unavailable in this runtime.
+                                </p>
+                              )
+                              : null}
+                            <p className="muted compact-note">
+                              Repair verifies download integrity via updater
+                              metadata and runs update/reinstall flow. It is not
+                              a full disk-level forensic scan.
+                            </p>
+                          </MenuSection>
+                        </div>
+                      )
+                      : null}
                   </section>
                 </div>
               </div>
@@ -1441,7 +1644,9 @@ export function GameRoot({ onReturnToLobby }: GameRootProps) {
                         key={option.value}
                         type="button"
                         className={`chip-btn ${
-                          settings.pixelRatioScale === option.value ? "active" : ""
+                          settings.pixelRatioScale === option.value
+                            ? "active"
+                            : ""
                         }`}
                         onClick={() =>
                           setSettings((prev) => ({
@@ -1483,3 +1688,186 @@ export function GameRoot({ onReturnToLobby }: GameRootProps) {
   );
 }
 
+type MenuSectionProps = {
+  title: string;
+  blurb?: string;
+  children: React.ReactNode;
+};
+
+const MenuSection = memo(
+  function MenuSection({ title, blurb, children }: MenuSectionProps) {
+    return (
+      <section className="menu-section">
+        <header className="menu-section-header">
+          <h3>{title}</h3>
+          {blurb ? <p className="muted">{blurb}</p> : null}
+        </header>
+        <div className="menu-section-body">{children}</div>
+      </section>
+    );
+  },
+);
+
+type MetricCardProps = {
+  label: string;
+  value: string;
+};
+
+const MetricCard = memo(function MetricCard({ label, value }: MetricCardProps) {
+  return (
+    <div className="metric-card">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+});
+
+type SwitchRowProps = {
+  label: string;
+  hint: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+};
+
+const SwitchRow = memo(
+  function SwitchRow({ label, hint, checked, onChange }: SwitchRowProps) {
+    return (
+      <label className="switch-row">
+        <span>
+          <span className="field-label">{label}</span>
+          <span className="field-hint">{hint}</span>
+        </span>
+        <span className="switch-shell">
+          <input
+            type="checkbox"
+            checked={checked}
+            onChange={(event) => onChange(event.currentTarget.checked)}
+          />
+          <span className="switch-track" aria-hidden="true">
+            <span className="switch-thumb" />
+          </span>
+        </span>
+      </label>
+    );
+  },
+);
+
+type RangeFieldProps = {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  suffix?: string;
+  onChange: (value: number) => void;
+};
+
+const RangeField = memo(function RangeField(
+  { label, value, min, max, step, suffix, onChange }: RangeFieldProps,
+) {
+  const decimals = step < 1 ? Math.max(0, Math.ceil(-Math.log10(step))) : 0;
+  const display = decimals > 0 ? value.toFixed(decimals) : String(value);
+
+  return (
+    <div className="range-field">
+      <div className="range-label-row">
+        <span className="field-label">{label}</span>
+        <span className="range-value">
+          {display}
+          {suffix ?? ""}
+        </span>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(event) => onChange(Number(event.currentTarget.value))}
+      />
+    </div>
+  );
+});
+
+type VolumeSliderProps = {
+  label: string;
+  value: number;
+  onChange: (value: number) => void;
+};
+
+const VolumeSlider = memo(
+  function VolumeSlider({ label, value, onChange }: VolumeSliderProps) {
+    return (
+      <div className="range-field volume-field">
+        <div className="range-label-row">
+          <span className="field-label">{label}</span>
+          <span className="range-value">{Math.round(value * 100)}%</span>
+        </div>
+        <input
+          type="range"
+          min={0}
+          max={1}
+          step={0.01}
+          value={value}
+          onChange={(event) => onChange(Number(event.currentTarget.value))}
+        />
+      </div>
+    );
+  },
+);
+
+function menuTitle(tab: PauseMenuTab) {
+  switch (tab) {
+    case "practice":
+      return "Practice Menu";
+    case "gameplay":
+      return "Gameplay Settings";
+    case "audio":
+      return "Audio Settings";
+    case "controls":
+      return "Control Settings";
+    case "graphics":
+      return "Graphics Settings";
+    case "hud":
+      return "HUD Settings";
+    case "updates":
+      return "Updates & Repair";
+    default:
+      return "Settings";
+  }
+}
+
+function formatUpdaterPhase(phase: UpdaterStatusPayload["phase"]) {
+  switch (phase) {
+    case "idle":
+      return "Idle";
+    case "checking":
+      return "Checking";
+    case "available":
+      return "Update available";
+    case "downloading":
+      return "Downloading";
+    case "downloaded":
+      return "Ready to install";
+    case "none":
+      return "Up to date";
+    case "error":
+      return "Error";
+    default:
+      return "Unknown";
+  }
+}
+
+function formatKeyCode(code: string) {
+  if (code.startsWith("Key")) return code.slice(3).toUpperCase();
+  if (code.startsWith("Digit")) return code.slice(5);
+  if (code === "Space") return "Space";
+  if (code === "ShiftLeft") return "L-Shift";
+  if (code === "ShiftRight") return "R-Shift";
+  if (code === "ControlLeft") return "L-Ctrl";
+  if (code === "ControlRight") return "R-Ctrl";
+  if (code === "AltLeft") return "L-Alt";
+  if (code === "AltRight") return "R-Alt";
+  if (code.startsWith("Arrow")) return code.slice(5);
+  return code;
+}
