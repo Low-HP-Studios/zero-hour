@@ -65,7 +65,7 @@ function createWindow() {
     width: 1600,
     height: 900,
     fullscreen: true,
-    title: 'Zero Hour',
+    title: 'Greytrace',
     autoHideMenuBar: true,
     icon: isDev
       ? path.join(__dirname, '..', 'public', 'assets', 'branding', 'logo.svg')

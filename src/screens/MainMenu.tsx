@@ -1,41 +1,69 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { LobbyScene } from "./LobbyCharacter";
 
-import { type AudioVolumeSettings, DEFAULT_AUDIO_VOLUMES } from "../game/Audio";
+import { type AudioVolumeSettings } from "../game/Audio";
 import {
   MenuSection,
   SwitchRow,
   RangeField,
   VolumeSlider,
-  type PauseMenuTab,
   menuTitle,
   formatKeyCode,
 } from "../game/SettingsPanels";
+import type { GameSettings, HudOverlayToggles } from "../game/types";
 import {
-  type ControlBindings,
-  DEFAULT_AIM_SENSITIVITY_SETTINGS,
-  DEFAULT_CONTROL_BINDINGS,
-  DEFAULT_HUD_OVERLAY_TOGGLES,
-  DEFAULT_WEAPON_ALIGNMENT,
-  type GameSettings,
-  type HudOverlayToggles,
-  type PixelRatioScale,
-  type StressModeCount,
-} from "../game/types";
+  type BindingKey,
+  type PauseMenuTab,
+  PIXEL_RATIO_OPTIONS,
+  BINDING_ROWS,
+  loadPersistedSettings,
+  savePersistedSettings,
+} from "../game/settings";
 
 type MainMenuProps = {
   onStartGame: () => void;
 };
 
 type LobbyTab = "play" | "friends" | "customise" | "store";
+type LobbyMode = "practice" | "online";
 
-const LOCKED_TABS: LobbyTab[] = ["friends", "customise", "store"];
-const SETTINGS_STORAGE_KEY = "zerohour.settings.v1";
+type NavItem = {
+  id: LobbyTab;
+  label: string;
+  hint: string;
+  status: string;
+  locked?: boolean;
+};
 
-const PIXEL_RATIO_OPTIONS: Array<{ value: PixelRatioScale; label: string }> = [
-  { value: 0.5, label: "Low" },
-  { value: 0.75, label: "Normal" },
-  { value: 1, label: "High" },
+const NAV_ITEMS: NavItem[] = [
+  {
+    id: "play",
+    label: "Play",
+    hint: "Practice lane online",
+    status: "Live",
+  },
+  {
+    id: "friends",
+    label: "Squads",
+    hint: "Party systems on deck",
+    status: "Alpha",
+    locked: true,
+  },
+  {
+    id: "customise",
+    label: "Loadout",
+    hint: "Weapon tuning in progress",
+    status: "Alpha",
+    locked: true,
+  },
+  {
+    id: "store",
+    label: "Armory",
+    hint: "Progression hooks in development",
+    status: "Alpha",
+    locked: true,
+  },
 ];
 
 const SETTINGS_TABS: Array<{ id: PauseMenuTab; label: string }> = [
@@ -45,28 +73,7 @@ const SETTINGS_TABS: Array<{ id: PauseMenuTab; label: string }> = [
   { id: "graphics", label: "Graphics" },
 ];
 
-type BindingKey = keyof ControlBindings;
 
-const BINDING_ROWS: Array<{
-  key: BindingKey;
-  label: string;
-  hint: string;
-}> = [
-  { key: "moveForward", label: "Move Forward", hint: "Walk forward" },
-  { key: "moveBackward", label: "Move Backward", hint: "Backpedal" },
-  { key: "moveLeft", label: "Move Left", hint: "Strafe left" },
-  { key: "moveRight", label: "Move Right", hint: "Strafe right" },
-  { key: "sprint", label: "Sprint", hint: "Hold to sprint" },
-  { key: "jump", label: "Jump", hint: "Hop" },
-  { key: "toggleView", label: "Toggle View", hint: "FPP / TPP" },
-  { key: "shoulderLeft", label: "Shoulder Left", hint: "TPP shoulder" },
-  { key: "shoulderRight", label: "Shoulder Right", hint: "TPP shoulder" },
-  { key: "equipRifle", label: "Equip Rifle", hint: "Weapon slot" },
-  { key: "equipSniper", label: "Equip Sniper", hint: "Weapon slot" },
-  { key: "reset", label: "Reset Targets", hint: "Practice reset" },
-  { key: "pickup", label: "Pickup", hint: "Pickup weapon" },
-  { key: "drop", label: "Drop", hint: "Drop weapon" },
-];
 
 function LockIcon() {
   return (
@@ -87,53 +94,39 @@ function LockIcon() {
   );
 }
 
-const DEFAULT_GAME_SETTINGS: GameSettings = {
-  shadows: false,
-  pixelRatioScale: 0.75,
-  showR3fPerf: false,
-  sensitivity: { ...DEFAULT_AIM_SENSITIVITY_SETTINGS },
-  keybinds: { ...DEFAULT_CONTROL_BINDINGS },
-  fov: 65,
-  weaponAlignment: { ...DEFAULT_WEAPON_ALIGNMENT },
-};
-
-function loadSettings(): {
-  settings: GameSettings;
-  hudPanels: HudOverlayToggles;
-  audioVolumes: AudioVolumeSettings;
-} {
-  try {
-    const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      return {
-        settings: { ...DEFAULT_GAME_SETTINGS, ...parsed.settings },
-        hudPanels: { ...DEFAULT_HUD_OVERLAY_TOGGLES, ...parsed.hudPanels },
-        audioVolumes: { ...DEFAULT_AUDIO_VOLUMES, ...parsed.audioVolumes },
-      };
-    }
-  } catch {}
-  return {
-    settings: { ...DEFAULT_GAME_SETTINGS },
-    hudPanels: { ...DEFAULT_HUD_OVERLAY_TOGGLES },
-    audioVolumes: { ...DEFAULT_AUDIO_VOLUMES },
-  };
+function SettingsIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="20"
+      height="20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+  );
 }
 
-function saveSettings(
-  settings: GameSettings,
-  hudPanels: HudOverlayToggles,
-  audioVolumes: AudioVolumeSettings,
-  stressCount: StressModeCount,
-) {
-  try {
-    const current = localStorage.getItem(SETTINGS_STORAGE_KEY);
-    const existing = current ? JSON.parse(current) : {};
-    localStorage.setItem(
-      SETTINGS_STORAGE_KEY,
-      JSON.stringify({ ...existing, settings, hudPanels, audioVolumes, stressCount }),
-    );
-  } catch {}
+function ArrowIcon() {
+  return (
+    <svg
+      className="btn-icon-expressive"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M5 12h14" />
+      <path d="m12 5 7 7-7 7" />
+    </svg>
+  );
 }
 
 export function MainMenu({ onStartGame }: MainMenuProps) {
@@ -143,7 +136,7 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
   const [bindingCapture, setBindingCapture] = useState<BindingKey | null>(null);
   const [transitioning, setTransitioning] = useState(false);
 
-  const persisted = useMemo(loadSettings, []);
+  const persisted = useMemo(loadPersistedSettings, []);
   const [settings, setSettings] = useState<GameSettings>(persisted.settings);
   const [hudPanels] = useState<HudOverlayToggles>(
     persisted.hudPanels,
@@ -153,7 +146,7 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
   );
 
   useEffect(() => {
-    saveSettings(settings, hudPanels, audioVolumes, 0);
+    savePersistedSettings({ settings, hudPanels, audioVolumes, stressCount: 0 });
   }, [settings, hudPanels, audioVolumes]);
 
   useEffect(() => {
@@ -218,7 +211,28 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
     onStartGame();
   }, [onStartGame]);
 
-  const isLocked = (tab: LobbyTab) => LOCKED_TABS.includes(tab);
+  const showAlphaToast = useCallback((featureLabel: string) => {
+    toast.warning(`${featureLabel} is in alpha`, {
+      description:
+        "This lane is still under development. Practice Range is the only live module in the current build.",
+      duration: 4200,
+    });
+  }, []);
+
+  const handleNavClick = useCallback((item: NavItem) => {
+    if (item.locked) {
+      showAlphaToast(item.label);
+      return;
+    }
+
+    setActiveTab(item.id);
+  }, [showAlphaToast]);
+
+  const handleModeClick = useCallback((mode: LobbyMode) => {
+    if (mode === "online") {
+      showAlphaToast("Online Deployment");
+    }
+  }, [showAlphaToast]);
 
   return (
     <div className="lobby-screen">
@@ -227,65 +241,89 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
         onTransitionComplete={handleTransitionComplete}
       />
 
-      <div className={`menu-container ${transitioning ? "menu-transitioning" : ""}`}>
-        <div className="menu-bar">
-          <h1 className="menu-logo-text">0H</h1>
-          <nav className="menu-nav-tabs">
-            {(["play", "friends", "customise", "store"] as LobbyTab[]).map(
-              (tab) => (
-                <button
-                  key={tab}
-                  type="button"
-                  className={`menu-nav-btn ${activeTab === tab ? "active" : ""} ${isLocked(tab) ? "locked" : ""}`}
-                  onClick={() => !isLocked(tab) && setActiveTab(tab)}
-                  disabled={isLocked(tab)}
-                >
-                  {tab.toUpperCase()}
-                  {isLocked(tab) && <LockIcon />}
-                </button>
-              ),
-            )}
+      <div className={`menu-layout-expressive ${transitioning ? "menu-transitioning" : ""}`}>
+        <div className="menu-topbar-expressive">
+          <div className="menu-brand-expressive">
+            <h1 className="menu-logo-text-expressive">GrayTrace</h1>
+            <span className="menu-brand-subtitle-expressive">ALPHA</span>
+          </div>
+
+          <nav className="menu-nav-expressive" aria-label="Main navigation">
+            {NAV_ITEMS.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={`menu-nav-btn-expressive ${activeTab === item.id ? "active" : ""} ${item.locked ? "locked" : ""}`}
+                onClick={() => handleNavClick(item)}
+                aria-disabled={item.locked ? "true" : undefined}
+              >
+                <span className="nav-btn-text-expressive">{item.label}</span>
+                {item.locked && <LockIcon />}
+              </button>
+            ))}
           </nav>
-          <div className="menu-bar-right">
+
+          <div className="menu-topbar-footer-expressive">
             <button
               type="button"
-              className="menu-settings-trigger"
+              className="menu-settings-btn-expressive"
               onClick={() => setSettingsOpen(true)}
             >
-              <svg viewBox="0 0 24 24" width="22" height="22" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="3" />
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-              </svg>
+              <div className="settings-icon-wrapper-expressive">
+                <SettingsIcon />
+              </div>
+              <span>Settings</span>
             </button>
           </div>
         </div>
 
-        <div className="menu-sub-bar">
-          {activeTab === "play" && (
-            <div className="menu-sub-nav">
-              <button type="button" className="menu-sub-nav-btn locked" disabled>
-                ONLINE
-                <LockIcon />
-              </button>
-              <button type="button" className="menu-sub-nav-btn active">PRACTICE</button>
-            </div>
-          )}
-        </div>
-
-        <div className="menu-content">
+        <main className="menu-main-expressive">
           {activeTab === "play" ? (
-            <div className="menu-play-card-wrapper">
-              <div className="menu-play-card-image"></div>
-              <button type="button" className="menu-play-card-btn" onClick={handlePlayClick}>
-                PLAY PRACTICE
-              </button>
+            <div className="menu-play-section-expressive">
+              <div className="menu-sub-nav-expressive">
+                <div className="sub-nav-track-expressive">
+                  <button
+                    type="button"
+                    className="menu-sub-nav-btn-expressive active"
+                    onClick={() => handleModeClick("practice")}
+                  >
+                    Practice Range
+                  </button>
+                  <button
+                    type="button"
+                    className="menu-sub-nav-btn-expressive locked"
+                    onClick={() => handleModeClick("online")}
+                    aria-disabled="true"
+                  >
+                    Online (Disabled)
+                  </button>
+                </div>
+              </div>
+
+              <div className="menu-play-card-expressive">
+                <div className="play-card-content-expressive">
+                  <div className="play-card-header-expressive">
+                    <h3>Training Simulation</h3>
+                    <span className="status-badge-expressive">Ready</span>
+                  </div>
+                  <p className="play-card-desc-expressive">Enter the firing range to test weapon mechanics, spray patterns, and advanced techniques in a controlled environment.</p>
+                </div>
+                <button type="button" className="play-btn-expressive" onClick={handlePlayClick}>
+                  <span>Enter Practice</span>
+                  <ArrowIcon />
+                </button>
+              </div>
             </div>
           ) : (
-            <div className="menu-coming-soon">
-              Module offline in Alpha.
+            <div className="menu-coming-soon-expressive">
+              <div className="offline-badge-expressive">
+                <span className="material-icon-placeholder">🚧</span>
+                <span>Module Offline</span>
+              </div>
+              <p>This feature is currently locked in the early Alpha phase.</p>
             </div>
           )}
-        </div>
+        </main>
       </div>
 
       {settingsOpen && (

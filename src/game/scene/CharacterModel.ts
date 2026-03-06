@@ -1,0 +1,336 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import * as THREE from "three";
+import { loadFbxAsset, loadFbxAnimation } from "../AssetLoader";
+import {
+  ANIM_CLIPS,
+  CHARACTER_MODEL_URL,
+  CHARACTER_TARGET_HEIGHT,
+  CHARACTER_TEXTURE_BASE,
+  CHARACTER_TEXTURE_MAP,
+  SPRINT_ANIM_TIME_SCALE,
+  WALK_ANIM_TIME_SCALE,
+  BASE_FOOTSTEP_INTERVAL_SECONDS,
+  type CharacterAnimState,
+} from "./scene-constants";
+
+export type CharacterModelResult = {
+  model: THREE.Group | null;
+  setAnimState: (state: CharacterAnimState) => void;
+};
+
+function resolveCharacterAnimTimeScale(state: CharacterAnimState): number {
+  if (state === "sprint") {
+    return SPRINT_ANIM_TIME_SCALE;
+  }
+  if (state === "idle" || state === "rifleIdle") {
+    return 1;
+  }
+  return WALK_ANIM_TIME_SCALE;
+}
+
+export function resolveFootstepIntervalSeconds(state: CharacterAnimState): number {
+  const animTimeScale = resolveCharacterAnimTimeScale(state);
+  return BASE_FOOTSTEP_INTERVAL_SECONDS / Math.max(0.1, animTimeScale);
+}
+
+export function resolveFootstepPlaybackRate(state: CharacterAnimState): number {
+  if (state === "sprint") {
+    return 1.22;
+  }
+  if (state === "walkBack" || state === "rifleWalkBack") {
+    return 0.92;
+  }
+  if (
+    state === "walkLeft" ||
+    state === "walkRight" ||
+    state === "rifleWalkLeft" ||
+    state === "rifleWalkRight"
+  ) {
+    return 1.06;
+  }
+  return 1;
+}
+
+export function normalizeBoneName(name: string): string {
+  return name
+    .replace(/^mixamorig:/, "")
+    .replace(/^characters3d\.?com___/, "")
+    .replace(/^mixamorig_/, "");
+}
+
+function splitTrackName(trackName: string): { nodeName: string; property: string } {
+  const dotIdx = trackName.lastIndexOf(".");
+  if (dotIdx <= 0) {
+    return { nodeName: trackName, property: "" };
+  }
+  return {
+    nodeName: trackName.substring(0, dotIdx),
+    property: trackName.substring(dotIdx),
+  };
+}
+
+function remapAnimationClip(
+  clip: THREE.AnimationClip,
+  modelBoneNames: Set<string>,
+): THREE.AnimationClip {
+  const firstTrack = clip.tracks[0];
+  if (!firstTrack) return clip;
+
+  const firstBone = splitTrackName(firstTrack.name).nodeName;
+  if (modelBoneNames.has(firstBone)) return clip;
+
+  const normalizedModelMap = new Map<string, string>();
+  for (const bone of modelBoneNames) {
+    normalizedModelMap.set(normalizeBoneName(bone).toLowerCase(), bone);
+  }
+
+  const buildMapping = (): Map<string, string> | null => {
+    const mapping = new Map<string, string>();
+
+    const clipBones = new Set<string>();
+    for (const track of clip.tracks) {
+      clipBones.add(splitTrackName(track.name).nodeName);
+    }
+
+    for (const clipBone of clipBones) {
+      if (modelBoneNames.has(clipBone)) {
+        mapping.set(clipBone, clipBone);
+        continue;
+      }
+
+      const normalized = normalizeBoneName(clipBone).toLowerCase();
+      const normalMatch = normalizedModelMap.get(normalized);
+      if (normalMatch) {
+        mapping.set(clipBone, normalMatch);
+        continue;
+      }
+
+      for (const modelBone of modelBoneNames) {
+        if (modelBone.toLowerCase() === clipBone.toLowerCase()) {
+          mapping.set(clipBone, modelBone);
+          break;
+        }
+      }
+    }
+
+    return mapping.size > 0 ? mapping : null;
+  };
+
+  const mapping = buildMapping();
+  if (!mapping) {
+    console.warn("[Character] Could not remap clip:", clip.name);
+    return clip;
+  }
+
+  const remapped = clip.clone();
+  for (const track of remapped.tracks) {
+    const { nodeName: boneName, property } = splitTrackName(track.name);
+    const mapped = mapping.get(boneName);
+    if (mapped && property) {
+      track.name = mapped + property;
+    }
+  }
+  return remapped;
+}
+
+function removeRootMotion(clip: THREE.AnimationClip): void {
+  for (const track of clip.tracks) {
+    const { nodeName, property } = splitTrackName(track.name);
+    if (property !== ".position") continue;
+
+    const normalized = normalizeBoneName(nodeName).toLowerCase();
+    if (!normalized.includes("hips")) continue;
+
+    const values = track.values;
+    if (values.length < 3) continue;
+
+    const baseX = values[0];
+    const baseZ = values[2];
+    for (let i = 0; i < values.length; i += 3) {
+      values[i] = baseX;
+      values[i + 2] = baseZ;
+    }
+  }
+}
+
+async function applyCharacterTextures(model: THREE.Group): Promise<void> {
+  const textureLoader = new THREE.TextureLoader();
+  const loadTex = (url: string): Promise<THREE.Texture | null> =>
+    new Promise((resolve) => {
+      const encoded = encodeURI(url);
+      textureLoader.load(encoded, resolve, undefined, () => {
+        console.warn("[Character] Texture load failed:", encoded);
+        resolve(null);
+      });
+    });
+
+  const uniqueMaterials = new Map<string, THREE.Material>();
+  model.traverse((child) => {
+    if (!(child as THREE.Mesh).isMesh) return;
+    const mesh = child as THREE.Mesh;
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const mat of mats) {
+      uniqueMaterials.set(mat.uuid, mat);
+    }
+  });
+
+  await Promise.all(
+    [...uniqueMaterials.values()].map(async (mat) => {
+      const mappable = mat as THREE.MeshPhongMaterial;
+      if (!("map" in mappable)) return;
+
+      const entry = findTextureEntry(mat.name);
+      if (!entry) return;
+
+      const [baseTex, normalTex] = await Promise.all([
+        loadTex(CHARACTER_TEXTURE_BASE + entry.base),
+        loadTex(CHARACTER_TEXTURE_BASE + entry.normal),
+      ]);
+
+      if (baseTex) {
+        if (mappable.map) mappable.map.dispose();
+        baseTex.colorSpace = THREE.SRGBColorSpace;
+        mappable.map = baseTex;
+      }
+      if (normalTex) {
+        if (mappable.normalMap) mappable.normalMap.dispose();
+        mappable.normalMap = normalTex;
+      }
+      mappable.needsUpdate = true;
+    }),
+  );
+}
+
+function findTextureEntry(materialName: string): { base: string; normal: string } | null {
+  if (CHARACTER_TEXTURE_MAP[materialName]) return CHARACTER_TEXTURE_MAP[materialName];
+  const lower = materialName.toLowerCase();
+  for (const [key, value] of Object.entries(CHARACTER_TEXTURE_MAP)) {
+    if (key.toLowerCase() === lower) return value;
+    if (lower.includes(key.toLowerCase())) return value;
+  }
+  return null;
+}
+
+export function useCharacterModel(): CharacterModelResult {
+  const [model, setModel] = useState<THREE.Group | null>(null);
+  const mixerRef = useRef<THREE.AnimationMixer | null>(null);
+  const actionsRef = useRef<Map<string, THREE.AnimationAction>>(new Map());
+  const currentAnimRef = useRef<string>("");
+
+  useEffect(() => {
+    let disposed = false;
+
+    (async () => {
+      const [fbxModel, SkeletonUtils, ...clips] = await Promise.all([
+        loadFbxAsset(CHARACTER_MODEL_URL),
+        import("three/examples/jsm/utils/SkeletonUtils.js"),
+        ...ANIM_CLIPS.map((a) => loadFbxAnimation(a.url, a.name)),
+      ]);
+
+      if (disposed || !fbxModel) return;
+
+      const clone = SkeletonUtils.clone(fbxModel) as THREE.Group;
+
+      const box = new THREE.Box3().setFromObject(clone);
+      const size = new THREE.Vector3();
+      box.getSize(size);
+      const scale = size.y > 0 ? CHARACTER_TARGET_HEIGHT / size.y : 1;
+      clone.scale.setScalar(scale);
+
+      const scaledBox = new THREE.Box3().setFromObject(clone);
+      clone.position.y = -scaledBox.min.y;
+
+      clone.traverse((child) => {
+        if (!(child as THREE.Mesh).isMesh) return;
+        child.castShadow = true;
+        child.receiveShadow = true;
+      });
+
+      await applyCharacterTextures(clone);
+
+      const modelBoneNames = new Set<string>();
+      clone.traverse((child) => {
+        if ((child as THREE.Bone).isBone || (child as THREE.SkinnedMesh).isSkinnedMesh) {
+          modelBoneNames.add(child.name);
+        }
+      });
+
+      const mixer = new THREE.AnimationMixer(clone);
+      mixerRef.current = mixer;
+      clone.userData.__mixer = mixer;
+
+      const actions = new Map<string, THREE.AnimationAction>();
+      for (let i = 0; i < ANIM_CLIPS.length; i++) {
+        const clip = clips[i];
+        if (!clip) continue;
+        const remapped = remapAnimationClip(clip, modelBoneNames).clone();
+        removeRootMotion(remapped);
+        const totalTracks = remapped.tracks.length;
+        remapped.tracks = remapped.tracks.filter((track) => {
+          const boneName = splitTrackName(track.name).nodeName;
+          return modelBoneNames.has(boneName);
+        });
+        console.log(
+          `[Character] ${ANIM_CLIPS[i].name}: dur=${remapped.duration.toFixed(3)}s, ${totalTracks} tracks -> ${remapped.tracks.length} matched`,
+        );
+        const action = mixer.clipAction(remapped);
+        action.setLoop(THREE.LoopRepeat, Infinity);
+        actions.set(ANIM_CLIPS[i].name, action);
+      }
+      actionsRef.current = actions;
+
+      const idleAction = actions.get("idle");
+      if (idleAction) {
+        idleAction.play();
+        currentAnimRef.current = "idle";
+      }
+
+      console.log("[Character] Model bones:", [...modelBoneNames]);
+      console.log("[Character] Loaded animations:", [...actions.keys()]);
+      if (clips[0]) {
+        console.log("[Character] Sample track names:", clips[0].tracks.slice(0, 3).map((t) => t.name));
+      }
+
+      setModel(clone);
+    })();
+
+    return () => {
+      disposed = true;
+      if (mixerRef.current) {
+        mixerRef.current.stopAllAction();
+        mixerRef.current.uncacheRoot(mixerRef.current.getRoot());
+        mixerRef.current = null;
+      }
+    };
+  }, []);
+
+  const setAnimState = useCallback((state: CharacterAnimState) => {
+    const targetName = state === "sprint" ? "walk" : state;
+    const targetSpeed = resolveCharacterAnimTimeScale(state);
+    const stateKey = state;
+
+    if (currentAnimRef.current === stateKey) return;
+
+    const actions = actionsRef.current;
+    const target = actions.get(targetName);
+    if (!target) return;
+
+    const prevKey = currentAnimRef.current;
+    const prevName = prevKey === "sprint" ? "walk" : prevKey;
+    const prev = actions.get(prevName);
+
+    if (prev && prev !== target) {
+      prev.fadeOut(0.25);
+    }
+
+    target.timeScale = targetSpeed;
+    if (prev !== target) {
+      target.reset().fadeIn(0.25).play();
+    } else {
+      target.timeScale = targetSpeed;
+    }
+    currentAnimRef.current = stateKey;
+  }, []);
+
+  return { model, setAnimState };
+}

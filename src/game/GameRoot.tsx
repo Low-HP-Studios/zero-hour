@@ -1,399 +1,55 @@
 import {
   type CSSProperties,
-  memo,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
-import { type AudioVolumeSettings, DEFAULT_AUDIO_VOLUMES } from "./Audio";
+import { type AudioVolumeSettings } from "./Audio";
 import { PerfHUD } from "./PerfHUD";
-import { type AimingState, type HitMarkerKind, Scene } from "./Scene";
+import {
+  type AimingState,
+  type HitMarkerKind,
+  Scene,
+} from "./scene/SceneCanvas";
+import {
+  MenuSection,
+  MetricCard,
+  SwitchRow,
+  RangeField,
+  VolumeSlider,
+  formatKeyCode,
+  menuTitle,
+} from "./SettingsPanels";
 import type { SniperRechamberState, WeaponKind } from "./Weapon";
 import {
-  type ControlBindings,
-  DEFAULT_AIM_SENSITIVITY_SETTINGS,
-  DEFAULT_CONTROL_BINDINGS,
-  DEFAULT_HUD_OVERLAY_TOGGLES,
   DEFAULT_PERF_METRICS,
   DEFAULT_PLAYER_SNAPSHOT,
   DEFAULT_WEAPON_ALIGNMENT,
   type GameSettings,
   type HudOverlayToggles,
   type PerfMetrics,
-  type PixelRatioScale,
   type PlayerSnapshot,
   type StressModeCount,
 } from "./types";
-
-const STRESS_STEPS: StressModeCount[] = [0, 50, 100, 200];
-const PIXEL_RATIO_OPTIONS: Array<{ value: PixelRatioScale; label: string }> = [
-  { value: 0.5, label: "Low" },
-  { value: 0.75, label: "Normal" },
-  { value: 1, label: "High" },
-];
-
-type PauseMenuTab =
-  | "practice"
-  | "gameplay"
-  | "audio"
-  | "controls"
-  | "graphics"
-  | "hud"
-  | "updates";
-type BindingKey = keyof ControlBindings;
-
-type MenuTabOption = {
-  id: PauseMenuTab;
-  label: string;
-  hint: string;
-};
-
-type BindingDefinition = {
-  key: BindingKey;
-  label: string;
-  hint: string;
-};
-
-const MENU_TABS: MenuTabOption[] = [
-  { id: "practice", label: "Practice", hint: "Range presets" },
-  { id: "gameplay", label: "Gameplay", hint: "Look & ADS" },
-  { id: "audio", label: "Audio", hint: "Mix levels" },
-  { id: "controls", label: "Controls", hint: "Keybinds" },
-  { id: "graphics", label: "Graphics", hint: "Render" },
-  { id: "hud", label: "HUD", hint: "Panels" },
-  { id: "updates", label: "Updates", hint: "Patch & repair" },
-];
-
-const BINDING_ROWS: BindingDefinition[] = [
-  { key: "moveForward", label: "Move Forward", hint: "Walk forward" },
-  { key: "moveBackward", label: "Move Backward", hint: "Backpedal" },
-  { key: "moveLeft", label: "Move Left", hint: "Strafe left" },
-  { key: "moveRight", label: "Move Right", hint: "Strafe right" },
-  { key: "sprint", label: "Sprint", hint: "Hold to sprint" },
-  { key: "jump", label: "Jump", hint: "Hop" },
-  { key: "toggleView", label: "Toggle View", hint: "FPP / TPP" },
-  { key: "shoulderLeft", label: "Shoulder Left", hint: "TPP shoulder" },
-  { key: "shoulderRight", label: "Shoulder Right", hint: "TPP shoulder" },
-  { key: "equipRifle", label: "Equip Rifle", hint: "Weapon slot" },
-  { key: "equipSniper", label: "Equip Sniper", hint: "Weapon slot" },
-  { key: "reset", label: "Reset Targets", hint: "Practice reset" },
-  { key: "pickup", label: "Pickup", hint: "Pickup weapon" },
-  { key: "drop", label: "Drop", hint: "Drop weapon" },
-];
-
-const OVERLAY_ROWS: Array<
-  { key: keyof HudOverlayToggles; label: string; hint: string }
-> = [
-  { key: "practice", label: "Practice panel", hint: "Top-left range status" },
-  {
-    key: "controls",
-    label: "Controls panel",
-    hint: "Bottom-left shortcut list",
-  },
-  {
-    key: "settings",
-    label: "Settings panel",
-    hint: "Bottom-right quick settings",
-  },
-  {
-    key: "performance",
-    label: "Performance panel",
-    hint: "Top-right perf HUD",
-  },
-];
-
-const SETTINGS_STORAGE_KEY = "zerohour.settings.v1";
-
-const DEFAULT_GAME_SETTINGS: GameSettings = {
-  shadows: false,
-  pixelRatioScale: 0.75,
-  showR3fPerf: false,
-  sensitivity: { ...DEFAULT_AIM_SENSITIVITY_SETTINGS },
-  keybinds: { ...DEFAULT_CONTROL_BINDINGS },
-  fov: 65,
-  weaponAlignment: { ...DEFAULT_WEAPON_ALIGNMENT },
-};
+import {
+  type BindingKey,
+  type PauseMenuTab,
+  STRESS_STEPS,
+  PIXEL_RATIO_OPTIONS,
+  MENU_TABS,
+  BINDING_ROWS,
+  OVERLAY_ROWS,
+  loadPersistedSettings,
+  savePersistedSettings,
+} from "./settings";
 
 const DEFAULT_UPDATER_STATUS: UpdaterStatusPayload = {
   phase: "idle",
   currentVersion: "dev",
   message: "Updater is idle.",
 };
-
-type PersistedSettings = {
-  settings: GameSettings;
-  hudPanels: HudOverlayToggles;
-  stressCount: StressModeCount;
-  audioVolumes: AudioVolumeSettings;
-};
-
-function createDefaultPersistedSettings(): PersistedSettings {
-  return {
-    settings: {
-      ...DEFAULT_GAME_SETTINGS,
-      sensitivity: { ...DEFAULT_AIM_SENSITIVITY_SETTINGS },
-      keybinds: { ...DEFAULT_CONTROL_BINDINGS },
-      weaponAlignment: { ...DEFAULT_WEAPON_ALIGNMENT },
-    },
-    hudPanels: { ...DEFAULT_HUD_OVERLAY_TOGGLES },
-    stressCount: 0,
-    audioVolumes: { ...DEFAULT_AUDIO_VOLUMES },
-  };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function readBoolean(value: unknown, fallback: boolean): boolean {
-  return typeof value === "boolean" ? value : fallback;
-}
-
-function readString(value: unknown, fallback: string): string {
-  return typeof value === "string" && value.length > 0 ? value : fallback;
-}
-
-function readClampedNumber(
-  value: unknown,
-  min: number,
-  max: number,
-  fallback: number,
-): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return fallback;
-  }
-  return Math.min(max, Math.max(min, value));
-}
-
-function migratePercent(value: unknown): unknown {
-  if (typeof value === "number" && Number.isFinite(value) && value >= 5) {
-    return value / 100;
-  }
-  return value;
-}
-
-function readPixelRatioScale(
-  value: unknown,
-  fallback: PixelRatioScale,
-): PixelRatioScale {
-  if (value === 1.25) {
-    return 1;
-  }
-  return PIXEL_RATIO_OPTIONS.some((option) => option.value === value)
-    ? (value as PixelRatioScale)
-    : fallback;
-}
-
-function readStressModeCount(
-  value: unknown,
-  fallback: StressModeCount,
-): StressModeCount {
-  return STRESS_STEPS.includes(value as StressModeCount)
-    ? (value as StressModeCount)
-    : fallback;
-}
-
-function parsePersistedSettings(value: unknown): PersistedSettings {
-  const defaults = createDefaultPersistedSettings();
-  if (!isRecord(value)) {
-    return defaults;
-  }
-
-  const settings = isRecord(value.settings) ? value.settings : {};
-  const sensitivity = isRecord(settings.sensitivity)
-    ? settings.sensitivity
-    : {};
-  const keybinds = isRecord(settings.keybinds) ? settings.keybinds : {};
-  const weaponAlignment = isRecord(settings.weaponAlignment)
-    ? settings.weaponAlignment
-    : {};
-  const hudPanels = isRecord(value.hudPanels) ? value.hudPanels : {};
-  const audioVolumes = isRecord(value.audioVolumes) ? value.audioVolumes : {};
-
-  return {
-    settings: {
-      shadows: readBoolean(settings.shadows, defaults.settings.shadows),
-      pixelRatioScale: readPixelRatioScale(
-        settings.pixelRatioScale,
-        defaults.settings.pixelRatioScale,
-      ),
-      showR3fPerf: readBoolean(
-        settings.showR3fPerf,
-        defaults.settings.showR3fPerf,
-      ),
-      fov: readClampedNumber(settings.fov, 40, 120, defaults.settings.fov),
-      sensitivity: {
-        look: readClampedNumber(
-          migratePercent(sensitivity.look),
-          0.05,
-          3,
-          defaults.settings.sensitivity.look,
-        ),
-        rifleAds: readClampedNumber(
-          migratePercent(sensitivity.rifleAds),
-          0.05,
-          2.5,
-          defaults.settings.sensitivity.rifleAds,
-        ),
-        sniperAds: readClampedNumber(
-          migratePercent(sensitivity.sniperAds),
-          0.05,
-          2,
-          defaults.settings.sensitivity.sniperAds,
-        ),
-        vertical: readClampedNumber(
-          migratePercent(sensitivity.vertical),
-          0.3,
-          2,
-          defaults.settings.sensitivity.vertical,
-        ),
-      },
-      keybinds: {
-        moveForward: readString(
-          keybinds.moveForward,
-          defaults.settings.keybinds.moveForward,
-        ),
-        moveBackward: readString(
-          keybinds.moveBackward,
-          defaults.settings.keybinds.moveBackward,
-        ),
-        moveLeft: readString(
-          keybinds.moveLeft,
-          defaults.settings.keybinds.moveLeft,
-        ),
-        moveRight: readString(
-          keybinds.moveRight,
-          defaults.settings.keybinds.moveRight,
-        ),
-        sprint: readString(keybinds.sprint, defaults.settings.keybinds.sprint),
-        jump: readString(keybinds.jump, defaults.settings.keybinds.jump),
-        pickup: readString(keybinds.pickup, defaults.settings.keybinds.pickup),
-        drop: readString(keybinds.drop, defaults.settings.keybinds.drop),
-        reset: readString(keybinds.reset, defaults.settings.keybinds.reset),
-        equipRifle: readString(
-          keybinds.equipRifle,
-          defaults.settings.keybinds.equipRifle,
-        ),
-        equipSniper: readString(
-          keybinds.equipSniper,
-          defaults.settings.keybinds.equipSniper,
-        ),
-        toggleView: readString(
-          keybinds.toggleView,
-          defaults.settings.keybinds.toggleView,
-        ),
-        shoulderLeft: readString(
-          keybinds.shoulderLeft,
-          defaults.settings.keybinds.shoulderLeft,
-        ),
-        shoulderRight: readString(
-          keybinds.shoulderRight,
-          defaults.settings.keybinds.shoulderRight,
-        ),
-      },
-      weaponAlignment: {
-        posX: readClampedNumber(
-          weaponAlignment.posX,
-          -0.5,
-          0.5,
-          defaults.settings.weaponAlignment.posX,
-        ),
-        posY: readClampedNumber(
-          weaponAlignment.posY,
-          -0.5,
-          0.5,
-          defaults.settings.weaponAlignment.posY,
-        ),
-        posZ: readClampedNumber(
-          weaponAlignment.posZ,
-          -0.5,
-          0.5,
-          defaults.settings.weaponAlignment.posZ,
-        ),
-        rotX: readClampedNumber(
-          weaponAlignment.rotX,
-          -Math.PI,
-          Math.PI,
-          defaults.settings.weaponAlignment.rotX,
-        ),
-        rotY: readClampedNumber(
-          weaponAlignment.rotY,
-          -Math.PI,
-          Math.PI,
-          defaults.settings.weaponAlignment.rotY,
-        ),
-        rotZ: readClampedNumber(
-          weaponAlignment.rotZ,
-          -Math.PI,
-          Math.PI,
-          defaults.settings.weaponAlignment.rotZ,
-        ),
-      },
-    },
-    hudPanels: {
-      practice: readBoolean(hudPanels.practice, defaults.hudPanels.practice),
-      controls: readBoolean(hudPanels.controls, defaults.hudPanels.controls),
-      settings: readBoolean(hudPanels.settings, defaults.hudPanels.settings),
-      performance: readBoolean(
-        hudPanels.performance,
-        defaults.hudPanels.performance,
-      ),
-    },
-    stressCount: readStressModeCount(value.stressCount, defaults.stressCount),
-    audioVolumes: {
-      master: readClampedNumber(
-        audioVolumes.master,
-        0,
-        1,
-        defaults.audioVolumes.master,
-      ),
-      gunshot: readClampedNumber(
-        audioVolumes.gunshot,
-        0,
-        1,
-        defaults.audioVolumes.gunshot,
-      ),
-      footsteps: readClampedNumber(
-        audioVolumes.footsteps,
-        0,
-        1,
-        defaults.audioVolumes.footsteps,
-      ),
-      hit: readClampedNumber(audioVolumes.hit, 0, 1, defaults.audioVolumes.hit),
-    },
-  };
-}
-
-function loadPersistedSettings(): PersistedSettings {
-  const fallback = createDefaultPersistedSettings();
-  if (typeof window === "undefined") {
-    return fallback;
-  }
-
-  try {
-    const rawSettings = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
-    if (!rawSettings) {
-      return fallback;
-    }
-    return parsePersistedSettings(JSON.parse(rawSettings));
-  } catch {
-    return fallback;
-  }
-}
-
-function savePersistedSettings(settings: PersistedSettings) {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  try {
-    window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
-  } catch {
-    // Ignore storage write failures (private mode/quota) and keep game usable.
-  }
-}
 
 interface GameRootProps {
   onReturnToLobby?: () => void;
@@ -749,10 +405,10 @@ export function GameRoot({ onReturnToLobby }: GameRootProps) {
         {hudPanels.practice
           ? (
             <div className="corner-top-left panel tactical-panel practice-panel">
-              <div className="panel-eyebrow">Zero Hour / Practice Range</div>
+              <div className="panel-eyebrow">GreyTrace / Practice Range</div>
               <div className="panel-title-row">
-                <div className="brand-lockup" aria-label="Zero Hour logo">
-                  <span className="brand-word">Zero Hour</span>
+                <div className="brand-lockup" aria-label="GreyTrace logo">
+                  <span className="brand-word">GreyTrace</span>
                 </div>
                 <div className="status-pill">
                   <span
@@ -1417,7 +1073,7 @@ export function GameRoot({ onReturnToLobby }: GameRootProps) {
                             />
                             <SwitchRow
                               label="r3f-perf Overlay"
-                              hint="Developer perf overlay (separate from Zero Hour perf panel)"
+                              hint="Developer perf overlay (separate from GreyTrace perf panel)"
                               checked={settings.showR3fPerf}
                               onChange={(checked) =>
                                 setSettings((prev) => ({
@@ -1693,155 +1349,6 @@ export function GameRoot({ onReturnToLobby }: GameRootProps) {
   );
 }
 
-type MenuSectionProps = {
-  title: string;
-  blurb?: string;
-  children: React.ReactNode;
-};
-
-const MenuSection = memo(
-  function MenuSection({ title, blurb, children }: MenuSectionProps) {
-    return (
-      <section className="menu-section">
-        <header className="menu-section-header">
-          <h3>{title}</h3>
-          {blurb ? <p className="muted">{blurb}</p> : null}
-        </header>
-        <div className="menu-section-body">{children}</div>
-      </section>
-    );
-  },
-);
-
-type MetricCardProps = {
-  label: string;
-  value: string;
-};
-
-const MetricCard = memo(function MetricCard({ label, value }: MetricCardProps) {
-  return (
-    <div className="metric-card">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-});
-
-type SwitchRowProps = {
-  label: string;
-  hint: string;
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-};
-
-const SwitchRow = memo(
-  function SwitchRow({ label, hint, checked, onChange }: SwitchRowProps) {
-    return (
-      <label className="switch-row">
-        <span>
-          <span className="field-label">{label}</span>
-          <span className="field-hint">{hint}</span>
-        </span>
-        <span className="switch-shell">
-          <input
-            type="checkbox"
-            checked={checked}
-            onChange={(event) => onChange(event.currentTarget.checked)}
-          />
-          <span className="switch-track" aria-hidden="true">
-            <span className="switch-thumb" />
-          </span>
-        </span>
-      </label>
-    );
-  },
-);
-
-type RangeFieldProps = {
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  step: number;
-  suffix?: string;
-  onChange: (value: number) => void;
-};
-
-const RangeField = memo(function RangeField(
-  { label, value, min, max, step, suffix, onChange }: RangeFieldProps,
-) {
-  const decimals = step < 1 ? Math.max(0, Math.ceil(-Math.log10(step))) : 0;
-  const display = decimals > 0 ? value.toFixed(decimals) : String(value);
-
-  return (
-    <div className="range-field">
-      <div className="range-label-row">
-        <span className="field-label">{label}</span>
-        <span className="range-value">
-          {display}
-          {suffix ?? ""}
-        </span>
-      </div>
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        onChange={(event) => onChange(Number(event.currentTarget.value))}
-      />
-    </div>
-  );
-});
-
-type VolumeSliderProps = {
-  label: string;
-  value: number;
-  onChange: (value: number) => void;
-};
-
-const VolumeSlider = memo(
-  function VolumeSlider({ label, value, onChange }: VolumeSliderProps) {
-    return (
-      <div className="range-field volume-field">
-        <div className="range-label-row">
-          <span className="field-label">{label}</span>
-          <span className="range-value">{Math.round(value * 100)}%</span>
-        </div>
-        <input
-          type="range"
-          min={0}
-          max={1}
-          step={0.01}
-          value={value}
-          onChange={(event) => onChange(Number(event.currentTarget.value))}
-        />
-      </div>
-    );
-  },
-);
-
-function menuTitle(tab: PauseMenuTab) {
-  switch (tab) {
-    case "practice":
-      return "Practice Menu";
-    case "gameplay":
-      return "Gameplay Settings";
-    case "audio":
-      return "Audio Settings";
-    case "controls":
-      return "Control Settings";
-    case "graphics":
-      return "Graphics Settings";
-    case "hud":
-      return "HUD Settings";
-    case "updates":
-      return "Updates & Repair";
-    default:
-      return "Settings";
-  }
-}
-
 function formatUpdaterPhase(phase: UpdaterStatusPayload["phase"]) {
   switch (phase) {
     case "idle":
@@ -1861,18 +1368,4 @@ function formatUpdaterPhase(phase: UpdaterStatusPayload["phase"]) {
     default:
       return "Unknown";
   }
-}
-
-function formatKeyCode(code: string) {
-  if (code.startsWith("Key")) return code.slice(3).toUpperCase();
-  if (code.startsWith("Digit")) return code.slice(5);
-  if (code === "Space") return "Space";
-  if (code === "ShiftLeft") return "L-Shift";
-  if (code === "ShiftRight") return "R-Shift";
-  if (code === "ControlLeft") return "L-Ctrl";
-  if (code === "ControlRight") return "R-Ctrl";
-  if (code === "AltLeft") return "L-Alt";
-  if (code === "AltRight") return "R-Alt";
-  if (code.startsWith("Arrow")) return code.slice(5);
-  return code;
 }
