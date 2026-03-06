@@ -1,6 +1,12 @@
 export type PixelRatioScale = 0.5 | 0.75 | 1;
 export type StressModeCount = 0 | 50 | 100 | 200;
 
+export type ExperiencePhase =
+  | "menu"
+  | "entering"
+  | "playing"
+  | "returning";
+
 export type AimSensitivitySettings = {
   look: number;
   rifleAds: number;
@@ -145,6 +151,16 @@ export type WorldBounds = {
   maxX: number;
   minZ: number;
   maxZ: number;
+};
+
+export type ScenePresentation = {
+  phase: ExperiencePhase;
+  phaseProgress: number;
+  worldTheme: number;
+  pickupReveal: number;
+  targetReveal: number;
+  inputEnabled: boolean;
+  killPulse: number;
 };
 
 export type TargetState = {

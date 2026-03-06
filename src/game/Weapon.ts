@@ -65,11 +65,12 @@ export type WeaponSwitchState = {
 const PICKUP_RANGE = 2.5;
 const DROP_FORWARD_DISTANCE = 1.8;
 const DROP_HEIGHT = 0.35;
+const DEFAULT_DROPPED_POSITION = new THREE.Vector3(1.5, DROP_HEIGHT, 3.5);
 
 export class WeaponSystem {
   private equipped = false;
   private activeWeapon: WeaponKind = "rifle";
-  private droppedPosition = new THREE.Vector3(1.5, DROP_HEIGHT, 3.5);
+  private droppedPosition = DEFAULT_DROPPED_POSITION.clone();
   private triggerHeld = false;
   private nextShotInMs = 0;
   private shotIndex = 0;
@@ -271,6 +272,23 @@ export class WeaponSystem {
 
   hasMuzzleFlash(nowMs: number): boolean {
     return this.equipped && this.muzzleFlashUntil > nowMs;
+  }
+
+  reset() {
+    this.equipped = false;
+    this.activeWeapon = "rifle";
+    this.droppedPosition.copy(DEFAULT_DROPPED_POSITION);
+    this.triggerHeld = false;
+    this.nextShotInMs = 0;
+    this.shotIndex = 0;
+    this.muzzleFlashUntil = 0;
+    this.sniperRechamberStartedAtMs = 0;
+    this.sniperRechamberUntilMs = 0;
+    this.pendingWeapon = null;
+    this.switchFromWeapon = "rifle";
+    this.switchStartedAtMs = 0;
+    this.switchUntilMs = 0;
+    this.clearTracer();
   }
 
   private applyPendingSwitch(nowMs: number) {

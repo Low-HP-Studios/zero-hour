@@ -45,6 +45,66 @@ export function createSkyTexture(): THREE.CanvasTexture | null {
   return texture;
 }
 
+export function createNightSkyTexture(): THREE.CanvasTexture | null {
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  const width = 512;
+  const height = 1024;
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    return null;
+  }
+
+  // Deep navy gradient
+  const gradient = ctx.createLinearGradient(0, 0, 0, height);
+  gradient.addColorStop(0, "#050d1a");
+  gradient.addColorStop(0.3, "#0a1628");
+  gradient.addColorStop(0.6, "#0e1f38");
+  gradient.addColorStop(0.85, "#121a2a");
+  gradient.addColorStop(1, "#0c1220");
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, width, height);
+
+  // Stars
+  const rng = createSeededRandom(77777);
+  for (let i = 0; i < 300; i++) {
+    const x = rng() * width;
+    const y = rng() * height * 0.85; // Stars mostly in upper part
+    const radius = 0.3 + rng() * 1.4;
+    const brightness = 0.3 + rng() * 0.7;
+    ctx.beginPath();
+    ctx.fillStyle = `rgba(255, 255, 255, ${brightness})`;
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // A few brighter / larger stars
+  for (let i = 0; i < 20; i++) {
+    const x = rng() * width;
+    const y = rng() * height * 0.7;
+    const radius = 1.2 + rng() * 1.0;
+    ctx.beginPath();
+    const grd = ctx.createRadialGradient(x, y, 0, x, y, radius * 3);
+    grd.addColorStop(0, "rgba(200, 220, 255, 0.9)");
+    grd.addColorStop(0.4, "rgba(180, 200, 240, 0.3)");
+    grd.addColorStop(1, "rgba(150, 180, 220, 0)");
+    ctx.fillStyle = grd;
+    ctx.arc(x, y, radius * 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.needsUpdate = true;
+  return texture;
+}
+
 export function createSandTexture(): THREE.CanvasTexture | null {
   if (typeof document === "undefined") {
     return null;

@@ -3,9 +3,8 @@ import "./App.css";
 import { Toaster } from "./components/ui/sonner";
 import { GameRoot } from "./game/GameRoot";
 import { LoadingScreen } from "./screens/LoadingScreen";
-import { MainMenu } from "./screens/MainMenu";
 
-type Screen = "loading" | "lobby" | "playing";
+type Screen = "loading" | "experience";
 
 function App() {
   const [screen, setScreen] = useState<Screen>("loading");
@@ -13,13 +12,10 @@ function App() {
   let content: ReactNode;
   switch (screen) {
     case "loading":
-      content = <LoadingScreen onComplete={() => setScreen("lobby")} />;
+      content = <LoadingScreen onComplete={() => setScreen("experience")} />;
       break;
-    case "lobby":
-      content = <MainMenu onStartGame={() => setScreen("playing")} />;
-      break;
-    case "playing":
-      content = <GameRoot onReturnToLobby={() => setScreen("lobby")} />;
+    case "experience":
+      content = <GameRoot />;
       break;
   }
 

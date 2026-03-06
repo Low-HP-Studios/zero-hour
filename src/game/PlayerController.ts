@@ -9,6 +9,10 @@ import type {
   PlayerSnapshot,
   WorldBounds,
 } from "./types";
+import {
+  PLAYER_SPAWN_PITCH,
+  PLAYER_SPAWN_POSITION,
+} from "./scene/scene-constants";
 
 type PlayerAction =
   | "pickup"
@@ -23,6 +27,8 @@ type UsePlayerControllerOptions = {
   sensitivity: AimSensitivitySettings;
   keybinds: ControlBindings;
   fov: number;
+  inputEnabled: boolean;
+  cameraEnabled: boolean;
   onAction: (action: PlayerAction) => void;
   onPlayerSnapshot: (snapshot: PlayerSnapshot) => void;
   onTriggerChange: (firing: boolean) => void;
@@ -41,6 +47,8 @@ export type PlayerControllerApi = {
   isMoving: () => boolean;
   isGrounded: () => boolean;
   requestPointerLock: () => void;
+  releasePointerLock: () => void;
+  setPose: (position: THREE.Vector3, yawRadians: number, pitchRadians?: number) => void;
 };
 
 type KeyState = Record<string, boolean>;
@@ -85,6 +93,8 @@ export function usePlayerController({
   sensitivity,
   keybinds,
   fov,
+  inputEnabled,
+  cameraEnabled,
   onAction,
   onPlayerSnapshot,
   onTriggerChange,
@@ -95,7 +105,7 @@ export function usePlayerController({
   const gl = useThree((state) => state.gl);
 
   const keyStateRef = useRef<KeyState>({});
-  const positionRef = useRef(new THREE.Vector3(0, GROUND_Y, 6));
+  const positionRef = useRef(PLAYER_SPAWN_POSITION.clone());
   const velocityRef = useRef(new THREE.Vector2(0, 0));
   const moveInputRef = useRef(new THREE.Vector2(0, 0));
   const resolvedXZRef = useRef(new THREE.Vector2(positionRef.current.x, positionRef.current.z));
@@ -137,6 +147,8 @@ export function usePlayerController({
   const sensitivityRef = useRef(sensitivity);
   const keybindsRef = useRef(keybinds);
   const fovRef = useRef(fov);
+  const inputEnabledRef = useRef(inputEnabled);
+  const cameraEnabledRef = useRef(cameraEnabled);
 
   useEffect(() => {
     actionCallbackRef.current = onAction;
@@ -171,6 +183,26 @@ export function usePlayerController({
   }, [fov]);
 
   useEffect(() => {
+    inputEnabledRef.current = inputEnabled;
+    if (!inputEnabled) {
+      keyStateRef.current = {};
+      jumpQueuedRef.current = false;
+      adsRef.current = false;
+      if (triggerHeldRef.current) {
+        triggerHeldRef.current = false;
+        triggerCallbackRef.current(false);
+      }
+      if (document.pointerLockElement === gl.domElement) {
+        document.exitPointerLock();
+      }
+    }
+  }, [gl.domElement, inputEnabled]);
+
+  useEffect(() => {
+    cameraEnabledRef.current = cameraEnabled;
+  }, [cameraEnabled]);
+
+  useEffect(() => {
     const element = gl.domElement;
 
     const requestLock = (el: HTMLElement) => {
@@ -179,6 +211,9 @@ export function usePlayerController({
     };
 
     const onKeyDown = (event: KeyboardEvent) => {
+      if (!inputEnabledRef.current) {
+        return;
+      }
       const bindings = keybindsRef.current;
 
       if (event.code === bindings.pickup && !event.repeat) {
@@ -218,6 +253,9 @@ export function usePlayerController({
     };
 
     const onMouseDown = (event: MouseEvent) => {
+      if (!inputEnabledRef.current) {
+        return;
+      }
       if (event.button === 2) {
         if (pointerLockedRef.current) {
           adsRef.current = true;
@@ -263,7 +301,7 @@ export function usePlayerController({
     };
 
     const onMouseMove = (event: MouseEvent) => {
-      if (!pointerLockedRef.current) {
+      if (!pointerLockedRef.current || !inputEnabledRef.current) {
         return;
       }
 
@@ -309,7 +347,7 @@ export function usePlayerController({
   useFrame((_, rawDelta) => {
     const delta = Math.min(rawDelta, 1 / 20);
     const keys = keyStateRef.current;
-    const controlsEnabled = pointerLockedRef.current;
+    const controlsEnabled = pointerLockedRef.current && inputEnabledRef.current;
     const activeWeapon = activeWeaponGetterRef.current();
     const lookSensitivity = resolveLookSensitivity(
       sensitivityRef.current,
@@ -484,23 +522,44 @@ export function usePlayerController({
       positionRef.current.z + horizontalDist * backZ + shoulder * rightZ,
     );
 
-    camera.position.copy(tppCameraPos).lerp(fppCameraPos, viewT);
+    if (cameraEnabledRef.current) {
+      camera.position.copy(tppCameraPos).lerp(fppCameraPos, viewT);
 
-    if ("isPerspectiveCamera" in camera && camera.isPerspectiveCamera) {
-      const baseFov = fovRef.current;
-      const adsFovTarget = activeWeapon === "sniper" ? SNIPER_ADS_FOV : RIFLE_ADS_FOV;
-      const targetFov = THREE.MathUtils.lerp(baseFov, adsFovTarget, adsT);
+      if ("isPerspectiveCamera" in camera && camera.isPerspectiveCamera) {
+        const baseFov = fovRef.current;
+        const adsFovTarget = activeWeapon === "sniper"
+          ? SNIPER_ADS_FOV
+          : RIFLE_ADS_FOV;
+        const targetFov = THREE.MathUtils.lerp(baseFov, adsFovTarget, adsT);
+        const perspectiveCamera = camera as THREE.PerspectiveCamera;
+        const nextFov = THREE.MathUtils.damp(
+          perspectiveCamera.fov,
+          targetFov,
+          14,
+          delta,
+        );
+        if (Math.abs(nextFov - perspectiveCamera.fov) > 0.01) {
+          perspectiveCamera.fov = nextFov;
+          perspectiveCamera.updateProjectionMatrix();
+        }
+      }
+
+      const lookAt = tempLookAtRef.current;
+      lookAt.copy(camera.position).addScaledVector(aimDir, AIM_LOOK_DISTANCE);
+      camera.lookAt(lookAt);
+    } else if ("isPerspectiveCamera" in camera && camera.isPerspectiveCamera) {
       const perspectiveCamera = camera as THREE.PerspectiveCamera;
-      const nextFov = THREE.MathUtils.damp(perspectiveCamera.fov, targetFov, 14, delta);
+      const nextFov = THREE.MathUtils.damp(
+        perspectiveCamera.fov,
+        fovRef.current,
+        14,
+        delta,
+      );
       if (Math.abs(nextFov - perspectiveCamera.fov) > 0.01) {
         perspectiveCamera.fov = nextFov;
         perspectiveCamera.updateProjectionMatrix();
       }
     }
-
-    const lookAt = tempLookAtRef.current;
-    lookAt.copy(camera.position).addScaledVector(aimDir, AIM_LOOK_DISTANCE);
-    camera.lookAt(lookAt);
 
     const speed = Math.hypot(velocityRef.current.x, velocityRef.current.y);
     movingRef.current = speed > 0.15;
@@ -546,9 +605,53 @@ export function usePlayerController({
     isMoving: () => movingRef.current,
     isGrounded: () => groundedRef.current,
     requestPointerLock: () => {
+      if (!inputEnabledRef.current) return;
       userGestureCallbackRef.current();
       if (pointerLockedRef.current) return;
       gl.domElement.requestPointerLock();
+    },
+    releasePointerLock: () => {
+      if (document.pointerLockElement === gl.domElement) {
+        document.exitPointerLock();
+      }
+    },
+    setPose: (position, yawRadians, pitchRadians = PLAYER_SPAWN_PITCH) => {
+      positionRef.current.copy(position);
+      resolvedXZRef.current.set(position.x, position.z);
+      velocityRef.current.set(0, 0);
+      moveInputRef.current.set(0, 0);
+      verticalVelocityRef.current = 0;
+      groundedRef.current = true;
+      jumpQueuedRef.current = false;
+      yawRef.current = yawRadians;
+      targetYawRef.current = yawRadians;
+      pitchRef.current = pitchRadians;
+      targetPitchRef.current = pitchRadians;
+      recoilPitchRef.current = 0;
+      recoilYawRef.current = 0;
+      pendingMouseRef.current.set(0, 0);
+      adsRef.current = false;
+      adsLerpRef.current = 0;
+      firstPersonRef.current = false;
+      viewModeLerpRef.current = 0;
+      shoulderSideTargetRef.current = 1;
+      shoulderSideLerpRef.current = 1;
+      keyStateRef.current = {};
+      if (triggerHeldRef.current) {
+        triggerHeldRef.current = false;
+        triggerCallbackRef.current(false);
+      }
+      const snapshot = snapshotObjectRef.current;
+      snapshot.x = position.x;
+      snapshot.y = position.y;
+      snapshot.z = position.z;
+      snapshot.speed = 0;
+      snapshot.sprinting = false;
+      snapshot.moving = false;
+      snapshot.grounded = true;
+      snapshot.pointerLocked = pointerLockedRef.current;
+      snapshot.canInteract = false;
+      snapshotCallbackRef.current(snapshot);
     },
   };
 }

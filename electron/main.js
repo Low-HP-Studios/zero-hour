@@ -90,6 +90,10 @@ function createWindow() {
   });
 }
 
+ipcMain.handle('app:quit', () => {
+  app.quit();
+});
+
 function registerUpdaterHandlers() {
   ipcMain.handle('updater:get-status', () => {
     if (updaterService) {

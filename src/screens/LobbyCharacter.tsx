@@ -233,7 +233,7 @@ function LobbySceneContent({
         color="#5ab8ff"
       />
       <pointLight position={[0, 1.5, 4]} intensity={0.8} color="#ffab42" />
-      <MapEnvironment shadows={false} />
+      <MapEnvironment shadows={false} theme={1} floorGridOpacity={0} />
       <SlowOrbit>
         <LobbyModel />
       </SlowOrbit>

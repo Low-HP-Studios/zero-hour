@@ -164,41 +164,57 @@ async function applyCharacterTextures(model: THREE.Group): Promise<void> {
       });
     });
 
-  const uniqueMaterials = new Map<string, THREE.Material>();
+  // Collect all meshes and their material conversion work
+  const tasks: Promise<void>[] = [];
+
   model.traverse((child) => {
     if (!(child as THREE.Mesh).isMesh) return;
     const mesh = child as THREE.Mesh;
     const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-    for (const mat of mats) {
-      uniqueMaterials.set(mat.uuid, mat);
-    }
+
+    const task = (async () => {
+      const newMats = await Promise.all(
+        mats.map(async (mat) => {
+          const entry = findTextureEntry(mat.name);
+          const phong = mat as THREE.MeshPhongMaterial;
+
+          // Load textures first (awaited)
+          let baseTex: THREE.Texture | null = null;
+          let normalTex: THREE.Texture | null = null;
+          if (entry) {
+            [baseTex, normalTex] = await Promise.all([
+              loadTex(CHARACTER_TEXTURE_BASE + entry.base),
+              loadTex(CHARACTER_TEXTURE_BASE + entry.normal),
+            ]);
+          }
+
+          // Convert to MeshStandardMaterial for proper PBR lighting
+          const stdMat = new THREE.MeshStandardMaterial({
+            name: mat.name,
+            color: phong.color ?? new THREE.Color(0xffffff),
+            roughness: 0.75,
+            metalness: 0.05,
+          });
+
+          if (baseTex) {
+            baseTex.colorSpace = THREE.SRGBColorSpace;
+            stdMat.map = baseTex;
+          }
+          if (normalTex) {
+            stdMat.normalMap = normalTex;
+          }
+
+          mat.dispose();
+          return stdMat;
+        }),
+      );
+      mesh.material = newMats.length === 1 ? newMats[0] : newMats;
+    })();
+
+    tasks.push(task);
   });
 
-  await Promise.all(
-    [...uniqueMaterials.values()].map(async (mat) => {
-      const mappable = mat as THREE.MeshPhongMaterial;
-      if (!("map" in mappable)) return;
-
-      const entry = findTextureEntry(mat.name);
-      if (!entry) return;
-
-      const [baseTex, normalTex] = await Promise.all([
-        loadTex(CHARACTER_TEXTURE_BASE + entry.base),
-        loadTex(CHARACTER_TEXTURE_BASE + entry.normal),
-      ]);
-
-      if (baseTex) {
-        if (mappable.map) mappable.map.dispose();
-        baseTex.colorSpace = THREE.SRGBColorSpace;
-        mappable.map = baseTex;
-      }
-      if (normalTex) {
-        if (mappable.normalMap) mappable.normalMap.dispose();
-        mappable.normalMap = normalTex;
-      }
-      mappable.needsUpdate = true;
-    }),
-  );
+  await Promise.all(tasks);
 }
 
 function findTextureEntry(materialName: string): { base: string; normal: string } | null {
@@ -265,14 +281,10 @@ export function useCharacterModel(): CharacterModelResult {
         if (!clip) continue;
         const remapped = remapAnimationClip(clip, modelBoneNames).clone();
         removeRootMotion(remapped);
-        const totalTracks = remapped.tracks.length;
         remapped.tracks = remapped.tracks.filter((track) => {
           const boneName = splitTrackName(track.name).nodeName;
           return modelBoneNames.has(boneName);
         });
-        console.log(
-          `[Character] ${ANIM_CLIPS[i].name}: dur=${remapped.duration.toFixed(3)}s, ${totalTracks} tracks -> ${remapped.tracks.length} matched`,
-        );
         const action = mixer.clipAction(remapped);
         action.setLoop(THREE.LoopRepeat, Infinity);
         actions.set(ANIM_CLIPS[i].name, action);
@@ -283,12 +295,6 @@ export function useCharacterModel(): CharacterModelResult {
       if (idleAction) {
         idleAction.play();
         currentAnimRef.current = "idle";
-      }
-
-      console.log("[Character] Model bones:", [...modelBoneNames]);
-      console.log("[Character] Loaded animations:", [...actions.keys()]);
-      if (clips[0]) {
-        console.log("[Character] Sample track names:", clips[0].tracks.slice(0, 3).map((t) => t.name));
       }
 
       setModel(clone);

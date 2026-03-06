@@ -7,10 +7,12 @@ import {
   useState,
 } from "react";
 import { type AudioVolumeSettings } from "./Audio";
+import { ExperienceMenuOverlay } from "./ExperienceMenuOverlay";
 import { PerfHUD } from "./PerfHUD";
 import {
   type AimingState,
   type HitMarkerKind,
+  type SceneHandle,
   Scene,
 } from "./scene/SceneCanvas";
 import {
@@ -27,10 +29,12 @@ import {
   DEFAULT_PERF_METRICS,
   DEFAULT_PLAYER_SNAPSHOT,
   DEFAULT_WEAPON_ALIGNMENT,
+  type ExperiencePhase,
   type GameSettings,
   type HudOverlayToggles,
   type PerfMetrics,
   type PlayerSnapshot,
+  type ScenePresentation,
   type StressModeCount,
 } from "./types";
 import {
@@ -51,12 +55,31 @@ const DEFAULT_UPDATER_STATUS: UpdaterStatusPayload = {
   message: "Updater is idle.",
 };
 
-interface GameRootProps {
-  onReturnToLobby?: () => void;
+const ENTER_TRANSITION_MS = 1800;
+const RETURN_TRANSITION_MS = 1350;
+const RETURN_RESET_PROGRESS = 0.58;
+const KILL_PULSE_MS = 450;
+
+function clamp01(value: number) {
+  return Math.max(0, Math.min(1, value));
 }
 
-export function GameRoot({ onReturnToLobby }: GameRootProps) {
+function easeInOutCubic(value: number) {
+  return value < 0.5
+    ? 4 * value * value * value
+    : 1 - Math.pow(-2 * value + 2, 3) / 2;
+}
+
+function resolveKillPulseAmount(progress: number) {
+  if (progress <= 0.35) {
+    return easeInOutCubic(progress / 0.35);
+  }
+  return 1 - easeInOutCubic((progress - 0.35) / 0.65);
+}
+
+export function GameRoot() {
   const persistedSettings = useMemo(loadPersistedSettings, []);
+  const sceneRef = useRef<SceneHandle | null>(null);
   const [settings, setSettings] = useState<GameSettings>(
     persistedSettings.settings,
   );
@@ -96,7 +119,7 @@ export function GameRoot({ onReturnToLobby }: GameRootProps) {
     playerRef.current = snapshot;
     setPlayerRaw(snapshot);
   }, []);
-  const [weaponEquipped, setWeaponEquipped] = useState(true);
+  const [weaponEquipped, setWeaponEquipped] = useState(false);
   const [activeWeapon, setActiveWeapon] = useState<WeaponKind>("rifle");
   const [sniperRechamber, setSniperRechamber] = useState<SniperRechamberState>({
     active: false,
@@ -107,9 +130,11 @@ export function GameRoot({ onReturnToLobby }: GameRootProps) {
     ads: false,
     firstPerson: false,
   });
-  const [resumePointerLockRequestId, setResumePointerLockRequestId] = useState(
-    0,
-  );
+  const [phase, setPhase] = useState<ExperiencePhase>("menu");
+  const [phaseProgress, setPhaseProgress] = useState(0);
+  const [menuSettingsOpen, setMenuSettingsOpen] = useState(false);
+  const [killPulseToken, setKillPulseToken] = useState(0);
+  const [killPulseAmount, setKillPulseAmount] = useState(0);
   const [hitMarker, setHitMarker] = useState<
     { until: number; kind: HitMarkerKind }
   >({
@@ -124,8 +149,12 @@ export function GameRoot({ onReturnToLobby }: GameRootProps) {
   >(null);
   const updaterApi = window.electronAPI?.updater;
   const updaterAvailable = Boolean(updaterApi);
-  const isPaused = !player.pointerLocked;
+  const isPaused = phase !== "playing" || !player.pointerLocked;
   const [hasBeenLocked, setHasBeenLocked] = useState(false);
+  const returnResetDoneRef = useRef(false);
+  const enteredPlayingAtRef = useRef(0);
+  const [warmupDone, setWarmupDone] = useState(false);
+  const [needsPointerLock, setNeedsPointerLock] = useState(false);
 
   useEffect(() => {
     if (player.pointerLocked && !hasBeenLocked) {
@@ -134,37 +163,133 @@ export function GameRoot({ onReturnToLobby }: GameRootProps) {
   }, [player.pointerLocked, hasBeenLocked]);
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      try {
-        const canvas = document.querySelector(".game-canvas");
-        if (canvas instanceof HTMLCanvasElement) {
-          const result = canvas.requestPointerLock();
-          if (result && typeof result.then === "function") {
-            void result.catch(() => {});
-          }
-        }
-      } catch {}
-      setResumePointerLockRequestId(1);
-    }, 200);
-    return () => clearTimeout(timer);
-  }, []);
+    if (phase !== "entering" && phase !== "returning") {
+      setPhaseProgress(phase === "playing" ? 1 : 0);
+      return;
+    }
 
-  const showPauseMenu = hasBeenLocked && isPaused;
+    const duration = phase === "entering"
+      ? ENTER_TRANSITION_MS
+      : RETURN_TRANSITION_MS;
+    const startedAt = performance.now();
+    returnResetDoneRef.current = false;
+    let rafId = 0;
+
+    const tick = (now: number) => {
+      const progress = clamp01((now - startedAt) / duration);
+      setPhaseProgress(progress);
+
+      if (
+        phase === "returning" &&
+        progress >= RETURN_RESET_PROGRESS &&
+        !returnResetDoneRef.current
+      ) {
+        returnResetDoneRef.current = true;
+        sceneRef.current?.resetForMenu();
+        setHitMarker({ until: 0, kind: "body" });
+      }
+
+      if (progress >= 1) {
+        if (phase === "entering") {
+          enteredPlayingAtRef.current = performance.now();
+          setPhase("playing");
+          setNeedsPointerLock(true);
+        } else {
+          setPhase("menu");
+          setMenuSettingsOpen(false);
+          setHasBeenLocked(false);
+        }
+        return;
+      }
+
+      rafId = window.requestAnimationFrame(tick);
+    };
+
+    rafId = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(rafId);
+  }, [phase]);
+
+  // Auto-lock the pointer once we enter playing state.
+  // Browser requires a user gesture for requestPointerLock, so we add a
+  // one-time click handler. In Electron/Tauri the synthetic click usually
+  // suffices; in the browser the user will just need one click.
+  useEffect(() => {
+    if (!needsPointerLock) return;
+
+    const tryLock = () => {
+      setNeedsPointerLock(false);
+      sceneRef.current?.requestPointerLock();
+    };
+
+    // Try immediately via synthetic click (works in Electron/Tauri)
+    const timer = setTimeout(() => {
+      tryLock();
+    }, 50);
+
+    // Fallback: wait for a real user click
+    const onClick = () => {
+      clearTimeout(timer);
+      tryLock();
+    };
+    document.addEventListener("click", onClick, { once: true });
+
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("click", onClick);
+    };
+  }, [needsPointerLock]);
+
+  useEffect(() => {
+    if (killPulseToken <= 0) {
+      return;
+    }
+
+    const startedAt = performance.now();
+    let rafId = 0;
+
+    const tick = (now: number) => {
+      const progress = clamp01((now - startedAt) / KILL_PULSE_MS);
+      setKillPulseAmount(resolveKillPulseAmount(progress));
+      if (progress >= 1) {
+        setKillPulseAmount(0);
+        return;
+      }
+      rafId = window.requestAnimationFrame(tick);
+    };
+
+    rafId = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(rafId);
+  }, [killPulseToken]);
+
+  const showPauseMenu = phase === "playing" && hasBeenLocked && isPaused &&
+    (performance.now() - enteredPlayingAtRef.current > 600);
+  const showSettingsModal = menuSettingsOpen || showPauseMenu;
 
   const handleCloseMenuAndResume = useCallback(() => {
     setBindingCapture(null);
-    const canvas = document.querySelector(".game-canvas");
-    if (canvas instanceof HTMLCanvasElement) {
-      try {
-        const result = canvas.requestPointerLock();
-        if (result && typeof result.then === "function") {
-          void result.catch(() => {});
-        }
-      } catch {
-        // Controller fallback path below handles Tauri/broken pointer-lock scenarios.
-      }
-    }
-    setResumePointerLockRequestId((previous) => previous + 1);
+    sceneRef.current?.requestPointerLock();
+  }, []);
+
+  const handleCloseSettingsModal = useCallback(() => {
+    setBindingCapture(null);
+    setMenuSettingsOpen(false);
+  }, []);
+
+  const handleEnterPractice = useCallback(() => {
+    setMenuSettingsOpen(false);
+    setBindingCapture(null);
+    setHitMarker({ until: 0, kind: "body" });
+    setPhaseProgress(0);
+    setPhase("entering");
+  }, []);
+
+  const handleReturnToLobby = useCallback(() => {
+    setBindingCapture(null);
+    setMenuSettingsOpen(false);
+    sceneRef.current?.releasePointerLock();
+    sceneRef.current?.dropWeaponForReturn();
+    setPhaseProgress(0);
+    setPhase("returning");
   }, []);
 
   const handleHitMarker = useCallback((kind: HitMarkerKind) => {
@@ -173,7 +298,11 @@ export function GameRoot({ onReturnToLobby }: GameRootProps) {
       until: performance.now() +
         (kind === "kill" ? 170 : kind === "head" ? 120 : 90),
     });
-  }, []);
+    if (kind === "kill" && phase === "playing") {
+      setKillPulseAmount(0);
+      setKillPulseToken((previous) => previous + 1);
+    }
+  }, [phase]);
 
   useEffect(() => {
     if (!updaterApi) {
@@ -313,10 +442,90 @@ export function GameRoot({ onReturnToLobby }: GameRootProps) {
     }
   }, [bindingCapture, isPaused]);
 
+  useEffect(() => {
+    if (phase !== "playing") {
+      setHitMarker({ until: 0, kind: "body" });
+    }
+  }, [phase]);
+
+  const scenePresentation = useMemo<ScenePresentation>(() => {
+    const progress = clamp01(phaseProgress);
+    switch (phase) {
+      case "menu":
+        return {
+          phase,
+          phaseProgress: 0,
+          worldTheme: 0,
+          pickupReveal: 0,
+          targetReveal: 0,
+          inputEnabled: false,
+          killPulse: 0,
+        };
+      case "entering":
+        return {
+          phase,
+          phaseProgress: progress,
+          worldTheme: easeInOutCubic(clamp01(progress / 0.72)),
+          pickupReveal: easeInOutCubic(clamp01((progress - 0.55) / 0.18)),
+          targetReveal: easeInOutCubic(clamp01((progress - 0.72) / 0.18)),
+          inputEnabled: false,
+          killPulse: 0,
+        };
+      case "returning":
+        return {
+          phase,
+          phaseProgress: progress,
+          worldTheme: 1 - easeInOutCubic(clamp01(progress / 0.58)),
+          pickupReveal: 1 - easeInOutCubic(clamp01((progress - 0.12) / 0.28)),
+          targetReveal: 1 - easeInOutCubic(clamp01((progress - 0.08) / 0.24)),
+          inputEnabled: false,
+          killPulse: 0,
+        };
+      case "playing":
+      default:
+        return {
+          phase: "playing",
+          phaseProgress: 1,
+          worldTheme: 1,
+          pickupReveal: 1,
+          targetReveal: 1,
+          inputEnabled: true,
+          killPulse: killPulseAmount,
+        };
+    }
+  }, [killPulseAmount, phase, phaseProgress]);
+
+  // Warm up the scene by briefly rendering with a non-zero theme to force
+  // WebGL shader compilation before the user's first transition.
+  useEffect(() => {
+    if (warmupDone) return;
+    const id = requestAnimationFrame(() => {
+      setWarmupDone(true);
+    });
+    return () => cancelAnimationFrame(id);
+  }, [warmupDone]);
+
+  const warmupPresentation = useMemo<ScenePresentation>(() => {
+    if (!warmupDone && phase === "menu") {
+      return {
+        phase: "menu",
+        phaseProgress: 0,
+        worldTheme: 0.01,
+        pickupReveal: 0,
+        targetReveal: 0,
+        inputEnabled: false,
+        killPulse: 0,
+      };
+    }
+    return scenePresentation;
+  }, [warmupDone, phase, scenePresentation]);
+
   const hitMarkerVisible = hitMarker.until > performance.now();
   const sniperScopeActive = activeWeapon === "sniper" && aimingState.ads &&
+    phase === "playing" &&
     !isPaused;
   const rifleScopeActive = activeWeapon === "rifle" && aimingState.ads &&
+    phase === "playing" &&
     !isPaused;
   const stressLabel = stressCount === 0 ? "Off" : `${stressCount} boxes`;
   const lockLabel = player.pointerLocked
@@ -384,14 +593,18 @@ export function GameRoot({ onReturnToLobby }: GameRootProps) {
       typeof updaterStatus.progress === "number"
     ? `${updaterStatus.progress}%`
     : null;
+  const gameplayHudVisible = phase === "playing";
 
   return (
-    <div className={`app-shell ${isPaused ? "paused" : "playing"}`}>
+    <div
+      className={`app-shell ${isPaused ? "paused" : "playing"} phase-${phase}`}
+    >
       <Scene
+        ref={sceneRef}
         settings={settings}
         audioVolumes={audioVolumes}
         stressCount={stressCount}
-        resumePointerLockRequestId={resumePointerLockRequestId}
+        presentation={warmupPresentation}
         onPerfMetrics={setPerfMetrics}
         onPlayerSnapshot={setPlayer}
         onHitMarker={handleHitMarker}
@@ -401,8 +614,18 @@ export function GameRoot({ onReturnToLobby }: GameRootProps) {
         onAimingStateChange={setAimingState}
       />
 
+      {phase === "menu" || phase === "entering"
+        ? (
+          <ExperienceMenuOverlay
+            transitioning={phase === "entering"}
+            onEnterPractice={handleEnterPractice}
+            onOpenSettings={() => setMenuSettingsOpen(true)}
+          />
+        )
+        : null}
+
       <div className="ui-overlay">
-        {hudPanels.practice
+        {gameplayHudVisible && hudPanels.practice
           ? (
             <div className="corner-top-left panel tactical-panel practice-panel">
               <div className="panel-eyebrow">GreyTrace / Practice Range</div>
@@ -449,7 +672,7 @@ export function GameRoot({ onReturnToLobby }: GameRootProps) {
           )
           : null}
 
-        {hudPanels.performance
+        {gameplayHudVisible && hudPanels.performance
           ? (
             <div className="corner-top-right">
               <PerfHUD metrics={perfMetrics} visible />
@@ -458,7 +681,8 @@ export function GameRoot({ onReturnToLobby }: GameRootProps) {
           : null}
 
         <div className="center-stack">
-          {!isPaused && !sniperScopeActive && !rifleScopeActive
+          {gameplayHudVisible && !isPaused && !sniperScopeActive &&
+              !rifleScopeActive
             ? (
               <div
                 className={`crosshair ${
@@ -492,7 +716,7 @@ export function GameRoot({ onReturnToLobby }: GameRootProps) {
               </div>
             )
             : null}
-          {rifleScopeActive
+          {gameplayHudVisible && rifleScopeActive
             ? (
               <div className="rifle-ads-overlay">
                 <div className="rifle-ads-ring" />
@@ -500,7 +724,7 @@ export function GameRoot({ onReturnToLobby }: GameRootProps) {
               </div>
             )
             : null}
-          {sniperScopeActive
+          {gameplayHudVisible && sniperScopeActive
             ? (
               <div className="sniper-scope-overlay" style={crosshairStyle}>
                 <div className="scope-outside" />
@@ -520,7 +744,7 @@ export function GameRoot({ onReturnToLobby }: GameRootProps) {
               </div>
             )
             : null}
-          {!isPaused
+          {gameplayHudVisible && !isPaused
             ? (
               <div
                 className={`hit-marker ${
@@ -530,26 +754,34 @@ export function GameRoot({ onReturnToLobby }: GameRootProps) {
             )
             : null}
 
-          {showPauseMenu
+          {showSettingsModal
             ? (
               <div
                 className="lobby-settings-overlay"
                 style={{ background: "rgba(5, 5, 5, 0.95)" }}
-                onClick={(e) => e.stopPropagation()}
-                onMouseDown={(e) => e.stopPropagation()}
+                onClick={menuSettingsOpen
+                  ? handleCloseSettingsModal
+                  : (e) => e.stopPropagation()}
+                onMouseDown={menuSettingsOpen
+                  ? handleCloseSettingsModal
+                  : (e) => e.stopPropagation()}
               >
                 <div
                   className="lobby-settings-modal"
+                  onClick={(e) => e.stopPropagation()}
+                  onMouseDown={(e) => e.stopPropagation()}
                   role="dialog"
-                  aria-label="Pause menu"
+                  aria-label={showPauseMenu ? "Pause menu" : "Settings"}
                 >
                   <div className="lobby-settings-header">
                     <h2>{menuTitle(menuTab)}</h2>
                     <button
                       type="button"
                       className="lobby-settings-close"
-                      aria-label="Resume game"
-                      onClick={handleCloseMenuAndResume}
+                      aria-label={showPauseMenu ? "Resume game" : "Close settings"}
+                      onClick={showPauseMenu
+                        ? handleCloseMenuAndResume
+                        : handleCloseSettingsModal}
                     >
                       ×
                     </button>
@@ -573,23 +805,38 @@ export function GameRoot({ onReturnToLobby }: GameRootProps) {
                           {tab.label}
                         </button>
                       ))}
-                      <div style={{ flex: 1 }} />
-                      <button
-                        type="button"
-                        className="lobby-settings-tab"
-                        onClick={handleCloseMenuAndResume}
-                      >
-                        Resume
-                      </button>
-                      {onReturnToLobby && (
+                      <div style={{ marginTop: "auto" }}>
                         <button
                           type="button"
-                          className="btn-lobby-return"
-                          onClick={onReturnToLobby}
+                          className="lobby-settings-tab"
+                          onClick={handleCloseMenuAndResume}
                         >
-                          Return to Lobby
+                          Resume
                         </button>
-                      )}
+                        {showPauseMenu ? (
+                          <button
+                            type="button"
+                            className="btn-lobby-return"
+                            onClick={handleReturnToLobby}
+                          >
+                            Return to Lobby
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="btn-quit-app"
+                          onClick={() => {
+                            const api = (window as unknown as { electronAPI?: { quitApp?: () => void } }).electronAPI;
+                            if (api?.quitApp) {
+                              api.quitApp();
+                            } else {
+                              window.close();
+                            }
+                          }}
+                        >
+                          Quit Game
+                        </button>
+                      </div>
                     </aside>
                     <section className="lobby-settings-content">
 
@@ -1256,7 +1503,7 @@ export function GameRoot({ onReturnToLobby }: GameRootProps) {
             : null}
         </div>
 
-        {hudPanels.controls
+        {gameplayHudVisible && hudPanels.controls
           ? (
             <div className="corner-bottom-left panel tactical-panel compact-panel">
               <div className="panel-eyebrow">Controls</div>
@@ -1268,7 +1515,7 @@ export function GameRoot({ onReturnToLobby }: GameRootProps) {
           )
           : null}
 
-        {hudPanels.settings
+        {gameplayHudVisible && hudPanels.settings
           ? (
             <div className="corner-bottom-right panel tactical-panel compact-panel">
               <div className="panel-eyebrow">Settings Snapshot</div>
@@ -1345,6 +1592,13 @@ export function GameRoot({ onReturnToLobby }: GameRootProps) {
           )
           : null}
       </div>
+      <div
+        className="kill-pulse-overlay"
+        style={{
+          opacity: killPulseAmount * 0.72,
+          ["--kill-pulse" as string]: `${killPulseAmount}`,
+        }}
+      />
     </div>
   );
 }

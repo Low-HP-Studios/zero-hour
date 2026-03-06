@@ -8,6 +8,7 @@ import type { TargetState } from "./types";
 type TargetsProps = {
   targets: TargetState[];
   shadows: boolean;
+  reveal: number;
 };
 
 export type TargetRaycastHit = {
@@ -304,6 +305,22 @@ function prepareTargetCharacterModel(model: THREE.Group): void {
     const mesh = child as THREE.Mesh;
     mesh.castShadow = true;
     mesh.receiveShadow = true;
+
+    // Convert FBX default MeshPhongMaterial to MeshStandardMaterial for PBR lighting
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    const newMats = mats.map((mat) => {
+      const phong = mat as THREE.MeshPhongMaterial;
+      const stdMat = new THREE.MeshStandardMaterial({
+        name: phong.name,
+        color: phong.color ?? new THREE.Color(0xaaaaaa),
+        map: phong.map ?? null,
+        normalMap: phong.normalMap ?? null,
+        roughness: 0.75,
+        metalness: 0.05,
+      });
+      return stdMat;
+    });
+    mesh.material = newMats.length === 1 ? newMats[0] : newMats;
   });
 }
 
@@ -393,10 +410,12 @@ const HPBar = memo(function HPBar({ hp, maxHp }: { hp: number; maxHp: number }) 
 const TargetDummy = memo(function TargetDummy({
   target,
   shadows,
+  reveal,
   characterAsset,
 }: {
   target: TargetState;
   shadows: boolean;
+  reveal: number;
   characterAsset: TargetCharacterAsset;
 }) {
   const [x, baseY, z] = target.position;
@@ -439,38 +458,46 @@ const TargetDummy = memo(function TargetDummy({
       const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
       for (const material of materials) {
         const litMaterial = material as THREE.MeshStandardMaterial;
+        litMaterial.transparent = reveal < 0.999;
+        litMaterial.opacity = reveal;
         if ("emissive" in litMaterial) {
           litMaterial.emissive.set(isHit ? "#5a1111" : "#000000");
           litMaterial.emissiveIntensity = isHit ? 0.85 : 0;
         }
       }
     });
-  }, [characterInstance, isHit, shadows]);
+  }, [characterInstance, isHit, reveal, shadows]);
 
   useFrame((_, delta) => {
     mixerRef.current?.update(delta);
   });
 
-  if (target.disabled) {
+  if (target.disabled || reveal <= 0.01) {
     return null;
   }
 
+  const scale = 0.82 + reveal * 0.18;
+
   return (
-    <group position={[x, baseY, z]} rotation={[0, facingYaw, 0]}>
+    <group position={[x, baseY, z]} rotation={[0, facingYaw, 0]} scale={scale}>
       {characterInstance ? (
         <primitive object={characterInstance} />
       ) : (
         <mesh position={[0, 1.6, 0]} castShadow={shadows} receiveShadow={shadows}>
           <sphereGeometry args={[0.22, 12, 12]} />
-          <meshStandardMaterial color={isHit ? "#ff5555" : "#e8d5b7"} />
+          <meshStandardMaterial
+            color={isHit ? "#ff5555" : "#e8d5b7"}
+            transparent={reveal < 0.999}
+            opacity={reveal}
+          />
         </mesh>
       )}
-      <HPBar hp={target.hp} maxHp={target.maxHp} />
+      {reveal >= 0.55 ? <HPBar hp={target.hp} maxHp={target.maxHp} /> : null}
     </group>
   );
 });
 
-export function Targets({ targets, shadows }: TargetsProps) {
+export function Targets({ targets, shadows, reveal }: TargetsProps) {
   const characterAsset = useTargetCharacterAsset();
 
   return (
@@ -480,6 +507,7 @@ export function Targets({ targets, shadows }: TargetsProps) {
           key={target.id}
           target={target}
           shadows={shadows}
+          reveal={reveal}
           characterAsset={characterAsset}
         />
       ))}

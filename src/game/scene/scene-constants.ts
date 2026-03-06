@@ -48,6 +48,9 @@ export const BULLET_HIT_EPSILON = 0.0001;
 export const STATIC_COLLIDERS: CollisionRect[] = [];
 export const CANVAS_CAMERA = { fov: 65, near: 0.1, far: 650, position: [0, 3.5, 12] as [number, number, number] };
 export const CANVAS_GL = { antialias: true, powerPreference: "high-performance" as const };
+export const PLAYER_SPAWN_POSITION = new THREE.Vector3(0, 0, 6);
+export const PLAYER_SPAWN_YAW = 0;
+export const PLAYER_SPAWN_PITCH = 0;
 
 export const Z_AXIS = new THREE.Vector3(0, 0, 1);
 

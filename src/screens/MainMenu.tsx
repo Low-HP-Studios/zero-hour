@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { LobbyScene } from "./LobbyCharacter";
 
@@ -326,7 +327,7 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
         </main>
       </div>
 
-      {settingsOpen && (
+      {settingsOpen && createPortal(
         <div className="lobby-settings-overlay" onClick={handleSettingsClose}>
           <div
             className="lobby-settings-modal"
@@ -359,6 +360,22 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
                     {tab.label}
                   </button>
                 ))}
+                <div style={{ marginTop: "auto" }}>
+                  <button
+                    type="button"
+                    className="btn-quit-app"
+                    onClick={() => {
+                      const api = (window as unknown as { electronAPI?: { quitApp?: () => void } }).electronAPI;
+                      if (api?.quitApp) {
+                        api.quitApp();
+                      } else {
+                        window.close();
+                      }
+                    }}
+                  >
+                    Quit Game
+                  </button>
+                </div>
               </aside>
               <section className="lobby-settings-content">
                 {settingsTab === "gameplay" && (
@@ -588,7 +605,8 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
               </section>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
