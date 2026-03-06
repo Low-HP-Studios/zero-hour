@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { loadFbxAsset, loadFbxAnimation } from "../game/AssetLoader";
-import { MapEnvironment } from "../game/Scene";
+import { MapEnvironment } from "../game/scene/MapEnvironment";
 
 const CHARACTER_MODEL_URL =
   "/assets/models/character/Trooper/tactical guy.fbx";

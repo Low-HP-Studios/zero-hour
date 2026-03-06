@@ -240,7 +240,7 @@ function createUpdaterService(options) {
     const metadata = parseLatestYml(yml);
     const installerUrl =
       `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/latest/download/${metadata.path}`;
-    const tempDir = path.join(app.getPath("temp"), "ZeroHourRepair");
+    const tempDir = path.join(app.getPath("temp"), "GreytraceRepair");
     await fsPromises.mkdir(tempDir, { recursive: true });
     const installerPath = path.join(tempDir, metadata.path);
     await downloadFile(installerUrl, installerPath);

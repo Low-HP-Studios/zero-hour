@@ -187,7 +187,7 @@ export function LoadingScreen({ onComplete }: LoadingScreenProps) {
         {currentLabel}
       </div>
       <div className="loading-center">
-        <h1 className="loading-logo-text">0H</h1>
+        <h1 className="loading-logo-text">GreyTrace</h1>
       </div>
       <div className="loading-bottom-section">
         <div className="loading-bottom-left">

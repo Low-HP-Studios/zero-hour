@@ -144,15 +144,9 @@ export const VolumeSlider = memo(function VolumeSlider({
   );
 });
 
-export type PauseMenuTab =
-  | "practice"
-  | "gameplay"
-  | "audio"
-  | "controls"
-  | "graphics"
-  | "hud";
+export type { PauseMenuTab } from "./settings";
 
-export function menuTitle(tab: PauseMenuTab) {
+export function menuTitle(tab: import("./settings").PauseMenuTab) {
   switch (tab) {
     case "practice":
       return "Practice Menu";
@@ -166,6 +160,8 @@ export function menuTitle(tab: PauseMenuTab) {
       return "Graphics Settings";
     case "hud":
       return "HUD Settings";
+    case "updates":
+      return "Updates & Repair";
     default:
       return "Settings";
   }

@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import "./App.css";
+import { Toaster } from "./components/ui/sonner";
 import { GameRoot } from "./game/GameRoot";
 import { LoadingScreen } from "./screens/LoadingScreen";
 import { MainMenu } from "./screens/MainMenu";
@@ -9,14 +10,25 @@ type Screen = "loading" | "lobby" | "playing";
 function App() {
   const [screen, setScreen] = useState<Screen>("loading");
 
+  let content: ReactNode;
   switch (screen) {
     case "loading":
-      return <LoadingScreen onComplete={() => setScreen("lobby")} />;
+      content = <LoadingScreen onComplete={() => setScreen("lobby")} />;
+      break;
     case "lobby":
-      return <MainMenu onStartGame={() => setScreen("playing")} />;
+      content = <MainMenu onStartGame={() => setScreen("playing")} />;
+      break;
     case "playing":
-      return <GameRoot onReturnToLobby={() => setScreen("lobby")} />;
+      content = <GameRoot onReturnToLobby={() => setScreen("lobby")} />;
+      break;
   }
+
+  return (
+    <>
+      {content}
+      <Toaster />
+    </>
+  );
 }
 
 export default App;
