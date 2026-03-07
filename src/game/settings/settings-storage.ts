@@ -20,7 +20,7 @@ export const DEFAULT_GAME_SETTINGS: GameSettings = {
   showR3fPerf: false,
   sensitivity: { ...DEFAULT_AIM_SENSITIVITY_SETTINGS },
   keybinds: { ...DEFAULT_CONTROL_BINDINGS },
-  fov: 65,
+  fov: 45,
   weaponAlignment: { ...DEFAULT_WEAPON_ALIGNMENT },
 };
 
@@ -125,7 +125,7 @@ export function parsePersistedSettings(value: unknown): PersistedSettings {
         settings.showR3fPerf,
         defaults.settings.showR3fPerf,
       ),
-      fov: readClampedNumber(settings.fov, 40, 120, defaults.settings.fov),
+      fov: readClampedNumber(settings.fov, 45, 120, defaults.settings.fov),
       sensitivity: {
         look: readClampedNumber(
           migratePercent(sensitivity.look),

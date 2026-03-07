@@ -1,16 +1,8 @@
 import { useEffect, useMemo, useRef } from "react";
-import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { createNightSkyTexture } from "./Textures";
 import type { StressModeCount } from "../types";
 import {
-  CLIFF_HEIGHT,
-  CLIFF_THICKNESS,
-  OCEAN_LEVEL_Y,
-  OCEAN_SIZE,
-  SHORE_FOAM_RING_PADDING,
-  SHORE_SHELF_PADDING,
-  SHORE_SHELF_Y,
   WALKABLE_CENTER_X,
   WALKABLE_CENTER_Z,
   WALKABLE_SIZE_X,
@@ -18,29 +10,31 @@ import {
   WORLD_BOUNDS,
 } from "./scene-constants";
 import {
-  createOceanTexture,
   createSandTexture,
   createSkyTexture,
 } from "./Textures";
+import { DesertProps } from "./DesertProps";
 
 const VOID_SKY = new THREE.Color("#0a1628");
-const LIVE_SKY = new THREE.Color("#86c8ff");
-const VOID_OCEAN = new THREE.Color("#071420");
-const LIVE_OCEAN = new THREE.Color("#2b5f77");
-const VOID_SHELF = new THREE.Color("#1a1812");
-const LIVE_SHELF = new THREE.Color("#b79059");
+const LIVE_SKY = new THREE.Color("#b8d4e8");
 const VOID_WALKABLE = new THREE.Color("#1c1a14");
-const LIVE_WALKABLE = new THREE.Color("#ebd6a8");
-const VOID_CLIFF = new THREE.Color("#151210");
-const LIVE_CLIFF = new THREE.Color("#7d6445");
+const LIVE_WALKABLE = new THREE.Color("#d4a862");
 const MOON_COLOR = new THREE.Color("#e8eaf0");
 const MOON_GLOW_COLOR = new THREE.Color("#9ab0d0");
-const OUTLINE_COLOR = new THREE.Color("#edf1fb");
 const GRID_MAJOR_COLOR = new THREE.Color("#8fb3ff");
 const GRID_MINOR_COLOR = new THREE.Color("#ffffff");
 const SUN_CORE_COLOR = new THREE.Color("#ffe0b0");
 const SUN_GLOW_COLOR = new THREE.Color("#ffb279");
+const FAR_DESERT_COLOR = new THREE.Color("#c38a47");
+const BORDER_COLOR = new THREE.Color("#f6d99a");
+const BORDER_GLOW_COLOR = new THREE.Color("#d48b36");
 const FLOOR_GRID_DIVISIONS = 16;
+const FAR_DESERT_SIZE = 2200;
+const BORDER_STRIP_THICKNESS = 0.9;
+const BORDER_STRIP_HEIGHT = 0.18;
+const BORDER_POST_SPACING = 20;
+const BORDER_POST_HEIGHT = 1.4;
+const BORDER_POST_WIDTH = 0.14;
 
 function clamp01(value: number) {
   return Math.max(0, Math.min(1, value));
@@ -50,59 +44,28 @@ function blendColor(from: THREE.Color, to: THREE.Color, amount: number) {
   return new THREE.Color().copy(from).lerp(to, clamp01(amount));
 }
 
-function OutlinePlane({
-  size,
-  position,
-  rotation,
-  opacity,
-}: {
-  size: [number, number];
-  position: [number, number, number];
-  rotation: [number, number, number];
-  opacity: number;
-}) {
-  if (opacity <= 0.001) {
-    return null;
+function buildBorderPostPositions() {
+  const positions: Array<[number, number]> = [];
+
+  for (
+    let x = WORLD_BOUNDS.minX;
+    x <= WORLD_BOUNDS.maxX;
+    x += BORDER_POST_SPACING
+  ) {
+    positions.push([x, WORLD_BOUNDS.minZ], [x, WORLD_BOUNDS.maxZ]);
   }
 
-  return (
-    <lineSegments position={position} rotation={rotation} renderOrder={4}>
-      <edgesGeometry args={[new THREE.PlaneGeometry(size[0], size[1])]} />
-      <lineBasicMaterial
-        color={OUTLINE_COLOR}
-        transparent
-        opacity={opacity}
-        depthWrite={false}
-      />
-    </lineSegments>
-  );
-}
-
-function OutlineBox({
-  size,
-  position,
-  opacity,
-}: {
-  size: [number, number, number];
-  position: [number, number, number];
-  opacity: number;
-}) {
-  if (opacity <= 0.001) {
-    return null;
+  for (
+    let z = WORLD_BOUNDS.minZ + BORDER_POST_SPACING;
+    z < WORLD_BOUNDS.maxZ;
+    z += BORDER_POST_SPACING
+  ) {
+    positions.push([WORLD_BOUNDS.minX, z], [WORLD_BOUNDS.maxX, z]);
   }
 
-  return (
-    <lineSegments position={position} renderOrder={4}>
-      <edgesGeometry args={[new THREE.BoxGeometry(size[0], size[1], size[2])]} />
-      <lineBasicMaterial
-        color={OUTLINE_COLOR}
-        transparent
-        opacity={opacity}
-        depthWrite={false}
-      />
-    </lineSegments>
-  );
+  return positions;
 }
+
 
 export type MapEnvironmentProps = {
   shadows: boolean;
@@ -116,37 +79,31 @@ export function MapEnvironment({
   floorGridOpacity,
 }: MapEnvironmentProps) {
   const sandTexture = useMemo(() => createSandTexture(), []);
-  const oceanTexture = useMemo(() => createOceanTexture(), []);
+  const farSandTexture = useMemo(() => {
+    const texture = createSandTexture();
+    if (texture) {
+      texture.repeat.set(120, 120);
+    }
+    return texture;
+  }, []);
   const skyTexture = useMemo(() => createSkyTexture(), []);
   const floorGridRef = useRef<THREE.GridHelper>(null);
+  const borderPosts = useMemo(() => buildBorderPostPositions(), []);
 
   useEffect(() => {
     return () => {
       skyTexture?.dispose();
       sandTexture?.dispose();
-      oceanTexture?.dispose();
+      farSandTexture?.dispose();
     };
-  }, [oceanTexture, sandTexture, skyTexture]);
-
-  useFrame((_, delta) => {
-    if (!oceanTexture || theme <= 0.55) {
-      return;
-    }
-    oceanTexture.offset.x = (oceanTexture.offset.x + delta * 0.012) % 1;
-    oceanTexture.offset.y = (oceanTexture.offset.y + delta * 0.006) % 1;
-  });
+  }, [farSandTexture, sandTexture, skyTexture]);
 
   const liveTheme = clamp01(theme);
-  const outlineOpacity = 0.08 + (1 - liveTheme) * 0.78;
   const textureReveal = clamp01((liveTheme - 0.52) / 0.48);
   const sunOpacity = clamp01((liveTheme - 0.42) / 0.48);
-  const shelfSizeX = WALKABLE_SIZE_X + SHORE_SHELF_PADDING * 2;
-  const shelfSizeZ = WALKABLE_SIZE_Z + SHORE_SHELF_PADDING * 2;
-  const foamRingSizeX = WALKABLE_SIZE_X + SHORE_FOAM_RING_PADDING * 2;
-  const foamRingSizeZ = WALKABLE_SIZE_Z + SHORE_FOAM_RING_PADDING * 2;
-  const cliffY = 0 - CLIFF_HEIGHT / 2;
   const allowTextures = textureReveal > 0.001;
   const shadowEnabled = shadows && liveTheme > 0.6;
+  const borderGlow = THREE.MathUtils.lerp(0.45, 1.05, liveTheme);
 
   useEffect(() => {
     const helper = floorGridRef.current;
@@ -189,7 +146,6 @@ export function MapEnvironment({
         />
       </mesh>
 
-      {/* Moon – visible during night/menu, fades out as day theme comes in */}
       {moonOpacity > 0.001 ? (
         <group position={[-140, 180, -220]}>
           <mesh>
@@ -222,9 +178,9 @@ export function MapEnvironment({
       ) : null}
 
       {sunOpacity > 0.001 ? (
-        <group position={[124, 24, -174]}>
+        <group position={[24, 430, -32]}>
           <mesh>
-            <sphereGeometry args={[5.2, 28, 28]} />
+            <sphereGeometry args={[9, 28, 28]} />
             <meshBasicMaterial
               color={SUN_CORE_COLOR}
               transparent
@@ -232,20 +188,20 @@ export function MapEnvironment({
             />
           </mesh>
           <mesh>
-            <sphereGeometry args={[8.4, 26, 26]} />
+            <sphereGeometry args={[18, 26, 26]} />
             <meshBasicMaterial
               color={SUN_GLOW_COLOR}
               transparent
-              opacity={sunOpacity * 0.24}
+              opacity={sunOpacity * 0.34}
               depthWrite={false}
             />
           </mesh>
           <mesh>
-            <sphereGeometry args={[11.8, 24, 24]} />
+            <sphereGeometry args={[30, 24, 24]} />
             <meshBasicMaterial
               color={SUN_GLOW_COLOR}
               transparent
-              opacity={sunOpacity * 0.11}
+              opacity={sunOpacity * 0.16}
               depthWrite={false}
             />
           </mesh>
@@ -253,67 +209,21 @@ export function MapEnvironment({
       ) : null}
 
       <mesh
-        position={[WALKABLE_CENTER_X, OCEAN_LEVEL_Y, WALKABLE_CENTER_Z]}
-        rotation={[-Math.PI / 2, 0, 0]}
-      >
-        <planeGeometry args={[OCEAN_SIZE, OCEAN_SIZE]} />
-        <meshStandardMaterial
-          color={blendColor(VOID_OCEAN, LIVE_OCEAN, liveTheme)}
-          map={allowTextures ? oceanTexture ?? undefined : undefined}
-          roughness={THREE.MathUtils.lerp(0.95, 0.28, liveTheme)}
-          metalness={THREE.MathUtils.lerp(0, 0.1, liveTheme)}
-        />
-      </mesh>
-      {liveTheme > 0.45 ? (
-        <mesh
-          position={[WALKABLE_CENTER_X, OCEAN_LEVEL_Y + 0.06, WALKABLE_CENTER_Z]}
-          rotation={[-Math.PI / 2, 0, 0]}
-        >
-          <planeGeometry args={[OCEAN_SIZE, OCEAN_SIZE]} />
-          <meshBasicMaterial
-            color="#80cae4"
-            transparent
-            opacity={0.07 * textureReveal}
-            depthWrite={false}
-          />
-        </mesh>
-      ) : null}
-
-      <mesh
-        position={[WALKABLE_CENTER_X, SHORE_SHELF_Y, WALKABLE_CENTER_Z]}
+        position={[WALKABLE_CENTER_X, -0.12, WALKABLE_CENTER_Z]}
         rotation={[-Math.PI / 2, 0, 0]}
         receiveShadow={shadowEnabled}
         userData={{ bulletHittable: true }}
       >
-        <planeGeometry args={[shelfSizeX, shelfSizeZ]} />
+        <planeGeometry args={[FAR_DESERT_SIZE, FAR_DESERT_SIZE]} />
         <meshStandardMaterial
-          color={blendColor(VOID_SHELF, LIVE_SHELF, liveTheme)}
-          roughness={THREE.MathUtils.lerp(1, 0.98, liveTheme)}
-          metalness={0.01}
+          color={blendColor(VOID_WALKABLE, FAR_DESERT_COLOR, liveTheme)}
+          map={allowTextures ? farSandTexture ?? undefined : undefined}
+          roughness={1}
+          metalness={0}
         />
       </mesh>
-      <OutlinePlane
-        size={[shelfSizeX, shelfSizeZ]}
-        position={[WALKABLE_CENTER_X, SHORE_SHELF_Y + 0.02, WALKABLE_CENTER_Z]}
-        rotation={[-Math.PI / 2, 0, 0]}
-        opacity={outlineOpacity * 0.28}
-      />
 
-      {liveTheme > 0.35 ? (
-        <mesh
-          position={[WALKABLE_CENTER_X, SHORE_SHELF_Y + 0.03, WALKABLE_CENTER_Z]}
-          rotation={[-Math.PI / 2, 0, 0]}
-        >
-          <planeGeometry args={[foamRingSizeX, foamRingSizeZ]} />
-          <meshBasicMaterial
-            color="#f7dcb8"
-            transparent
-            opacity={0.08 * textureReveal}
-            depthWrite={false}
-          />
-        </mesh>
-      ) : null}
-
+      {/* Walkable desert floor */}
       <mesh
         position={[WALKABLE_CENTER_X, 0, WALKABLE_CENTER_Z]}
         rotation={[-Math.PI / 2, 0, 0]}
@@ -324,16 +234,68 @@ export function MapEnvironment({
         <meshStandardMaterial
           color={blendColor(VOID_WALKABLE, LIVE_WALKABLE, liveTheme)}
           map={allowTextures ? sandTexture ?? undefined : undefined}
-          roughness={THREE.MathUtils.lerp(1, 0.97, liveTheme)}
+          roughness={THREE.MathUtils.lerp(1, 0.92, liveTheme)}
           metalness={0}
         />
       </mesh>
-      <OutlinePlane
-        size={[WALKABLE_SIZE_X, WALKABLE_SIZE_Z]}
-        position={[WALKABLE_CENTER_X, 0.03, WALKABLE_CENTER_Z]}
-        rotation={[-Math.PI / 2, 0, 0]}
-        opacity={outlineOpacity}
-      />
+
+      {[
+        {
+          key: "north",
+          position: [WALKABLE_CENTER_X, BORDER_STRIP_HEIGHT / 2, WORLD_BOUNDS.minZ],
+          size: [WALKABLE_SIZE_X + BORDER_STRIP_THICKNESS, BORDER_STRIP_HEIGHT, BORDER_STRIP_THICKNESS],
+        },
+        {
+          key: "south",
+          position: [WALKABLE_CENTER_X, BORDER_STRIP_HEIGHT / 2, WORLD_BOUNDS.maxZ],
+          size: [WALKABLE_SIZE_X + BORDER_STRIP_THICKNESS, BORDER_STRIP_HEIGHT, BORDER_STRIP_THICKNESS],
+        },
+        {
+          key: "west",
+          position: [WORLD_BOUNDS.minX, BORDER_STRIP_HEIGHT / 2, WALKABLE_CENTER_Z],
+          size: [BORDER_STRIP_THICKNESS, BORDER_STRIP_HEIGHT, WALKABLE_SIZE_Z + BORDER_STRIP_THICKNESS],
+        },
+        {
+          key: "east",
+          position: [WORLD_BOUNDS.maxX, BORDER_STRIP_HEIGHT / 2, WALKABLE_CENTER_Z],
+          size: [BORDER_STRIP_THICKNESS, BORDER_STRIP_HEIGHT, WALKABLE_SIZE_Z + BORDER_STRIP_THICKNESS],
+        },
+      ].map(({ key, position, size }) => (
+        <mesh key={key} position={position as [number, number, number]}>
+          <boxGeometry args={size as [number, number, number]} />
+          <meshStandardMaterial
+            color={BORDER_COLOR}
+            emissive={BORDER_GLOW_COLOR}
+            emissiveIntensity={borderGlow}
+            roughness={0.48}
+            metalness={0.06}
+          />
+        </mesh>
+      ))}
+
+      {borderPosts.map(([x, z], index) => (
+        <group key={`border-post-${index}`} position={[x, 0, z]}>
+          <mesh position={[0, BORDER_POST_HEIGHT * 0.5, 0]}>
+            <boxGeometry args={[BORDER_POST_WIDTH, BORDER_POST_HEIGHT, BORDER_POST_WIDTH]} />
+            <meshStandardMaterial
+              color="#7f5a34"
+              roughness={0.92}
+              metalness={0.04}
+            />
+          </mesh>
+          <mesh position={[0, BORDER_POST_HEIGHT + 0.18, 0]}>
+            <sphereGeometry args={[0.12, 10, 10]} />
+            <meshStandardMaterial
+              color={BORDER_COLOR}
+              emissive={BORDER_GLOW_COLOR}
+              emissiveIntensity={borderGlow * 1.1}
+              roughness={0.36}
+              metalness={0.05}
+            />
+          </mesh>
+        </group>
+      ))}
+
       {floorGridOpacity > 0.001 ? (
         <gridHelper
           ref={floorGridRef}
@@ -348,81 +310,7 @@ export function MapEnvironment({
         />
       ) : null}
 
-      <mesh
-        position={[WALKABLE_CENTER_X, cliffY, WORLD_BOUNDS.maxZ + CLIFF_THICKNESS / 2]}
-        castShadow={shadowEnabled}
-        receiveShadow={shadowEnabled}
-        userData={{ bulletHittable: true }}
-      >
-        <boxGeometry args={[WALKABLE_SIZE_X + CLIFF_THICKNESS, CLIFF_HEIGHT, CLIFF_THICKNESS]} />
-        <meshStandardMaterial
-          color={blendColor(VOID_CLIFF, LIVE_CLIFF, liveTheme)}
-          roughness={0.93}
-          metalness={0.02}
-        />
-      </mesh>
-      <OutlineBox
-        size={[WALKABLE_SIZE_X + CLIFF_THICKNESS, CLIFF_HEIGHT, CLIFF_THICKNESS]}
-        position={[WALKABLE_CENTER_X, cliffY, WORLD_BOUNDS.maxZ + CLIFF_THICKNESS / 2]}
-        opacity={outlineOpacity * 0.65}
-      />
-
-      <mesh
-        position={[WALKABLE_CENTER_X, cliffY, WORLD_BOUNDS.minZ - CLIFF_THICKNESS / 2]}
-        castShadow={shadowEnabled}
-        receiveShadow={shadowEnabled}
-        userData={{ bulletHittable: true }}
-      >
-        <boxGeometry args={[WALKABLE_SIZE_X + CLIFF_THICKNESS, CLIFF_HEIGHT, CLIFF_THICKNESS]} />
-        <meshStandardMaterial
-          color={blendColor(VOID_CLIFF, LIVE_CLIFF, liveTheme)}
-          roughness={0.93}
-          metalness={0.02}
-        />
-      </mesh>
-      <OutlineBox
-        size={[WALKABLE_SIZE_X + CLIFF_THICKNESS, CLIFF_HEIGHT, CLIFF_THICKNESS]}
-        position={[WALKABLE_CENTER_X, cliffY, WORLD_BOUNDS.minZ - CLIFF_THICKNESS / 2]}
-        opacity={outlineOpacity * 0.65}
-      />
-
-      <mesh
-        position={[WORLD_BOUNDS.maxX + CLIFF_THICKNESS / 2, cliffY, WALKABLE_CENTER_Z]}
-        castShadow={shadowEnabled}
-        receiveShadow={shadowEnabled}
-        userData={{ bulletHittable: true }}
-      >
-        <boxGeometry args={[CLIFF_THICKNESS, CLIFF_HEIGHT, WALKABLE_SIZE_Z + CLIFF_THICKNESS * 2]} />
-        <meshStandardMaterial
-          color={blendColor(VOID_CLIFF, LIVE_CLIFF, liveTheme)}
-          roughness={0.93}
-          metalness={0.02}
-        />
-      </mesh>
-      <OutlineBox
-        size={[CLIFF_THICKNESS, CLIFF_HEIGHT, WALKABLE_SIZE_Z + CLIFF_THICKNESS * 2]}
-        position={[WORLD_BOUNDS.maxX + CLIFF_THICKNESS / 2, cliffY, WALKABLE_CENTER_Z]}
-        opacity={outlineOpacity * 0.65}
-      />
-
-      <mesh
-        position={[WORLD_BOUNDS.minX - CLIFF_THICKNESS / 2, cliffY, WALKABLE_CENTER_Z]}
-        castShadow={shadowEnabled}
-        receiveShadow={shadowEnabled}
-        userData={{ bulletHittable: true }}
-      >
-        <boxGeometry args={[CLIFF_THICKNESS, CLIFF_HEIGHT, WALKABLE_SIZE_Z + CLIFF_THICKNESS * 2]} />
-        <meshStandardMaterial
-          color={blendColor(VOID_CLIFF, LIVE_CLIFF, liveTheme)}
-          roughness={0.93}
-          metalness={0.02}
-        />
-      </mesh>
-      <OutlineBox
-        size={[CLIFF_THICKNESS, CLIFF_HEIGHT, WALKABLE_SIZE_Z + CLIFF_THICKNESS * 2]}
-        position={[WORLD_BOUNDS.minX - CLIFF_THICKNESS / 2, cliffY, WALKABLE_CENTER_Z]}
-        opacity={outlineOpacity * 0.65}
-      />
+      <DesertProps theme={liveTheme} shadows={shadowEnabled} />
     </group>
   );
 }

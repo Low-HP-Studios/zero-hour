@@ -4,6 +4,7 @@ import * as THREE from "three";
 import type { WeaponKind } from "./Weapon";
 import type {
   AimSensitivitySettings,
+  CollisionCircle,
   CollisionRect,
   ControlBindings,
   PlayerSnapshot,
@@ -23,6 +24,7 @@ type PlayerAction =
 
 type UsePlayerControllerOptions = {
   collisionRects: CollisionRect[];
+  collisionCircles: CollisionCircle[];
   worldBounds: WorldBounds;
   sensitivity: AimSensitivitySettings;
   keybinds: ControlBindings;
@@ -69,7 +71,7 @@ const JUMP_SPEED = 10.4;
 const CAMERA_ARM_LENGTH = 2.25;
 const CAMERA_ARM_LENGTH_ADS = 1.55;
 const CAMERA_ARM_LENGTH_SNIPER_ADS = 0.78;
-const CAMERA_DEFAULT_ELEVATION = 0.35;
+const CAMERA_DEFAULT_ELEVATION = 0.23;
 const CAMERA_MIN_ELEVATION = 0.05;
 const CAMERA_MAX_ELEVATION = 1.2;
 const LOOK_AT_HEIGHT = 1.2;
@@ -89,6 +91,7 @@ const FPP_EXIT_VISUAL_THRESHOLD = 0.75;
 
 export function usePlayerController({
   collisionRects,
+  collisionCircles,
   worldBounds,
   sensitivity,
   keybinds,
@@ -410,6 +413,11 @@ export function usePlayerController({
       worldBounds.maxX - PLAYER_RADIUS,
     );
     resolveCollisions(resolvedXZRef.current, PLAYER_RADIUS, collisionRects);
+    resolveCircleCollisions(
+      resolvedXZRef.current,
+      PLAYER_RADIUS,
+      collisionCircles,
+    );
 
     resolvedXZRef.current.y += velocityRef.current.y * delta;
     resolvedXZRef.current.y = clamp(
@@ -418,6 +426,11 @@ export function usePlayerController({
       worldBounds.maxZ - PLAYER_RADIUS,
     );
     resolveCollisions(resolvedXZRef.current, PLAYER_RADIUS, collisionRects);
+    resolveCircleCollisions(
+      resolvedXZRef.current,
+      PLAYER_RADIUS,
+      collisionCircles,
+    );
 
     positionRef.current.set(resolvedXZRef.current.x, positionRef.current.y, resolvedXZRef.current.y);
 
@@ -662,6 +675,16 @@ function resolveCollisions(positionXZ: THREE.Vector2, radius: number, collisionR
   }
 }
 
+function resolveCircleCollisions(
+  positionXZ: THREE.Vector2,
+  radius: number,
+  collisionCircles: CollisionCircle[],
+) {
+  for (const circle of collisionCircles) {
+    resolveCircleCircle(positionXZ, radius, circle);
+  }
+}
+
 function isBindingDown(keys: KeyState, bindingCode: string) {
   return Boolean(bindingCode && keys[bindingCode]);
 }
@@ -723,6 +746,30 @@ function resolveCircleRect(positionXZ: THREE.Vector2, radius: number, rect: Coll
 
   const dist = Math.sqrt(distSq);
   const pushDistance = radius - dist;
+  positionXZ.x += (dx / dist) * pushDistance;
+  positionXZ.y += (dz / dist) * pushDistance;
+}
+
+function resolveCircleCircle(
+  positionXZ: THREE.Vector2,
+  radius: number,
+  circle: CollisionCircle,
+) {
+  const dx = positionXZ.x - circle.x;
+  const dz = positionXZ.y - circle.z;
+  const minDistance = radius + circle.radius;
+  const distSq = dx * dx + dz * dz;
+  if (distSq >= minDistance * minDistance) {
+    return;
+  }
+
+  if (distSq < 1e-8) {
+    positionXZ.x += minDistance;
+    return;
+  }
+
+  const dist = Math.sqrt(distSq);
+  const pushDistance = minDistance - dist;
   positionXZ.x += (dx / dist) * pushDistance;
   positionXZ.y += (dz / dist) * pushDistance;
 }

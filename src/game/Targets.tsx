@@ -2,13 +2,20 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
-import { loadFbxAnimation, loadFbxAsset } from "./AssetLoader";
+import { loadFbxAnimation, loadGlbWithAnimations } from "./AssetLoader";
+import { TARGET_CHARACTER_MODEL_URL } from "./boot-assets";
 import type { TargetState } from "./types";
+import {
+  remapAnimationClip,
+  removeRootMotion,
+} from "./scene/CharacterModel";
+import { CHARACTER_TARGET_HEIGHT } from "./scene/scene-constants";
 
 type TargetsProps = {
   targets: TargetState[];
   shadows: boolean;
   reveal: number;
+  onReadyChange?: (ready: boolean) => void;
 };
 
 export type TargetRaycastHit = {
@@ -23,13 +30,172 @@ export type TargetHitZone = "head" | "body" | "leg";
 
 const DAMAGE_PER_SHOT = 25;
 const RESPAWN_DELAY_MS = 2000;
-const TARGET_CHARACTER_MODEL_URL = "/assets/models/character/Trooper/tactical guy.fbx";
-const TARGET_CHARACTER_IDLE_ANIM_URL = "/assets/animations/walking/Idle.fbx";
-const TARGET_CHARACTER_HEIGHT = 1.65;
+const TARGET_VISUAL_SCALE = 0.9;
+const TARGET_CHARACTER_HEIGHT = CHARACTER_TARGET_HEIGHT * TARGET_VISUAL_SCALE;
+const TARGET_IDLE_ANIMATION_URL = "/assets/animations/walking/Idle.fbx";
+const TARGET_HP_BAR_Y = 2.4 * TARGET_VISUAL_SCALE;
+const Y_AXIS = new THREE.Vector3(0, 1, 0);
+
+type TargetSphereHitbox = {
+  zone: TargetHitZone;
+  center: [number, number, number];
+  radius: number;
+};
+
+type TargetBoxHitbox = {
+  zone: TargetHitZone;
+  center: [number, number, number];
+  halfSize: [number, number, number];
+};
+
+type TargetHitboxPart =
+  | { kind: "sphere"; hitbox: TargetSphereHitbox }
+  | { kind: "box"; hitbox: TargetBoxHitbox };
+
+const TARGET_COLLISION_RADIUS = 0.35;
+
+const TARGET_HITBOX_PARTS: TargetHitboxPart[] = [
+  {
+    kind: "sphere",
+    hitbox: {
+      zone: "head",
+      center: [0, 1.58 * TARGET_VISUAL_SCALE, 0.01 * TARGET_VISUAL_SCALE],
+      radius: 0.28 * TARGET_VISUAL_SCALE,
+    },
+  },
+  {
+    kind: "box",
+    hitbox: {
+      zone: "body",
+      center: [0, 1.15 * TARGET_VISUAL_SCALE, 0],
+      halfSize: [
+        0.33 * TARGET_VISUAL_SCALE,
+        0.28 * TARGET_VISUAL_SCALE,
+        0.2 * TARGET_VISUAL_SCALE,
+      ],
+    },
+  },
+  {
+    kind: "box",
+    hitbox: {
+      zone: "body",
+      center: [0, 0.78 * TARGET_VISUAL_SCALE, 0],
+      halfSize: [
+        0.3 * TARGET_VISUAL_SCALE,
+        0.24 * TARGET_VISUAL_SCALE,
+        0.2 * TARGET_VISUAL_SCALE,
+      ],
+    },
+  },
+  {
+    kind: "box",
+    hitbox: {
+      zone: "body",
+      center: [-0.39 * TARGET_VISUAL_SCALE, 1.04 * TARGET_VISUAL_SCALE, 0],
+      halfSize: [
+        0.12 * TARGET_VISUAL_SCALE,
+        0.2 * TARGET_VISUAL_SCALE,
+        0.13 * TARGET_VISUAL_SCALE,
+      ],
+    },
+  },
+  {
+    kind: "box",
+    hitbox: {
+      zone: "body",
+      center: [0.39 * TARGET_VISUAL_SCALE, 1.04 * TARGET_VISUAL_SCALE, 0],
+      halfSize: [
+        0.12 * TARGET_VISUAL_SCALE,
+        0.2 * TARGET_VISUAL_SCALE,
+        0.13 * TARGET_VISUAL_SCALE,
+      ],
+    },
+  },
+  {
+    kind: "box",
+    hitbox: {
+      zone: "body",
+      center: [-0.47 * TARGET_VISUAL_SCALE, 0.73 * TARGET_VISUAL_SCALE, 0],
+      halfSize: [
+        0.11 * TARGET_VISUAL_SCALE,
+        0.2 * TARGET_VISUAL_SCALE,
+        0.12 * TARGET_VISUAL_SCALE,
+      ],
+    },
+  },
+  {
+    kind: "box",
+    hitbox: {
+      zone: "body",
+      center: [0.47 * TARGET_VISUAL_SCALE, 0.73 * TARGET_VISUAL_SCALE, 0],
+      halfSize: [
+        0.11 * TARGET_VISUAL_SCALE,
+        0.2 * TARGET_VISUAL_SCALE,
+        0.12 * TARGET_VISUAL_SCALE,
+      ],
+    },
+  },
+  {
+    kind: "box",
+    hitbox: {
+      zone: "leg",
+      center: [-0.14 * TARGET_VISUAL_SCALE, 0.26 * TARGET_VISUAL_SCALE, 0],
+      halfSize: [
+        0.14 * TARGET_VISUAL_SCALE,
+        0.36 * TARGET_VISUAL_SCALE,
+        0.15 * TARGET_VISUAL_SCALE,
+      ],
+    },
+  },
+  {
+    kind: "box",
+    hitbox: {
+      zone: "leg",
+      center: [0.14 * TARGET_VISUAL_SCALE, 0.26 * TARGET_VISUAL_SCALE, 0],
+      halfSize: [
+        0.14 * TARGET_VISUAL_SCALE,
+        0.36 * TARGET_VISUAL_SCALE,
+        0.15 * TARGET_VISUAL_SCALE,
+      ],
+    },
+  },
+  {
+    kind: "sphere",
+    hitbox: {
+      zone: "leg",
+      center: [-0.14 * TARGET_VISUAL_SCALE, 0.02 * TARGET_VISUAL_SCALE, 0],
+      radius: 0.13 * TARGET_VISUAL_SCALE,
+    },
+  },
+  {
+    kind: "sphere",
+    hitbox: {
+      zone: "leg",
+      center: [0.14 * TARGET_VISUAL_SCALE, 0.02 * TARGET_VISUAL_SCALE, 0],
+      radius: 0.13 * TARGET_VISUAL_SCALE,
+    },
+  },
+];
+
+function resolveTargetFacingYaw(id: string) {
+  const hash = id.split("").reduce((sum, ch) => sum + ch.charCodeAt(0), 0);
+  return ((hash % 12) / 12) * Math.PI * 2;
+}
+
+function getTrackNodeName(trackName: string) {
+  const dotIdx = trackName.lastIndexOf(".");
+  return dotIdx <= 0 ? trackName : trackName.slice(0, dotIdx);
+}
+
+function getTrackProperty(trackName: string) {
+  const dotIdx = trackName.lastIndexOf(".");
+  return dotIdx <= 0 ? "" : trackName.slice(dotIdx);
+}
 
 type TargetCharacterAsset = {
   model: THREE.Group | null;
   idleClip: THREE.AnimationClip | null;
+  ready: boolean;
 };
 
 export function createDefaultTargets(): TargetState[] {
@@ -40,15 +206,19 @@ export function createDefaultTargets(): TargetState[] {
     [-44, -64], [-22, -68], [0, -66], [22, -68], [44, -64],
   ];
 
-  return layout.map(([x, z], index) => ({
-    id: `t${index + 1}`,
-    position: [x, 0, z],
-    radius: 0.6,
-    hitUntil: 0,
-    disabled: false,
-    hp: 100,
-    maxHp: 100,
-  }));
+  return layout.map(([x, z], index) => {
+    const id = `t${index + 1}`;
+    return {
+      id,
+      facingYaw: resolveTargetFacingYaw(id),
+      position: [x, 0, z],
+      radius: TARGET_COLLISION_RADIUS,
+      hitUntil: 0,
+      disabled: false,
+      hp: 100,
+      maxHp: 100,
+    };
+  });
 }
 
 export function resetTargets(targets: TargetState[]): TargetState[] {
@@ -60,13 +230,36 @@ export function resetTargets(targets: TargetState[]): TargetState[] {
   }));
 }
 
-export { DAMAGE_PER_SHOT, RESPAWN_DELAY_MS };
+export { DAMAGE_PER_SHOT, RESPAWN_DELAY_MS, TARGET_COLLISION_RADIUS };
 
 const _tempSpherePoint = new THREE.Vector3();
 const _tempSphereNormal = new THREE.Vector3();
 const _tempAabbNearNormal = new THREE.Vector3();
 const _tempAabbFarNormal = new THREE.Vector3();
 const _tempAabbPoint = new THREE.Vector3();
+const _tempTargetLocalOrigin = new THREE.Vector3();
+const _tempTargetLocalDirection = new THREE.Vector3();
+
+function transformTargetHit(
+  hit: TargetRaycastHit,
+  target: TargetState,
+): TargetRaycastHit {
+  const [x, baseY, z] = target.position;
+  const point = hit.point
+    .clone()
+    .applyAxisAngle(Y_AXIS, target.facingYaw)
+    .add(new THREE.Vector3(x, baseY, z));
+  const normal = hit.normal
+    .clone()
+    .applyAxisAngle(Y_AXIS, target.facingYaw)
+    .normalize();
+
+  return {
+    ...hit,
+    point,
+    normal,
+  };
+}
 
 export function raycastTargets(
   origin: THREE.Vector3,
@@ -82,24 +275,42 @@ export function raycastTargets(
     }
 
     const [x, baseY, z] = target.position;
-
-    const partHits: Array<TargetRaycastHit | null> = [
-      raycastSpherePart(target.id, "head", origin, direction, x, baseY + 1.6, z, 0.22),
-      raycastAabbPart(target.id, "body", origin, direction, x, baseY + 1.05, z, 0.25, 0.35, 0.15),
-      raycastAabbPart(target.id, "leg", origin, direction, x - 0.2, baseY + 0.35, z, 0.08, 0.35, 0.08),
-      raycastAabbPart(target.id, "leg", origin, direction, x + 0.2, baseY + 0.35, z, 0.08, 0.35, 0.08),
-    ];
+    const localOrigin = _tempTargetLocalOrigin
+      .set(origin.x - x, origin.y - baseY, origin.z - z)
+      .applyAxisAngle(Y_AXIS, -target.facingYaw);
+    const localDirection = _tempTargetLocalDirection
+      .copy(direction)
+      .applyAxisAngle(Y_AXIS, -target.facingYaw)
+      .normalize();
 
     let targetClosestHit: TargetRaycastHit | null = null;
-    for (const partHit of partHits) {
+    for (const part of TARGET_HITBOX_PARTS) {
+      const partHit = part.kind === "sphere"
+        ? raycastSpherePart(
+            target.id,
+            part.hitbox.zone,
+            localOrigin,
+            localDirection,
+            ...part.hitbox.center,
+            part.hitbox.radius,
+          )
+        : raycastAabbPart(
+            target.id,
+            part.hitbox.zone,
+            localOrigin,
+            localDirection,
+            ...part.hitbox.center,
+            ...part.hitbox.halfSize,
+          );
       if (!partHit) {
         continue;
       }
-      if (partHit.distance > maxDistance) {
+      const worldPartHit = transformTargetHit(partHit, target);
+      if (worldPartHit.distance > maxDistance) {
         continue;
       }
-      if (!targetClosestHit || partHit.distance < targetClosestHit.distance) {
-        targetClosestHit = partHit;
+      if (!targetClosestHit || worldPartHit.distance < targetClosestHit.distance) {
+        targetClosestHit = worldPartHit;
       }
     }
 
@@ -224,71 +435,6 @@ function raycastAabbPart(
   return { id, zone, point: point.clone(), normal: normal.clone(), distance };
 }
 
-function normalizeBoneName(name: string): string {
-  return name
-    .replace(/^mixamorig:/, "")
-    .replace(/^characters3d\.?com___/, "")
-    .replace(/^mixamorig_/, "");
-}
-
-function splitTrackName(trackName: string): { nodeName: string; property: string } {
-  const dotIdx = trackName.lastIndexOf(".");
-  if (dotIdx <= 0) {
-    return { nodeName: trackName, property: "" };
-  }
-  return {
-    nodeName: trackName.substring(0, dotIdx),
-    property: trackName.substring(dotIdx),
-  };
-}
-
-function remapAnimationClip(
-  clip: THREE.AnimationClip,
-  modelBoneNames: Set<string>,
-): THREE.AnimationClip {
-  const firstTrack = clip.tracks[0];
-  if (!firstTrack) return clip;
-
-  const firstBone = splitTrackName(firstTrack.name).nodeName;
-  if (modelBoneNames.has(firstBone)) return clip;
-
-  const normalizedModelMap = new Map<string, string>();
-  for (const bone of modelBoneNames) {
-    normalizedModelMap.set(normalizeBoneName(bone).toLowerCase(), bone);
-  }
-
-  const remapped = clip.clone();
-  for (const track of remapped.tracks) {
-    const { nodeName, property } = splitTrackName(track.name);
-    const normalized = normalizeBoneName(nodeName).toLowerCase();
-    const mapped = modelBoneNames.has(nodeName)
-      ? nodeName
-      : normalizedModelMap.get(normalized);
-    if (mapped && property) {
-      track.name = mapped + property;
-    }
-  }
-
-  return remapped;
-}
-
-function removeRootMotion(clip: THREE.AnimationClip): void {
-  for (const track of clip.tracks) {
-    const { nodeName, property } = splitTrackName(track.name);
-    if (property !== ".position") continue;
-    if (!normalizeBoneName(nodeName).toLowerCase().includes("hips")) continue;
-
-    const values = track.values;
-    if (values.length < 3) continue;
-    const baseX = values[0];
-    const baseZ = values[2];
-    for (let i = 0; i < values.length; i += 3) {
-      values[i] = baseX;
-      values[i + 2] = baseZ;
-    }
-  }
-}
-
 function prepareTargetCharacterModel(model: THREE.Group): void {
   const box = new THREE.Box3().setFromObject(model);
   const size = new THREE.Vector3();
@@ -305,22 +451,6 @@ function prepareTargetCharacterModel(model: THREE.Group): void {
     const mesh = child as THREE.Mesh;
     mesh.castShadow = true;
     mesh.receiveShadow = true;
-
-    // Convert FBX default MeshPhongMaterial to MeshStandardMaterial for PBR lighting
-    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-    const newMats = mats.map((mat) => {
-      const phong = mat as THREE.MeshPhongMaterial;
-      const stdMat = new THREE.MeshStandardMaterial({
-        name: phong.name,
-        color: phong.color ?? new THREE.Color(0xaaaaaa),
-        map: phong.map ?? null,
-        normalMap: phong.normalMap ?? null,
-        roughness: 0.75,
-        metalness: 0.05,
-      });
-      return stdMat;
-    });
-    mesh.material = newMats.length === 1 ? newMats[0] : newMats;
   });
 }
 
@@ -328,39 +458,55 @@ function useTargetCharacterAsset(): TargetCharacterAsset {
   const [asset, setAsset] = useState<TargetCharacterAsset>({
     model: null,
     idleClip: null,
+    ready: false,
   });
 
   useEffect(() => {
     let disposed = false;
 
     (async () => {
-      const [modelSource, idleSource] = await Promise.all([
-        loadFbxAsset(TARGET_CHARACTER_MODEL_URL),
-        loadFbxAnimation(TARGET_CHARACTER_IDLE_ANIM_URL, "idle"),
-      ]);
-      if (disposed || !modelSource || !idleSource) return;
-
-      const preparedModel = SkeletonUtils.clone(modelSource) as THREE.Group;
-      prepareTargetCharacterModel(preparedModel);
-
-      const modelBoneNames = new Set<string>();
-      preparedModel.traverse((child) => {
-        if ((child as THREE.Bone).isBone || (child as THREE.SkinnedMesh).isSkinnedMesh) {
-          modelBoneNames.add(child.name);
+      try {
+        const [result, idleClip] = await Promise.all([
+          loadGlbWithAnimations(TARGET_CHARACTER_MODEL_URL),
+          loadFbxAnimation(TARGET_IDLE_ANIMATION_URL, "idle"),
+        ]);
+        if (disposed) return;
+        if (!result) {
+          setAsset({ model: null, idleClip: null, ready: true });
+          return;
         }
-      });
 
-      const remappedIdle = remapAnimationClip(idleSource, modelBoneNames).clone();
-      removeRootMotion(remappedIdle);
-      remappedIdle.tracks = remappedIdle.tracks.filter((track) => {
-        const boneName = splitTrackName(track.name).nodeName;
-        return modelBoneNames.has(boneName);
-      });
+        const preparedModel = SkeletonUtils.clone(result.scene) as THREE.Group;
+        prepareTargetCharacterModel(preparedModel);
 
-      setAsset({
-        model: preparedModel,
-        idleClip: remappedIdle,
-      });
+        const modelBoneNames = new Set<string>();
+        preparedModel.traverse((child) => {
+          if (
+            (child as THREE.Bone).isBone ||
+            (child as THREE.SkinnedMesh).isSkinnedMesh
+          ) {
+            modelBoneNames.add(child.name);
+          }
+        });
+
+        const remappedIdle = idleClip
+          ? remapAnimationClip(idleClip, modelBoneNames).clone()
+          : null;
+        if (remappedIdle) {
+          removeRootMotion(remappedIdle);
+          remappedIdle.tracks = remappedIdle.tracks.filter((track) =>
+            modelBoneNames.has(getTrackNodeName(track.name)) &&
+            getTrackProperty(track.name) !== ".position"
+          );
+        }
+
+        setAsset({ model: preparedModel, idleClip: remappedIdle, ready: true });
+      } catch (error) {
+        console.warn("[Targets] Target asset warm-up failed", error);
+        if (!disposed) {
+          setAsset({ model: null, idleClip: null, ready: true });
+        }
+      }
     })();
 
     return () => {
@@ -388,7 +534,7 @@ const HPBar = memo(function HPBar({ hp, maxHp }: { hp: number; maxHp: number }) 
   const fillColor = ratio > 0.5 ? "#4ade80" : ratio > 0.25 ? "#facc15" : "#ef4444";
 
   return (
-    <group ref={groupRef} position={[0, 2.4, 0]}>
+    <group ref={groupRef} position={[0, TARGET_HP_BAR_Y, 0]}>
       <mesh position={[0, 0, -0.005]}>
         <planeGeometry args={[barWidth + 0.06, barHeight + 0.06]} />
         <meshBasicMaterial color="#000000" opacity={0.6} transparent />
@@ -422,30 +568,29 @@ const TargetDummy = memo(function TargetDummy({
   const now = performance.now();
   const isHit = target.hitUntil > now;
   const mixerRef = useRef<THREE.AnimationMixer | null>(null);
+  const groupRef = useRef<THREE.Group>(null);
   const characterInstance = useMemo(
     () => (characterAsset.model ? (SkeletonUtils.clone(characterAsset.model) as THREE.Group) : null),
     [characterAsset.model],
   );
-  const facingYaw = useMemo(() => {
-    const hash = target.id.split("").reduce((sum, ch) => sum + ch.charCodeAt(0), 0);
-    return ((hash % 12) / 12) * Math.PI * 2;
-  }, [target.id]);
 
   useEffect(() => {
-    if (!characterInstance || !characterAsset.idleClip) {
-      return;
+    if (!characterInstance) return;
+
+    if (characterAsset.idleClip) {
+      const mixer = new THREE.AnimationMixer(characterInstance);
+      const action = mixer.clipAction(characterAsset.idleClip);
+      action.setLoop(THREE.LoopRepeat, Infinity);
+      action.play();
+      mixerRef.current = mixer;
+
+      return () => {
+        mixer.stopAllAction();
+        mixerRef.current = null;
+      };
     }
 
-    const mixer = new THREE.AnimationMixer(characterInstance);
-    const action = mixer.clipAction(characterAsset.idleClip);
-    action.setLoop(THREE.LoopRepeat, Infinity);
-    action.play();
-    mixerRef.current = mixer;
-
-    return () => {
-      mixer.stopAllAction();
-      mixerRef.current = null;
-    };
+    return undefined;
   }, [characterAsset.idleClip, characterInstance]);
 
   useEffect(() => {
@@ -469,17 +614,21 @@ const TargetDummy = memo(function TargetDummy({
   }, [characterInstance, isHit, reveal, shadows]);
 
   useFrame((_, delta) => {
+    if (reveal <= 0.01 || target.disabled) return;
     mixerRef.current?.update(delta);
   });
 
-  if (target.disabled || reveal <= 0.01) {
-    return null;
-  }
-
   const scale = 0.82 + reveal * 0.18;
+  const visible = !target.disabled && reveal > 0.01;
 
   return (
-    <group position={[x, baseY, z]} rotation={[0, facingYaw, 0]} scale={scale}>
+    <group
+      ref={groupRef}
+      position={[x, baseY, z]}
+      rotation={[0, target.facingYaw, 0]}
+      scale={scale}
+      visible={visible}
+    >
       {characterInstance ? (
         <primitive object={characterInstance} />
       ) : (
@@ -497,8 +646,18 @@ const TargetDummy = memo(function TargetDummy({
   );
 });
 
-export function Targets({ targets, shadows, reveal }: TargetsProps) {
+export function Targets({
+  targets,
+  shadows,
+  reveal,
+  onReadyChange,
+}: TargetsProps) {
   const characterAsset = useTargetCharacterAsset();
+  const assetReady = characterAsset.ready;
+
+  useEffect(() => {
+    onReadyChange?.(assetReady);
+  }, [assetReady, onReadyChange]);
 
   return (
     <group>

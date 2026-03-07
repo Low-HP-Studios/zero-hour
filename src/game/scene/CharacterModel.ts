@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
-import { loadFbxAsset, loadFbxAnimation } from "../AssetLoader";
+import {
+  loadFbxAsset,
+  loadFbxAnimation,
+  preloadTextureAsset,
+} from "../AssetLoader";
 import {
   ANIM_CLIPS,
   CHARACTER_MODEL_URL,
@@ -15,6 +19,7 @@ import {
 
 export type CharacterModelResult = {
   model: THREE.Group | null;
+  ready: boolean;
   setAnimState: (state: CharacterAnimState) => void;
 };
 
@@ -69,7 +74,7 @@ function splitTrackName(trackName: string): { nodeName: string; property: string
   };
 }
 
-function remapAnimationClip(
+export function remapAnimationClip(
   clip: THREE.AnimationClip,
   modelBoneNames: Set<string>,
 ): THREE.AnimationClip {
@@ -133,7 +138,7 @@ function remapAnimationClip(
   return remapped;
 }
 
-function removeRootMotion(clip: THREE.AnimationClip): void {
+export function removeRootMotion(clip: THREE.AnimationClip): void {
   for (const track of clip.tracks) {
     const { nodeName, property } = splitTrackName(track.name);
     if (property !== ".position") continue;
@@ -154,16 +159,6 @@ function removeRootMotion(clip: THREE.AnimationClip): void {
 }
 
 async function applyCharacterTextures(model: THREE.Group): Promise<void> {
-  const textureLoader = new THREE.TextureLoader();
-  const loadTex = (url: string): Promise<THREE.Texture | null> =>
-    new Promise((resolve) => {
-      const encoded = encodeURI(url);
-      textureLoader.load(encoded, resolve, undefined, () => {
-        console.warn("[Character] Texture load failed:", encoded);
-        resolve(null);
-      });
-    });
-
   // Collect all meshes and their material conversion work
   const tasks: Promise<void>[] = [];
 
@@ -183,8 +178,8 @@ async function applyCharacterTextures(model: THREE.Group): Promise<void> {
           let normalTex: THREE.Texture | null = null;
           if (entry) {
             [baseTex, normalTex] = await Promise.all([
-              loadTex(CHARACTER_TEXTURE_BASE + entry.base),
-              loadTex(CHARACTER_TEXTURE_BASE + entry.normal),
+              preloadTextureAsset(CHARACTER_TEXTURE_BASE + entry.base),
+              preloadTextureAsset(CHARACTER_TEXTURE_BASE + entry.normal),
             ]);
           }
 
@@ -229,6 +224,7 @@ function findTextureEntry(materialName: string): { base: string; normal: string 
 
 export function useCharacterModel(): CharacterModelResult {
   const [model, setModel] = useState<THREE.Group | null>(null);
+  const [ready, setReady] = useState(false);
   const mixerRef = useRef<THREE.AnimationMixer | null>(null);
   const actionsRef = useRef<Map<string, THREE.AnimationAction>>(new Map());
   const currentAnimRef = useRef<string>("");
@@ -237,67 +233,82 @@ export function useCharacterModel(): CharacterModelResult {
     let disposed = false;
 
     (async () => {
-      const [fbxModel, SkeletonUtils, ...clips] = await Promise.all([
-        loadFbxAsset(CHARACTER_MODEL_URL),
-        import("three/examples/jsm/utils/SkeletonUtils.js"),
-        ...ANIM_CLIPS.map((a) => loadFbxAnimation(a.url, a.name)),
-      ]);
+      try {
+        const [fbxModel, SkeletonUtils, ...clips] = await Promise.all([
+          loadFbxAsset(CHARACTER_MODEL_URL),
+          import("three/examples/jsm/utils/SkeletonUtils.js"),
+          ...ANIM_CLIPS.map((a) => loadFbxAnimation(a.url, a.name)),
+        ]);
 
-      if (disposed || !fbxModel) return;
-
-      const clone = SkeletonUtils.clone(fbxModel) as THREE.Group;
-
-      const box = new THREE.Box3().setFromObject(clone);
-      const size = new THREE.Vector3();
-      box.getSize(size);
-      const scale = size.y > 0 ? CHARACTER_TARGET_HEIGHT / size.y : 1;
-      clone.scale.setScalar(scale);
-
-      const scaledBox = new THREE.Box3().setFromObject(clone);
-      clone.position.y = -scaledBox.min.y;
-
-      clone.traverse((child) => {
-        if (!(child as THREE.Mesh).isMesh) return;
-        child.castShadow = true;
-        child.receiveShadow = true;
-      });
-
-      await applyCharacterTextures(clone);
-
-      const modelBoneNames = new Set<string>();
-      clone.traverse((child) => {
-        if ((child as THREE.Bone).isBone || (child as THREE.SkinnedMesh).isSkinnedMesh) {
-          modelBoneNames.add(child.name);
+        if (disposed) return;
+        if (!fbxModel) {
+          setReady(true);
+          return;
         }
-      });
 
-      const mixer = new THREE.AnimationMixer(clone);
-      mixerRef.current = mixer;
-      clone.userData.__mixer = mixer;
+        const clone = SkeletonUtils.clone(fbxModel) as THREE.Group;
 
-      const actions = new Map<string, THREE.AnimationAction>();
-      for (let i = 0; i < ANIM_CLIPS.length; i++) {
-        const clip = clips[i];
-        if (!clip) continue;
-        const remapped = remapAnimationClip(clip, modelBoneNames).clone();
-        removeRootMotion(remapped);
-        remapped.tracks = remapped.tracks.filter((track) => {
-          const boneName = splitTrackName(track.name).nodeName;
-          return modelBoneNames.has(boneName);
+        const box = new THREE.Box3().setFromObject(clone);
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        const scale = size.y > 0 ? CHARACTER_TARGET_HEIGHT / size.y : 1;
+        clone.scale.setScalar(scale);
+
+        const scaledBox = new THREE.Box3().setFromObject(clone);
+        clone.position.y = -scaledBox.min.y;
+
+        clone.traverse((child) => {
+          if (!(child as THREE.Mesh).isMesh) return;
+          child.castShadow = true;
+          child.receiveShadow = true;
         });
-        const action = mixer.clipAction(remapped);
-        action.setLoop(THREE.LoopRepeat, Infinity);
-        actions.set(ANIM_CLIPS[i].name, action);
-      }
-      actionsRef.current = actions;
 
-      const idleAction = actions.get("idle");
-      if (idleAction) {
-        idleAction.play();
-        currentAnimRef.current = "idle";
-      }
+        await applyCharacterTextures(clone);
 
-      setModel(clone);
+        const modelBoneNames = new Set<string>();
+        clone.traverse((child) => {
+          if (
+            (child as THREE.Bone).isBone ||
+            (child as THREE.SkinnedMesh).isSkinnedMesh
+          ) {
+            modelBoneNames.add(child.name);
+          }
+        });
+
+        const mixer = new THREE.AnimationMixer(clone);
+        mixerRef.current = mixer;
+        clone.userData.__mixer = mixer;
+
+        const actions = new Map<string, THREE.AnimationAction>();
+        for (let i = 0; i < ANIM_CLIPS.length; i++) {
+          const clip = clips[i];
+          if (!clip) continue;
+          const remapped = remapAnimationClip(clip, modelBoneNames).clone();
+          removeRootMotion(remapped);
+          remapped.tracks = remapped.tracks.filter((track) => {
+            const boneName = splitTrackName(track.name).nodeName;
+            return modelBoneNames.has(boneName);
+          });
+          const action = mixer.clipAction(remapped);
+          action.setLoop(THREE.LoopRepeat, Infinity);
+          actions.set(ANIM_CLIPS[i].name, action);
+        }
+        actionsRef.current = actions;
+
+        const idleAction = actions.get("idle");
+        if (idleAction) {
+          idleAction.play();
+          currentAnimRef.current = "idle";
+        }
+
+        setModel(clone);
+      } catch (error) {
+        console.warn("[Character] Model warm-up failed", error);
+      } finally {
+        if (!disposed) {
+          setReady(true);
+        }
+      }
     })();
 
     return () => {
@@ -338,5 +349,5 @@ export function useCharacterModel(): CharacterModelResult {
     currentAnimRef.current = stateKey;
   }, []);
 
-  return { model, setAnimState };
+  return { model, ready, setAnimState };
 }

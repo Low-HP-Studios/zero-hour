@@ -6,28 +6,42 @@ import { WEAPON_MODEL_URLS, type WeaponModelTransform } from "./scene-constants"
 export type WeaponModelResult = {
   rifle: THREE.Group | null;
   sniper: THREE.Group | null;
+  ready: boolean;
 };
 
 export function useWeaponModels(): WeaponModelResult {
   const [models, setModels] = useState<WeaponModelResult>({
     rifle: null,
     sniper: null,
+    ready: false,
   });
 
   useEffect(() => {
     let disposed = false;
 
     (async () => {
-      const [rifle, sniper] = await Promise.all([
-        loadFbxAsset(WEAPON_MODEL_URLS.rifle),
-        loadFbxAsset(WEAPON_MODEL_URLS.sniper),
-      ]);
-      if (disposed) return;
+      try {
+        const [rifle, sniper] = await Promise.all([
+          loadFbxAsset(WEAPON_MODEL_URLS.rifle),
+          loadFbxAsset(WEAPON_MODEL_URLS.sniper),
+        ]);
+        if (disposed) return;
 
-      setModels({
-        rifle,
-        sniper,
-      });
+        setModels({
+          rifle,
+          sniper,
+          ready: true,
+        });
+      } catch (error) {
+        console.warn("[Weapons] Weapon warm-up failed", error);
+        if (!disposed) {
+          setModels({
+            rifle: null,
+            sniper: null,
+            ready: true,
+          });
+        }
+      }
     })();
 
     return () => {

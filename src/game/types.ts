@@ -15,10 +15,10 @@ export type AimSensitivitySettings = {
 };
 
 export const DEFAULT_AIM_SENSITIVITY_SETTINGS: AimSensitivitySettings = {
-  look: 1.0,
-  rifleAds: 0.8,
-  sniperAds: 0.55,
-  vertical: 1.0,
+  look: 0.5,
+  rifleAds: 0.5,
+  sniperAds: 0.5,
+  vertical: 0.5,
 };
 
 export type ControlBindings = {
@@ -146,6 +146,12 @@ export type CollisionRect = {
   maxZ: number;
 };
 
+export type CollisionCircle = {
+  x: number;
+  z: number;
+  radius: number;
+};
+
 export type WorldBounds = {
   minX: number;
   maxX: number;
@@ -166,6 +172,7 @@ export type ScenePresentation = {
 export type TargetState = {
   id: string;
   position: [number, number, number];
+  facingYaw: number;
   radius: number;
   hitUntil: number;
   disabled: boolean;

@@ -4,12 +4,13 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useMemo,
   useRef,
   useState,
 } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
-import { AudioManager, type AudioVolumeSettings } from "../Audio";
+import { sharedAudioManager, type AudioVolumeSettings } from "../Audio";
 import {
   usePlayerController,
   type PlayerControllerApi,
@@ -41,6 +42,7 @@ import {
   resolveFootstepPlaybackRate,
   useCharacterModel,
 } from "./CharacterModel";
+import { PATH_POINTS } from "./DesertProps";
 import { BloodImpactMarks, BulletImpactMarks } from "./ImpactMarks";
 import {
   computeWeaponMuzzleOffset,
@@ -104,6 +106,7 @@ type GameplayRuntimeProps = {
   onActiveWeaponChange: (weapon: WeaponKind) => void;
   onSniperRechamberChange: (state: SniperRechamberState) => void;
   onAimingStateChange: (state: AimingState) => void;
+  onCriticalAssetsReadyChange?: (ready: boolean) => void;
 };
 
 const MENU_LOOK_HEIGHT = 1.06;
@@ -390,13 +393,17 @@ export const GameplayRuntime = forwardRef<
   onActiveWeaponChange,
   onSniperRechamberChange,
   onAimingStateChange,
+  onCriticalAssetsReadyChange,
 }: GameplayRuntimeProps, ref) {
   const gl = useThree((state) => state.gl);
   const camera = useThree((state) => state.camera);
   const scene = useThree((state) => state.scene);
 
-  const { model: characterModel, setAnimState: setCharacterAnim } =
-    useCharacterModel();
+  const {
+    model: characterModel,
+    ready: characterReady,
+    setAnimState: setCharacterAnim,
+  } = useCharacterModel();
   const weaponModels = useWeaponModels();
   const rifleMuzzleOffsetRef = useRef(new THREE.Vector3(-0.44, 0.02, 0));
   const sniperMuzzleOffsetRef = useRef(new THREE.Vector3(-0.66, 0.02, 0));
@@ -417,7 +424,7 @@ export const GameplayRuntime = forwardRef<
   }, [weaponModels]);
 
   const weaponRef = useRef<WeaponSystem>(new WeaponSystem());
-  const audioRef = useRef<AudioManager>(new AudioManager());
+  const audioRef = useRef(sharedAudioManager);
   const controllerRef = useRef<PlayerControllerApi | null>(null);
   const targetsRef = useRef(targets);
   const [impactMarks, setImpactMarks] = useState<BulletImpactMark[]>([]);
@@ -487,6 +494,7 @@ export const GameplayRuntime = forwardRef<
   const audioUpdateOptionsRef = useRef({
     stepIntervalSeconds: 0,
     filePlaybackRate: 1,
+    surface: "dirt" as "rock" | "dirt",
   });
   const returningFreezePosRef = useRef(new THREE.Vector3());
   const returningFreezeLookRef = useRef(new THREE.Vector3());
@@ -587,15 +595,12 @@ export const GameplayRuntime = forwardRef<
   }, [characterModel]);
 
   useEffect(() => {
-    const audio = audioRef.current;
-    return () => {
-      audio.dispose();
-    };
-  }, []);
-
-  useEffect(() => {
     audioRef.current.setVolumes(audioVolumes);
   }, [audioVolumes]);
+
+  useEffect(() => {
+    onCriticalAssetsReadyChange?.(characterReady && weaponModels.ready);
+  }, [characterReady, onCriticalAssetsReadyChange, weaponModels.ready]);
 
   const pushImpactMark = useCallback(
     (point: THREE.Vector3, normal: THREE.Vector3) => {
@@ -781,8 +786,24 @@ export const GameplayRuntime = forwardRef<
     return weaponRef.current.getActiveWeapon();
   }, []);
 
+  const targetCollisionCircles = useMemo(
+    () =>
+      targets
+        .filter((target) => !target.disabled)
+        .map((target) => {
+          const [x, , z] = target.position;
+          return {
+            x,
+            z,
+            radius: target.radius,
+          };
+        }),
+    [targets],
+  );
+
   const controller = usePlayerController({
     collisionRects,
+    collisionCircles: targetCollisionCircles,
     worldBounds,
     sensitivity,
     keybinds,
@@ -945,6 +966,20 @@ export const GameplayRuntime = forwardRef<
       nextAnimState,
     );
     audioOpts.filePlaybackRate = resolveFootstepPlaybackRate(nextAnimState);
+
+    const playerPos = controller.getPosition();
+    let onRock = false;
+    const rockRadius = 6;
+    for (const [px, pz] of PATH_POINTS) {
+      const dx = playerPos.x - px;
+      const dz = playerPos.z - pz;
+      if (dx * dx + dz * dz < rockRadius * rockRadius) {
+        onRock = true;
+        break;
+      }
+    }
+    audioOpts.surface = onRock ? "rock" : "dirt";
+
     audio.update(
       nowMs / 1000,
       movementActive,
@@ -1125,20 +1160,41 @@ export const GameplayRuntime = forwardRef<
         !!targetHit &&
         (!worldHit ||
           targetHit.distance <= worldHit.distance + BULLET_HIT_EPSILON);
+      const cameraTargetDistanceFromMuzzle = cameraTargetHit
+        ? tracerOrigin.distanceTo(cameraTargetHit.point)
+        : Number.POSITIVE_INFINITY;
+      const cameraTargetReachableFromMuzzle =
+        !!cameraTargetHit &&
+        (!worldHit ||
+          cameraTargetDistanceFromMuzzle <=
+            worldHit.distance + BULLET_HIT_EPSILON);
+      const preferCameraTarget =
+        !!cameraTargetHit &&
+        cameraTargetVisible &&
+        cameraTargetReachableFromMuzzle &&
+        (!targetHit || targetHit.id === cameraTargetHit.id);
+      const resolvedTargetHit = preferCameraTarget
+        ? {
+            ...cameraTargetHit,
+            distance: cameraTargetDistanceFromMuzzle,
+          }
+        : targetVisible
+        ? targetHit
+        : null;
 
-      if (targetHit && targetVisible) {
-        tempEndRef.current.copy(targetHit.point);
-        const resolvedDamage = resolveShotDamage(shot, targetHit);
+      if (resolvedTargetHit) {
+        tempEndRef.current.copy(resolvedTargetHit.point);
+        const resolvedDamage = resolveShotDamage(shot, resolvedTargetHit);
         const targetBeforeHit = targetsRef.current.find((target) =>
-          target.id === targetHit.id
+          target.id === resolvedTargetHit.id
         );
         const killed = targetBeforeHit
           ? targetBeforeHit.hp - resolvedDamage <= 0
           : false;
-        const hitType = targetHit.zone === "head" ? "head" : "body";
+        const hitType = resolvedTargetHit.zone === "head" ? "head" : "body";
 
-        pushBloodSpray(targetHit.point, targetHit.normal, hitType);
-        targetHitCallbackRef.current(targetHit.id, resolvedDamage, nowMs);
+        pushBloodSpray(resolvedTargetHit.point, resolvedTargetHit.normal, hitType);
+        targetHitCallbackRef.current(resolvedTargetHit.id, resolvedDamage, nowMs);
         hitMarkerCallbackRef.current(killed ? "kill" : hitType);
         if (killed) {
           audio.playKill();

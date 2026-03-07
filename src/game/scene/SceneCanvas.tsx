@@ -8,7 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { Canvas } from "@react-three/fiber";
+import { Canvas, useThree } from "@react-three/fiber";
 import { Perf } from "r3f-perf";
 import * as THREE from "three";
 import type { AudioVolumeSettings } from "../Audio";
@@ -45,13 +45,13 @@ import {
 export type { HitMarkerKind, AimingState };
 
 const VOID_BG = new THREE.Color("#0a1628");
-const LIVE_BG = new THREE.Color("#86c8ff");
+const LIVE_BG = new THREE.Color("#b8d4e8");
 const VOID_FOG = new THREE.Color("#0a1628");
-const LIVE_FOG = new THREE.Color("#f2c39b");
+const LIVE_FOG = new THREE.Color("#e8c88a");
 const VOID_SKY_LIGHT = new THREE.Color("#1a2a4a");
-const LIVE_SKY_LIGHT = new THREE.Color("#a7d6ff");
+const LIVE_SKY_LIGHT = new THREE.Color("#c8dce8");
 const VOID_GROUND_LIGHT = new THREE.Color("#141820");
-const LIVE_GROUND_LIGHT = new THREE.Color("#c49c6d");
+const LIVE_GROUND_LIGHT = new THREE.Color("#d4a862");
 const MENU_KEY_LIGHT = new THREE.Color("#c0d0f0");
 
 function clamp01(value: number) {
@@ -73,6 +73,8 @@ type SceneProps = {
   settings: GameSettings;
   audioVolumes: AudioVolumeSettings;
   stressCount: StressModeCount;
+  booting: boolean;
+  bootAssetsReady: boolean;
   presentation: ScenePresentation;
   onPlayerSnapshot: (snapshot: PlayerSnapshot) => void;
   onPerfMetrics: (metrics: PerfMetrics) => void;
@@ -81,12 +83,78 @@ type SceneProps = {
   onActiveWeaponChange: (weapon: WeaponKind) => void;
   onSniperRechamberChange: (state: SniperRechamberState) => void;
   onAimingStateChange: (state: AimingState) => void;
+  onBootReady: () => void;
 };
+
+function waitForAnimationFrame() {
+  return new Promise<void>((resolve) => {
+    window.requestAnimationFrame(() => resolve());
+  });
+}
+
+function SceneBootCompiler({
+  enabled,
+  onReady,
+}: {
+  enabled: boolean;
+  onReady: () => void;
+}) {
+  const gl = useThree((state) => state.gl);
+  const camera = useThree((state) => state.camera);
+  const scene = useThree((state) => state.scene);
+  const startedRef = useRef(false);
+
+  useEffect(() => {
+    if (!enabled || startedRef.current) {
+      return;
+    }
+
+    let cancelled = false;
+    startedRef.current = true;
+
+    void (async () => {
+      await waitForAnimationFrame();
+      await waitForAnimationFrame();
+      if (cancelled) {
+        return;
+      }
+
+      try {
+        const renderer = gl as THREE.WebGLRenderer & {
+          compileAsync?: (
+            scene: THREE.Scene,
+            camera: THREE.Camera,
+          ) => Promise<void>;
+        };
+        if (typeof renderer.compileAsync === "function") {
+          await renderer.compileAsync(scene, camera);
+        } else {
+          renderer.compile(scene, camera);
+        }
+      } catch (error) {
+        console.warn("[Scene] Warm-up compile failed", error);
+      }
+
+      await waitForAnimationFrame();
+      if (!cancelled) {
+        onReady();
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [camera, enabled, gl, onReady, scene]);
+
+  return null;
+}
 
 export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
   settings,
   audioVolumes,
   stressCount,
+  booting,
+  bootAssetsReady,
   presentation,
   onPlayerSnapshot,
   onPerfMetrics,
@@ -95,14 +163,19 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
   onActiveWeaponChange,
   onSniperRechamberChange,
   onAimingStateChange,
+  onBootReady,
 }: SceneProps, ref) {
   const [targets, setTargets] = useState<TargetState[]>(() =>
     createDefaultTargets()
   );
   const sceneTargetsRef = useRef(targets);
   const runtimeRef = useRef<GameplayRuntimeHandle | null>(null);
+  const [runtimeAssetsReady, setRuntimeAssetsReady] = useState(false);
+  const [targetAssetsReady, setTargetAssetsReady] = useState(false);
   sceneTargetsRef.current = targets;
   const resetTimeoutsRef = useRef<Map<string, number>>(new Map());
+  const compileReady = booting && bootAssetsReady && runtimeAssetsReady &&
+    targetAssetsReady;
 
   const dpr = useMemo(() => {
     const devicePixelRatio =
@@ -226,20 +299,20 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
       gl={CANVAS_GL}
     >
       <color attach="background" args={[backgroundColor]} />
-      <fog attach="fog" args={[fogColor, 90, 620]} />
+      <fog attach="fog" args={[fogColor, 60, 420]} />
       <hemisphereLight
         args={[skyLightColor, groundLightColor, hemisphereIntensity]}
       />
       <ambientLight intensity={ambientIntensity} />
       <directionalLight
-        position={[106, 34, -118]}
+        position={[24, 430, -32]}
         intensity={sunIntensity}
         color="#ffd2a2"
         castShadow={settings.shadows && worldTheme > 0.6}
         shadow-mapSize-width={2048}
         shadow-mapSize-height={2048}
         shadow-camera-near={1}
-        shadow-camera-far={220}
+        shadow-camera-far={260}
         shadow-camera-left={-90}
         shadow-camera-right={90}
         shadow-camera-top={90}
@@ -266,6 +339,7 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
         targets={targets}
         shadows={settings.shadows && worldTheme > 0.6}
         reveal={presentation.targetReveal}
+        onReadyChange={setTargetAssetsReady}
       />
       <StressBoxes count={stressCount} shadows={settings.shadows} />
       <GameplayRuntime
@@ -288,7 +362,9 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
         onActiveWeaponChange={onActiveWeaponChange}
         onSniperRechamberChange={onSniperRechamberChange}
         onAimingStateChange={onAimingStateChange}
+        onCriticalAssetsReadyChange={setRuntimeAssetsReady}
       />
+      <SceneBootCompiler enabled={compileReady} onReady={onBootReady} />
       {settings.showR3fPerf ? <Perf position="top-left" minimal /> : null}
     </Canvas>
   );

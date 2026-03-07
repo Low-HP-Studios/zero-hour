@@ -1,27 +1,47 @@
-import { type ReactNode, useState } from "react";
+import { useCallback, useState } from "react";
 import "./App.css";
 import { Toaster } from "./components/ui/sonner";
 import { GameRoot } from "./game/GameRoot";
 import { LoadingScreen } from "./screens/LoadingScreen";
 
-type Screen = "loading" | "experience";
-
 function App() {
-  const [screen, setScreen] = useState<Screen>("loading");
+  const [booting, setBooting] = useState(true);
+  const [loadingOverlayVisible, setLoadingOverlayVisible] = useState(true);
+  const [assetsReady, setAssetsReady] = useState(false);
+  const [sceneReady, setSceneReady] = useState(false);
+  const bootComplete = assetsReady && sceneReady;
 
-  let content: ReactNode;
-  switch (screen) {
-    case "loading":
-      content = <LoadingScreen onComplete={() => setScreen("experience")} />;
-      break;
-    case "experience":
-      content = <GameRoot />;
-      break;
-  }
+  const handleAssetsReady = useCallback(() => {
+    setAssetsReady(true);
+  }, []);
+
+  const handleSceneReady = useCallback(() => {
+    setSceneReady(true);
+  }, []);
+
+  const handleFadeOutStart = useCallback(() => {
+    setBooting(false);
+  }, []);
+
+  const handleOverlayComplete = useCallback(() => {
+    setLoadingOverlayVisible(false);
+  }, []);
 
   return (
     <>
-      {content}
+      <GameRoot
+        booting={booting}
+        bootAssetsReady={assetsReady}
+        onSceneBootReady={handleSceneReady}
+      />
+      {loadingOverlayVisible ? (
+        <LoadingScreen
+          bootComplete={bootComplete}
+          onAssetsReady={handleAssetsReady}
+          onFadeOutStart={handleFadeOutStart}
+          onComplete={handleOverlayComplete}
+        />
+      ) : null}
       <Toaster />
     </>
   );

@@ -1552,7 +1552,7 @@ code {
 .loading-screen {
   position: fixed;
   inset: 0;
-  z-index: 9999;
+  z-index: 10000;
   display: flex;
   background: radial-gradient(circle at 50% 50%, #171b21 0%, #0a0c0f 100%);
   opacity: 1;

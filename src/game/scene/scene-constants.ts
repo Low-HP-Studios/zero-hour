@@ -12,13 +12,13 @@ export const WALKABLE_CENTER_X = (WORLD_BOUNDS.minX + WORLD_BOUNDS.maxX) / 2;
 export const WALKABLE_CENTER_Z = (WORLD_BOUNDS.minZ + WORLD_BOUNDS.maxZ) / 2;
 export const WALKABLE_SIZE_X = WORLD_BOUNDS.maxX - WORLD_BOUNDS.minX;
 export const WALKABLE_SIZE_Z = WORLD_BOUNDS.maxZ - WORLD_BOUNDS.minZ;
-export const SHORE_SHELF_PADDING = 28;
+export const SHORE_SHELF_PADDING = 0;
 export const SHORE_SHELF_Y = -0.42;
-export const SHORE_FOAM_RING_PADDING = 10;
-export const OCEAN_LEVEL_Y = -2.7;
+export const SHORE_FOAM_RING_PADDING = 0;
+export const OCEAN_LEVEL_Y = -4;
 export const OCEAN_SIZE = 1600;
-export const CLIFF_HEIGHT = 0.7;
-export const CLIFF_THICKNESS = 1.15;
+export const CLIFF_HEIGHT = 18;
+export const CLIFF_THICKNESS = 6;
 
 export const BUILDING_CENTER = new THREE.Vector3(8, 0, -4);
 export const BUILDING_WIDTH = 10;
@@ -45,12 +45,15 @@ export const BLOOD_SPLAT_LIFETIME_MS = 1100;
 export const BLOOD_SPLAT_SURFACE_OFFSET = 0.014;
 export const BULLET_HIT_EPSILON = 0.0001;
 
-export const STATIC_COLLIDERS: CollisionRect[] = [];
-export const CANVAS_CAMERA = { fov: 65, near: 0.1, far: 650, position: [0, 3.5, 12] as [number, number, number] };
+export const STATIC_COLLIDERS: CollisionRect[] = [
+  { minX: -62, maxX: -58, minZ: -42, maxZ: -38 },
+  { minX: 53, maxX: 57, minZ: 38, maxZ: 42 },
+];
+export const CANVAS_CAMERA = { fov: 45, near: 0.1, far: 650, position: [0, 3.5, 12] as [number, number, number] };
 export const CANVAS_GL = { antialias: true, powerPreference: "high-performance" as const };
 export const PLAYER_SPAWN_POSITION = new THREE.Vector3(0, 0, 6);
 export const PLAYER_SPAWN_YAW = 0;
-export const PLAYER_SPAWN_PITCH = 0;
+export const PLAYER_SPAWN_PITCH = -0.05;
 
 export const Z_AXIS = new THREE.Vector3(0, 0, 1);
 

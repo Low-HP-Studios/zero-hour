@@ -25,19 +25,21 @@ export function createSkyTexture(): THREE.CanvasTexture | null {
   }
 
   const gradient = ctx.createLinearGradient(0, 0, 0, height);
-  gradient.addColorStop(0, "#7ec2ff");
-  gradient.addColorStop(0.42, "#a8d7ff");
-  gradient.addColorStop(0.66, "#f6b894");
-  gradient.addColorStop(0.86, "#dd8b67");
-  gradient.addColorStop(1, "#b7654c");
+  gradient.addColorStop(0, "#6ab4e8");
+  gradient.addColorStop(0.3, "#8ec8ee");
+  gradient.addColorStop(0.52, "#c8dce8");
+  gradient.addColorStop(0.68, "#f0c88a");
+  gradient.addColorStop(0.82, "#e8a86a");
+  gradient.addColorStop(1, "#c08050");
   ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, width, height);
 
-  const haze = ctx.createLinearGradient(0, height * 0.62, 0, height);
-  haze.addColorStop(0, "rgba(255, 228, 193, 0)");
-  haze.addColorStop(1, "rgba(255, 170, 122, 0.36)");
+  const haze = ctx.createLinearGradient(0, height * 0.55, 0, height);
+  haze.addColorStop(0, "rgba(240, 210, 160, 0)");
+  haze.addColorStop(0.5, "rgba(240, 200, 140, 0.25)");
+  haze.addColorStop(1, "rgba(220, 180, 120, 0.5)");
   ctx.fillStyle = haze;
-  ctx.fillRect(0, height * 0.62, width, height * 0.38);
+  ctx.fillRect(0, height * 0.55, width, height * 0.45);
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -110,7 +112,7 @@ export function createSandTexture(): THREE.CanvasTexture | null {
     return null;
   }
 
-  const size = 256;
+  const size = 512;
   const canvas = document.createElement("canvas");
   canvas.width = size;
   canvas.height = size;
@@ -121,32 +123,52 @@ export function createSandTexture(): THREE.CanvasTexture | null {
   }
 
   const rng = createSeededRandom(90210);
-  ctx.fillStyle = "#e4cf9f";
+  ctx.fillStyle = "#d4a862";
   ctx.fillRect(0, 0, size, size);
 
-  for (let i = 0; i < 2600; i += 1) {
+  for (let i = 0; i < 3200; i += 1) {
     const x = rng() * size;
     const y = rng() * size;
-    const radius = 0.35 + rng() * 1.1;
-    const alpha = 0.08 + rng() * 0.18;
+    const radius = 0.3 + rng() * 1.3;
+    const alpha = 0.06 + rng() * 0.14;
     const tone = rng();
-    const r = tone > 0.7 ? 249 : tone > 0.35 ? 232 : 196;
-    const g = tone > 0.7 ? 237 : tone > 0.35 ? 212 : 175;
-    const b = tone > 0.7 ? 203 : tone > 0.35 ? 178 : 141;
+    const r = tone > 0.7 ? 220 : tone > 0.35 ? 200 : 170;
+    const g = tone > 0.7 ? 180 : tone > 0.35 ? 155 : 130;
+    const b = tone > 0.7 ? 110 : tone > 0.35 ? 90 : 70;
     ctx.beginPath();
     ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha})`;
     ctx.arc(x, y, radius, 0, Math.PI * 2);
     ctx.fill();
   }
 
-  for (let i = 0; i < 42; i += 1) {
+  for (let i = 0; i < 18; i += 1) {
+    const startX = rng() * size;
+    const startY = rng() * size;
+    const length = 30 + rng() * 80;
+    const angle = rng() * Math.PI * 2;
+    ctx.beginPath();
+    ctx.lineWidth = 0.5 + rng() * 1.2;
+    ctx.strokeStyle = `rgba(160, 120, 60, ${0.08 + rng() * 0.12})`;
+    ctx.moveTo(startX, startY);
+    let cx = startX;
+    let cy = startY;
+    const steps = 4 + Math.floor(rng() * 4);
+    for (let s = 0; s < steps; s++) {
+      cx += (length / steps) * Math.cos(angle + (rng() - 0.5) * 1.2);
+      cy += (length / steps) * Math.sin(angle + (rng() - 0.5) * 1.2);
+      ctx.lineTo(cx, cy);
+    }
+    ctx.stroke();
+  }
+
+  for (let i = 0; i < 30; i += 1) {
     const y = rng() * size;
-    const amplitude = 2 + rng() * 4;
-    const wavelength = 20 + rng() * 28;
+    const amplitude = 1.5 + rng() * 3;
+    const wavelength = 18 + rng() * 30;
     const phase = rng() * Math.PI * 2;
     ctx.beginPath();
-    ctx.lineWidth = 1 + rng() * 1.5;
-    ctx.strokeStyle = `rgba(255, 247, 225, ${0.035 + rng() * 0.05})`;
+    ctx.lineWidth = 0.8 + rng() * 1.2;
+    ctx.strokeStyle = `rgba(230, 200, 140, ${0.03 + rng() * 0.04})`;
 
     for (let x = -8; x <= size + 8; x += 6) {
       const rippleY = y + Math.sin(x / wavelength + phase) * amplitude;
@@ -164,9 +186,23 @@ export function createSandTexture(): THREE.CanvasTexture | null {
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.RepeatWrapping;
-  texture.repeat.set(8, 8);
+  texture.repeat.set(10, 10);
   texture.needsUpdate = true;
   return texture;
+}
+
+export function createCanyonWallTexture(): THREE.Texture | null {
+  const loader = new THREE.TextureLoader();
+  try {
+    const texture = loader.load("/assets/space/glTF/Rocks_Desert_Diffuse.png");
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(4, 2);
+    return texture;
+  } catch {
+    return null;
+  }
 }
 
 export function createOceanTexture(): THREE.CanvasTexture | null {

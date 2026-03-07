@@ -5,10 +5,32 @@ export type GltfResult = {
   animations: THREE.AnimationClip[];
 };
 
+export type PreloadBucket = "asset" | "audio";
+
+export type PreloadManifestEntry = {
+  id: string;
+  label: string;
+  weight: number;
+  bucket: PreloadBucket;
+  load: () => Promise<unknown>;
+};
+
+export type PreloadManifestProgress = {
+  completedWeight: number;
+  totalWeight: number;
+  completedCount: number;
+  totalCount: number;
+  ratio: number;
+  currentLabel: string;
+};
+
 const glbCache = new Map<string, Promise<THREE.Group | null>>();
 const gltfFullCache = new Map<string, Promise<GltfResult | null>>();
 const fbxCache = new Map<string, Promise<THREE.Group | null>>();
 const audioBufferCache = new Map<string, Promise<AudioBuffer | null>>();
+const textureCache = new Map<string, Promise<THREE.Texture | null>>();
+
+THREE.Cache.enabled = true;
 
 export function loadGlbAsset(url: string): Promise<THREE.Group | null> {
   const cached = glbCache.get(url);
@@ -136,6 +158,29 @@ export function loadFbxAsset(url: string): Promise<THREE.Group | null> {
   return request;
 }
 
+export function preloadTextureAsset(url: string): Promise<THREE.Texture | null> {
+  const cacheKey = encodeURI(url);
+  const cached = textureCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const request = (async () => {
+    try {
+      const loader = new THREE.TextureLoader();
+      return await new Promise<THREE.Texture>((resolve, reject) => {
+        loader.load(cacheKey, resolve, undefined, reject);
+      });
+    } catch (error) {
+      console.warn("[AssetLoader] Texture load failed:", cacheKey, error);
+      return null;
+    }
+  })();
+
+  textureCache.set(cacheKey, request);
+  return request;
+}
+
 export async function fetchBinaryAsset(url: string): Promise<ArrayBuffer | null> {
   try {
     const response = await fetch(url);
@@ -175,4 +220,96 @@ export function loadAudioBuffer(
 
   audioBufferCache.set(cacheKey, request);
   return request;
+}
+
+type RunPreloadManifestOptions = {
+  concurrency?: Partial<Record<PreloadBucket, number>>;
+  onProgress?: (progress: PreloadManifestProgress) => void;
+};
+
+export async function runPreloadManifest(
+  entries: PreloadManifestEntry[],
+  options: RunPreloadManifestOptions = {},
+): Promise<{ errors: Array<{ id: string; error: unknown }> }> {
+  const totalCount = entries.length;
+  const totalWeight = entries.reduce(
+    (sum, entry) => sum + Math.max(0.0001, entry.weight),
+    0,
+  );
+  let completedCount = 0;
+  let completedWeight = 0;
+  let currentLabel = entries[0]?.label ?? "Ready";
+
+  const reportProgress = () => {
+    options.onProgress?.({
+      completedWeight,
+      totalWeight,
+      completedCount,
+      totalCount,
+      ratio: totalWeight > 0 ? completedWeight / totalWeight : 1,
+      currentLabel,
+    });
+  };
+
+  reportProgress();
+
+  if (entries.length === 0) {
+    return { errors: [] };
+  }
+
+  const errors: Array<{ id: string; error: unknown }> = [];
+  const concurrency = {
+    asset: options.concurrency?.asset ?? 3,
+    audio: options.concurrency?.audio ?? 2,
+  } satisfies Record<PreloadBucket, number>;
+
+  const runBucket = async (bucket: PreloadBucket) => {
+    const bucketEntries = entries.filter((entry) => entry.bucket === bucket);
+    if (bucketEntries.length === 0) {
+      return;
+    }
+
+    let nextIndex = 0;
+    const workerCount = Math.max(1, concurrency[bucket]);
+
+    const runNext = async (): Promise<void> => {
+      const entry = bucketEntries[nextIndex];
+      nextIndex += 1;
+
+      if (!entry) {
+        return;
+      }
+
+      currentLabel = entry.label;
+      reportProgress();
+
+      try {
+        await entry.load();
+      } catch (error) {
+        console.warn("[AssetLoader] Preload entry failed:", entry.id, error);
+        errors.push({ id: entry.id, error });
+      } finally {
+        completedCount += 1;
+        completedWeight += Math.max(0.0001, entry.weight);
+        currentLabel = completedCount >= totalCount ? "Ready" : entry.label;
+        reportProgress();
+      }
+
+      await runNext();
+    };
+
+    await Promise.all(
+      Array.from(
+        { length: Math.min(workerCount, bucketEntries.length) },
+        () => runNext(),
+      ),
+    );
+  };
+
+  await Promise.all([runBucket("asset"), runBucket("audio")]);
+
+  currentLabel = "Ready";
+  reportProgress();
+
+  return { errors };
 }

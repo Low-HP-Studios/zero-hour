@@ -77,7 +77,27 @@ function resolveKillPulseAmount(progress: number) {
   return 1 - easeInOutCubic((progress - 0.35) / 0.65);
 }
 
-export function GameRoot() {
+const BOOT_PRESENTATION: ScenePresentation = {
+  phase: "playing",
+  phaseProgress: 1,
+  worldTheme: 1,
+  pickupReveal: 1,
+  targetReveal: 1,
+  inputEnabled: false,
+  killPulse: 0,
+};
+
+type GameRootProps = {
+  booting: boolean;
+  bootAssetsReady: boolean;
+  onSceneBootReady: () => void;
+};
+
+export function GameRoot({
+  booting,
+  bootAssetsReady,
+  onSceneBootReady,
+}: GameRootProps) {
   const persistedSettings = useMemo(loadPersistedSettings, []);
   const sceneRef = useRef<SceneHandle | null>(null);
   const [settings, setSettings] = useState<GameSettings>(
@@ -149,11 +169,10 @@ export function GameRoot() {
   >(null);
   const updaterApi = window.electronAPI?.updater;
   const updaterAvailable = Boolean(updaterApi);
-  const isPaused = phase !== "playing" || !player.pointerLocked;
+  const isPaused = booting || phase !== "playing" || !player.pointerLocked;
   const [hasBeenLocked, setHasBeenLocked] = useState(false);
   const returnResetDoneRef = useRef(false);
   const enteredPlayingAtRef = useRef(0);
-  const [warmupDone, setWarmupDone] = useState(false);
   const [needsPointerLock, setNeedsPointerLock] = useState(false);
 
   useEffect(() => {
@@ -443,6 +462,29 @@ export function GameRoot() {
   }, [bindingCapture, isPaused]);
 
   useEffect(() => {
+    if (phase !== "playing" || !isPaused || !hasBeenLocked) return;
+    if (bindingCapture) return;
+
+    let pendingTimer: number | null = null;
+
+    const onEscResume = (event: KeyboardEvent) => {
+      if (event.code !== "Escape") return;
+      event.preventDefault();
+      if (pendingTimer !== null) window.clearTimeout(pendingTimer);
+      pendingTimer = window.setTimeout(() => {
+        pendingTimer = null;
+        sceneRef.current?.requestPointerLock();
+      }, 120);
+    };
+
+    window.addEventListener("keydown", onEscResume);
+    return () => {
+      window.removeEventListener("keydown", onEscResume);
+      if (pendingTimer !== null) window.clearTimeout(pendingTimer);
+    };
+  }, [phase, isPaused, hasBeenLocked, bindingCapture]);
+
+  useEffect(() => {
     if (phase !== "playing") {
       setHitMarker({ until: 0, kind: "body" });
     }
@@ -495,30 +537,7 @@ export function GameRoot() {
     }
   }, [killPulseAmount, phase, phaseProgress]);
 
-  // Warm up the scene by briefly rendering with a non-zero theme to force
-  // WebGL shader compilation before the user's first transition.
-  useEffect(() => {
-    if (warmupDone) return;
-    const id = requestAnimationFrame(() => {
-      setWarmupDone(true);
-    });
-    return () => cancelAnimationFrame(id);
-  }, [warmupDone]);
-
-  const warmupPresentation = useMemo<ScenePresentation>(() => {
-    if (!warmupDone && phase === "menu") {
-      return {
-        phase: "menu",
-        phaseProgress: 0,
-        worldTheme: 0.01,
-        pickupReveal: 0,
-        targetReveal: 0,
-        inputEnabled: false,
-        killPulse: 0,
-      };
-    }
-    return scenePresentation;
-  }, [warmupDone, phase, scenePresentation]);
+  const renderedPresentation = booting ? BOOT_PRESENTATION : scenePresentation;
 
   const hitMarkerVisible = hitMarker.until > performance.now();
   const sniperScopeActive = activeWeapon === "sniper" && aimingState.ads &&
@@ -604,7 +623,9 @@ export function GameRoot() {
         settings={settings}
         audioVolumes={audioVolumes}
         stressCount={stressCount}
-        presentation={warmupPresentation}
+        booting={booting}
+        bootAssetsReady={bootAssetsReady}
+        presentation={renderedPresentation}
         onPerfMetrics={setPerfMetrics}
         onPlayerSnapshot={setPlayer}
         onHitMarker={handleHitMarker}
@@ -612,6 +633,7 @@ export function GameRoot() {
         onActiveWeaponChange={setActiveWeapon}
         onSniperRechamberChange={setSniperRechamber}
         onAimingStateChange={setAimingState}
+        onBootReady={onSceneBootReady}
       />
 
       {phase === "menu" || phase === "entering"

@@ -31,9 +31,19 @@ type LoadedAudioBuffer = {
   url: string | null;
 };
 
+export type AudioBufferKey = keyof LoadedBuffers;
+
 const AUDIO_DEBUG = import.meta.env.DEV;
 const TARGET_FOOTSTEP_PEAK = 0.12;
 const MAX_FOOTSTEP_FILE_GAIN = 12;
+const AUDIO_BUFFER_KEYS: AudioBufferKey[] = [
+  "rifleShot",
+  "sniperShot",
+  "sniperShell",
+  "footstep",
+  "kill",
+  "hit",
+];
 
 const AUDIO_URL_CANDIDATES = {
   rifleShot: [
@@ -142,39 +152,79 @@ export class AudioManager {
   private shellingDebugCounter = 0;
   private shellingSource: AudioBufferSourceNode | null = null;
   private shellingGain: GainNode | null = null;
+  private bufferLoadPromises = new Map<AudioBufferKey, Promise<boolean>>();
 
-  ensureStarted() {
-    if (!this.context) {
-      const ContextCtor = getAudioContextConstructor();
-      if (!ContextCtor) {
-        return;
-      }
-
-      this.context = new ContextCtor();
-      this.masterGain = this.context.createGain();
-      this.gunGain = this.context.createGain();
-      this.footstepGain = this.context.createGain();
-      this.hitGain = this.context.createGain();
-
-      this.masterGain.connect(this.context.destination);
-      this.gunGain.connect(this.masterGain);
-      this.footstepGain.connect(this.masterGain);
-      this.hitGain.connect(this.masterGain);
-
-      this.gunVoicePool = Array.from({ length: 8 }, () => {
-        const voiceGain = this.context!.createGain();
-        voiceGain.gain.value = 0;
-        voiceGain.connect(this.gunGain!);
-        return voiceGain;
-      });
-
-      this.applyVolumeSettings();
-      this.whiteNoiseBuffer = createWhiteNoiseBuffer(this.context, 0.2);
-      void this.preloadBuffers();
+  async prepare(): Promise<void> {
+    const context = this.ensureContext();
+    if (!context) {
+      return;
     }
 
-    if (this.context.state !== "running") {
-      void this.context.resume();
+    await Promise.all(AUDIO_BUFFER_KEYS.map((key) => this.prepareBuffer(key)));
+  }
+
+  async prepareBuffer(key: AudioBufferKey): Promise<boolean> {
+    const context = this.ensureContext();
+    if (!context) {
+      return false;
+    }
+
+    if (this.buffers[key]) {
+      return true;
+    }
+
+    const existing = this.bufferLoadPromises.get(key);
+    if (existing) {
+      return existing;
+    }
+
+    const request = (async () => {
+      const loaded = await loadFirstAudioBuffer(
+        context,
+        AUDIO_URL_CANDIDATES[key],
+      );
+      this.buffers[key] = loaded.buffer;
+      this.sourceUrls[key] = loaded.url;
+
+      if (key === "footstep") {
+        this.handleFootstepBufferLoaded(loaded);
+      } else if (AUDIO_DEBUG && loaded.url) {
+        console.info("[Audio] Buffer loaded", {
+          key,
+          url: loaded.url,
+        });
+      }
+
+      return loaded.buffer !== null;
+    })().catch((error: unknown) => {
+      if (AUDIO_DEBUG) {
+        console.warn(`[Audio] Failed to prepare ${key}`, error);
+      }
+      return false;
+    }).finally(() => {
+      if (!this.buffers[key]) {
+        this.bufferLoadPromises.delete(key);
+      }
+    });
+
+    this.bufferLoadPromises.set(key, request);
+    return request;
+  }
+
+  ensureStarted() {
+    const context = this.ensureContext();
+    if (!context) {
+      return;
+    }
+
+    void this.prepare();
+
+    if (context.state !== "running") {
+      void context.resume().catch((error: unknown) => {
+        if (AUDIO_DEBUG) {
+          console.warn("[Audio] Resume failed", error);
+        }
+      });
     }
   }
 
@@ -193,6 +243,7 @@ export class AudioManager {
     options?: {
       stepIntervalSeconds?: number;
       filePlaybackRate?: number;
+      surface?: "rock" | "dirt";
     },
   ) {
     if (!this.context || this.context.state !== "running") {
@@ -210,7 +261,11 @@ export class AudioManager {
 
     const stepInterval = options?.stepIntervalSeconds ?? (sprinting ? 0.27 : 0.4);
     if (nowSeconds >= this.nextFootstepAtSeconds) {
-      this.playFootstepInternal(sprinting, options?.filePlaybackRate);
+      if (options?.surface === "rock") {
+        this.playRockFootstepInternal(sprinting);
+      } else {
+        this.playFootstepInternal(sprinting, options?.filePlaybackRate);
+      }
       this.nextFootstepAtSeconds = nowSeconds + stepInterval;
     }
   }
@@ -498,6 +553,7 @@ export class AudioManager {
   }
 
   dispose() {
+    this.bufferLoadPromises.clear();
     this.gunVoicePool = [];
     if (this.context) {
       void this.context.close();
@@ -511,40 +567,55 @@ export class AudioManager {
     this.nextFootstepAtSeconds = 0;
   }
 
-  private async preloadBuffers() {
-    if (!this.context) {
-      return;
+  private ensureContext(): AudioContext | null {
+    if (this.context) {
+      return this.context;
     }
 
-    const [rifleShot, sniperShot, sniperShell, footstep, kill, hit] = await Promise.all([
-      loadFirstAudioBuffer(this.context, AUDIO_URL_CANDIDATES.rifleShot),
-      loadFirstAudioBuffer(this.context, AUDIO_URL_CANDIDATES.sniperShot),
-      loadFirstAudioBuffer(this.context, AUDIO_URL_CANDIDATES.sniperShell),
-      loadFirstAudioBuffer(this.context, AUDIO_URL_CANDIDATES.footstep),
-      loadFirstAudioBuffer(this.context, AUDIO_URL_CANDIDATES.kill),
-      loadFirstAudioBuffer(this.context, AUDIO_URL_CANDIDATES.hit),
-    ]);
+    const ContextCtor = getAudioContextConstructor();
+    if (!ContextCtor) {
+      return null;
+    }
 
-    this.buffers = {
-      rifleShot: rifleShot.buffer,
-      sniperShot: sniperShot.buffer,
-      sniperShell: sniperShell.buffer,
-      footstep: footstep.buffer,
-      kill: kill.buffer,
-      hit: hit.buffer,
-    };
-    this.sourceUrls = {
-      rifleShot: rifleShot.url,
-      sniperShot: sniperShot.url,
-      sniperShell: sniperShell.url,
-      footstep: footstep.url,
-      kill: kill.url,
-      hit: hit.url,
-    };
+    try {
+      this.context = new ContextCtor();
+    } catch (error) {
+      if (AUDIO_DEBUG) {
+        console.warn("[Audio] Context creation failed", error);
+      }
+      return null;
+    }
 
+    this.masterGain = this.context.createGain();
+    this.gunGain = this.context.createGain();
+    this.footstepGain = this.context.createGain();
+    this.hitGain = this.context.createGain();
+
+    this.masterGain.connect(this.context.destination);
+    this.gunGain.connect(this.masterGain);
+    this.footstepGain.connect(this.masterGain);
+    this.hitGain.connect(this.masterGain);
+
+    this.gunVoicePool = Array.from({ length: 8 }, () => {
+      const voiceGain = this.context!.createGain();
+      voiceGain.gain.value = 0;
+      voiceGain.connect(this.gunGain!);
+      return voiceGain;
+    });
+
+    this.applyVolumeSettings();
+    this.whiteNoiseBuffer = createWhiteNoiseBuffer(this.context, 0.2);
+    return this.context;
+  }
+
+  private handleFootstepBufferLoaded(footstep: LoadedAudioBuffer) {
     if (footstep.buffer) {
       const analysis = analyzeBuffer(footstep.buffer);
-      this.footstepFileGain = clamp(TARGET_FOOTSTEP_PEAK / Math.max(analysis.peak, 0.001), 1, MAX_FOOTSTEP_FILE_GAIN);
+      this.footstepFileGain = clamp(
+        TARGET_FOOTSTEP_PEAK / Math.max(analysis.peak, 0.001),
+        1,
+        MAX_FOOTSTEP_FILE_GAIN,
+      );
       if (AUDIO_DEBUG) {
         console.info("[Audio] Footstep loaded", {
           url: footstep.url,
@@ -692,6 +763,67 @@ export class AudioManager {
     }
   }
 
+  private playRockFootstepInternal(sprinting: boolean) {
+    if (!this.context || this.context.state !== "running" || !this.footstepGain) {
+      return;
+    }
+
+    const now = this.context.currentTime;
+    const stepGainBoost = sprinting ? 1.18 : 1;
+
+    const impact = this.context.createOscillator();
+    const impactGain = this.context.createGain();
+    const impactFilter = this.context.createBiquadFilter();
+    impact.type = "triangle";
+    impact.frequency.setValueAtTime(sprinting ? 260 : 210, now);
+    impact.frequency.exponentialRampToValueAtTime(120, now + 0.04);
+    impactFilter.type = "lowpass";
+    impactFilter.frequency.value = 480;
+    impactGain.gain.setValueAtTime(0.001, now);
+    impactGain.gain.exponentialRampToValueAtTime((sprinting ? 0.14 : 0.1) * stepGainBoost, now + 0.003);
+    impactGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.055);
+    impact.connect(impactFilter);
+    impactFilter.connect(impactGain);
+    impactGain.connect(this.footstepGain);
+    impact.start(now);
+    impact.stop(now + 0.06);
+
+    if (this.whiteNoiseBuffer) {
+      const click = this.context.createBufferSource();
+      click.buffer = this.whiteNoiseBuffer;
+      click.playbackRate.value = sprinting ? 1.6 + Math.random() * 0.3 : 1.3 + Math.random() * 0.2;
+      const clickHigh = this.context.createBiquadFilter();
+      const clickLow = this.context.createBiquadFilter();
+      const clickGain = this.context.createGain();
+      clickHigh.type = "highpass";
+      clickHigh.frequency.value = 600;
+      clickLow.type = "lowpass";
+      clickLow.frequency.value = 4200;
+      clickGain.gain.setValueAtTime(0.001, now);
+      clickGain.gain.exponentialRampToValueAtTime((sprinting ? 0.2 : 0.15) * stepGainBoost, now + 0.004);
+      clickGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.05);
+      click.connect(clickHigh);
+      clickHigh.connect(clickLow);
+      clickLow.connect(clickGain);
+      clickGain.connect(this.footstepGain);
+      click.start(now);
+      click.stop(now + 0.06);
+    }
+
+    const tap = this.context.createOscillator();
+    const tapGain = this.context.createGain();
+    tap.type = "sine";
+    tap.frequency.setValueAtTime(1400 + Math.random() * 600, now);
+    tap.frequency.exponentialRampToValueAtTime(600, now + 0.025);
+    tapGain.gain.setValueAtTime(0.001, now);
+    tapGain.gain.exponentialRampToValueAtTime((sprinting ? 0.04 : 0.025) * stepGainBoost, now + 0.002);
+    tapGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.03);
+    tap.connect(tapGain);
+    tapGain.connect(this.footstepGain);
+    tap.start(now);
+    tap.stop(now + 0.035);
+  }
+
   private applyVolumeSettings() {
     if (!this.masterGain || !this.gunGain || !this.footstepGain || !this.hitGain) {
       return;
@@ -763,3 +895,5 @@ function analyzeBuffer(buffer: AudioBuffer): { peak: number; rms: number } {
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
+
+export const sharedAudioManager = new AudioManager();
