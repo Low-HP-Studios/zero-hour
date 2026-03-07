@@ -17,6 +17,7 @@ This project ships desktop installers through GitHub Actions + `electron-builder
 The release must include:
 
 - macOS installer: `.dmg`
+- macOS updater package: `.zip`
 - Windows installer: `.exe`
 - Linux installer: `.AppImage`
 - updater metadata: `latest*.yml`
@@ -37,4 +38,5 @@ If any of these are missing, treat the release as broken.
 
 - If a release only shows source zip/tarball, the workflow likely did not upload build artifacts.
 - If updater says metadata missing, confirm `latest*.yml` and `.blockmap` were uploaded.
+- If mac updater says `ZIP file not provided`, confirm the release includes a mac `.zip` asset.
 - If macOS update UX is rough, code signing/notarization is usually the bill collector.

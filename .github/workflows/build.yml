@@ -32,13 +32,14 @@ jobs:
 
       - name: Validate mac artifacts
         run: |
-          node -e "const fs=require('fs');const files=fs.readdirSync('release');const hasDmg=files.some((f)=>f.endsWith('.dmg'));const hasYml=files.includes('latest-mac.yml');const hasBlockmap=files.some((f)=>f.endsWith('.blockmap'));if(!hasDmg||!hasYml||!hasBlockmap){console.error('Missing expected mac artifacts',files);process.exit(1);}console.log('mac artifacts OK:',files);"
+          node -e "const fs=require('fs');const files=fs.readdirSync('release');const hasDmg=files.some((f)=>f.endsWith('.dmg'));const hasZip=files.some((f)=>f.endsWith('.zip'));const hasYml=files.includes('latest-mac.yml');const hasBlockmap=files.some((f)=>f.endsWith('.blockmap'));if(!hasDmg||!hasZip||!hasYml||!hasBlockmap){console.error('Missing expected mac artifacts',files);process.exit(1);}console.log('mac artifacts OK:',files);"
 
       - uses: actions/upload-artifact@v4
         with:
           name: mac-build
           path: |
             release/*.dmg
+            release/*.zip
             release/latest*.yml
             release/*.blockmap
           if-no-files-found: error

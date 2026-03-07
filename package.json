@@ -1,7 +1,7 @@
 {
   "name": "greytrace",
   "private": true,
-  "version": "0.2.4",
+  "version": "0.2.5",
   "type": "module",
   "main": "electron/main.js",
   "repository": "https://github.com/Low-HP-Studios/greytrace",
@@ -70,7 +70,10 @@
       }
     ],
     "mac": {
-      "target": "dmg",
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "icon": "build/icon.icns"
     },
     "win": {
