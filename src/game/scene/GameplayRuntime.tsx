@@ -1217,7 +1217,7 @@ export const GameplayRuntime = forwardRef<
           nextRunState = "stop";
           runStateUntil = nowMs + rifleRunStopMs;
         }
-      } else if (nextRunState !== "running" && nextRunState !== "start") {
+      } else {
         rifleRunStaminaRef.current = Math.min(
           rifleRunStaminaMaxMs,
           rifleRunStaminaRef.current + clampedDelta * 1000 *
