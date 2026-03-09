@@ -3,6 +3,8 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("electronAPI", {
   platform: process.platform,
   quitApp: () => ipcRenderer.invoke("app:quit"),
+  setGameplayActive: (active) =>
+    ipcRenderer.send("app:set-gameplay-active", Boolean(active)),
   updater: {
     check: () => ipcRenderer.invoke("updater:check"),
     installNow: () => ipcRenderer.invoke("updater:install-now"),

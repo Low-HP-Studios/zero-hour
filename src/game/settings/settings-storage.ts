@@ -1,6 +1,7 @@
 import { type AudioVolumeSettings, DEFAULT_AUDIO_VOLUMES } from "../Audio";
 import {
   DEFAULT_AIM_SENSITIVITY_SETTINGS,
+  DEFAULT_CROUCH_MODE,
   DEFAULT_CONTROL_BINDINGS,
   DEFAULT_CROSSHAIR_SETTINGS,
   DEFAULT_ENEMY_OUTLINE_SETTINGS,
@@ -8,6 +9,7 @@ import {
   DEFAULT_WEAPON_ALIGNMENT,
   DEFAULT_MOVEMENT_SETTINGS,
   DEFAULT_WEAPON_RECOIL_PROFILES,
+  type CrouchMode,
   type CrosshairColor,
   type EnemyOutlineColor,
   type WeaponRecoilProfiles,
@@ -54,12 +56,15 @@ const ENEMY_OUTLINE_COLORS: EnemyOutlineColor[] = [
   "magenta",
 ];
 
+const CROUCH_MODES: CrouchMode[] = ["hold", "toggle"];
+
 export const DEFAULT_GAME_SETTINGS: GameSettings = {
   shadows: false,
-  pixelRatioScale: 0.75,
-  showR3fPerf: false,
+  pixelRatioScale: 1,
+  showR3fPerf: true,
   sensitivity: { ...DEFAULT_AIM_SENSITIVITY_SETTINGS },
   keybinds: { ...DEFAULT_CONTROL_BINDINGS },
+  crouchMode: DEFAULT_CROUCH_MODE,
   fov: 45,
   weaponAlignment: { ...DEFAULT_WEAPON_ALIGNMENT },
   crosshair: cloneDefaultCrosshairSettings(),
@@ -169,6 +174,15 @@ function readEnemyOutlineColor(
     : fallback;
 }
 
+function readCrouchMode(
+  value: unknown,
+  fallback: CrouchMode,
+): CrouchMode {
+  return CROUCH_MODES.includes(value as CrouchMode)
+    ? (value as CrouchMode)
+    : fallback;
+}
+
 export function parsePersistedSettings(value: unknown): PersistedSettings {
   const defaults = createDefaultPersistedSettings();
   if (!isRecord(value)) {
@@ -221,6 +235,10 @@ export function parsePersistedSettings(value: unknown): PersistedSettings {
         defaults.settings.showR3fPerf,
       ),
       fov: readClampedNumber(settings.fov, 45, 120, defaults.settings.fov),
+      crouchMode: readCrouchMode(
+        settings.crouchMode,
+        defaults.settings.crouchMode,
+      ),
       sensitivity: {
         look: readClampedNumber(
           migratePercent(sensitivity.look),
@@ -265,6 +283,11 @@ export function parsePersistedSettings(value: unknown): PersistedSettings {
           defaults.settings.keybinds.moveRight,
         ),
         sprint: readString(keybinds.sprint, defaults.settings.keybinds.sprint),
+        walkModifier: readString(
+          keybinds.walkModifier,
+          defaults.settings.keybinds.walkModifier,
+        ),
+        crouch: readString(keybinds.crouch, defaults.settings.keybinds.crouch),
         jump: readString(keybinds.jump, defaults.settings.keybinds.jump),
         pickup: readString(keybinds.pickup, defaults.settings.keybinds.pickup),
         drop: readString(keybinds.drop, defaults.settings.keybinds.drop),
@@ -536,6 +559,12 @@ export function parsePersistedSettings(value: unknown): PersistedSettings {
           0.1,
           2,
           defaults.settings.movement.rifleFirePrepSpeedScale,
+        ),
+        crouchSpeedScale: readClampedNumber(
+          movement.crouchSpeedScale,
+          0.2,
+          1.2,
+          defaults.settings.movement.crouchSpeedScale,
         ),
         rifleRunStaminaMaxMs: readClampedNumber(
           movement.rifleRunStaminaMaxMs,

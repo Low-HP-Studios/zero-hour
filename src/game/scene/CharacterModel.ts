@@ -11,6 +11,8 @@ import {
   CHARACTER_TARGET_HEIGHT,
   CHARACTER_TEXTURE_BASE,
   CHARACTER_TEXTURE_MAP,
+  CROUCH_ANIM_TIME_SCALE,
+  RIFLE_CROUCH_ANIM_TIME_SCALE,
   RIFLE_HOLD_JOG_TIME_SCALE,
   RIFLE_HOLD_RUN_START_TIME_SCALE,
   RIFLE_HOLD_RUN_STOP_TIME_SCALE,
@@ -25,51 +27,103 @@ import {
 export type CharacterModelResult = {
   model: THREE.Group | null;
   ready: boolean;
-  setAnimState: (state: CharacterAnimState) => void;
+  setAnimState: (
+    state: CharacterAnimState,
+    options?: CharacterAnimPlaybackOptions,
+  ) => void;
 };
 
-function resolveCharacterAnimTimeScale(state: CharacterAnimState): number {
-  if (state === "sprint") {
-    return SPRINT_ANIM_TIME_SCALE;
-  }
-  if (
-    state === "idle" ||
-    state === "rifleIdle" ||
-    state === "rifleAimHold"
-  ) {
-    return 1;
-  }
-  if (state.startsWith("rifleWalk")) {
-    return RIFLE_HOLD_WALK_TIME_SCALE;
-  }
-  if (state.startsWith("rifleJog")) {
-    return RIFLE_HOLD_JOG_TIME_SCALE;
-  }
-  if (state === "rifleRunStart") {
-    return RIFLE_HOLD_RUN_START_TIME_SCALE;
-  }
-  if (state === "rifleRunStop") {
-    return RIFLE_HOLD_RUN_STOP_TIME_SCALE;
-  }
-  if (state === "rifleRun") {
-    return RIFLE_HOLD_RUN_TIME_SCALE;
-  }
-  return WALK_ANIM_TIME_SCALE;
+export type CharacterAnimPlaybackOptions = {
+  locomotionScale?: number;
+};
+
+function isRifleLocomotionState(state: CharacterAnimState): boolean {
+  return state.startsWith("rifleWalk") ||
+    state.startsWith("rifleJog") ||
+    state === "rifleRun" ||
+    state === "rifleRunStart" ||
+    state === "rifleRunStop";
 }
 
-export function resolveFootstepIntervalSeconds(state: CharacterAnimState): number {
-  const animTimeScale = resolveCharacterAnimTimeScale(state);
+function resolveCharacterAnimTimeScale(
+  state: CharacterAnimState,
+  options?: CharacterAnimPlaybackOptions,
+): number {
+  const locomotionScale = THREE.MathUtils.clamp(
+    options?.locomotionScale ?? 1,
+    0.5,
+    2,
+  );
+  let baseScale = WALK_ANIM_TIME_SCALE;
+  if (state === "sprint") {
+    baseScale = SPRINT_ANIM_TIME_SCALE;
+  } else if (
+    state === "idle" ||
+    state === "rifleIdle" ||
+    state === "rifleAimHold" ||
+    state === "crouchEnter" ||
+    state === "crouchExit" ||
+    state === "rifleCrouchEnter" ||
+    state === "rifleCrouchExit"
+  ) {
+    baseScale = 1;
+  } else if (
+    state === "crouchIdle" ||
+    state === "crouchForward" ||
+    state === "crouchBack" ||
+    state === "crouchLeft" ||
+    state === "crouchRight"
+  ) {
+    baseScale = CROUCH_ANIM_TIME_SCALE;
+  } else if (state === "rifleCrouchIdle" || state === "rifleCrouchWalk") {
+    baseScale = RIFLE_CROUCH_ANIM_TIME_SCALE;
+  } else if (state.startsWith("rifleWalk")) {
+    baseScale = RIFLE_HOLD_WALK_TIME_SCALE;
+  } else if (state.startsWith("rifleJog")) {
+    baseScale = RIFLE_HOLD_JOG_TIME_SCALE;
+  } else if (state === "rifleRunStart") {
+    baseScale = RIFLE_HOLD_RUN_START_TIME_SCALE;
+  } else if (state === "rifleRunStop") {
+    baseScale = RIFLE_HOLD_RUN_STOP_TIME_SCALE;
+  } else if (state === "rifleRun") {
+    baseScale = RIFLE_HOLD_RUN_TIME_SCALE;
+  }
+  return isRifleLocomotionState(state) ? baseScale * locomotionScale : baseScale;
+}
+
+export function resolveFootstepIntervalSeconds(
+  state: CharacterAnimState,
+  options?: CharacterAnimPlaybackOptions,
+): number {
+  const animTimeScale = resolveCharacterAnimTimeScale(state, options);
   return BASE_FOOTSTEP_INTERVAL_SECONDS / Math.max(0.1, animTimeScale);
 }
 
-export function resolveFootstepPlaybackRate(state: CharacterAnimState): number {
+export function resolveFootstepPlaybackRate(
+  state: CharacterAnimState,
+  options?: CharacterAnimPlaybackOptions,
+): number {
+  const locomotionScale = THREE.MathUtils.clamp(
+    options?.locomotionScale ?? 1,
+    0.5,
+    2,
+  );
+  let baseRate = 1;
   if (state === "sprint") {
-    return 1.22;
-  }
-  if (state === "walkBack" || state === "rifleWalkBack") {
-    return 0.92;
-  }
-  if (
+    baseRate = 1.22;
+  } else if (
+    state === "crouchIdle" ||
+    state === "crouchForward" ||
+    state === "crouchBack" ||
+    state === "crouchLeft" ||
+    state === "crouchRight" ||
+    state === "rifleCrouchIdle" ||
+    state === "rifleCrouchWalk"
+  ) {
+    baseRate = 0.84;
+  } else if (state === "walkBack" || state === "rifleWalkBack") {
+    baseRate = 0.92;
+  } else if (
     state === "walkLeft" ||
     state === "walkRight" ||
     state === "walkForwardLeft" ||
@@ -83,9 +137,8 @@ export function resolveFootstepPlaybackRate(state: CharacterAnimState): number {
     state === "rifleJogForwardLeft" ||
     state === "rifleJogForwardRight"
   ) {
-    return 1.06;
-  }
-  if (
+    baseRate = 1.06;
+  } else if (
     state === "walkBackwardLeft" ||
     state === "walkBackwardRight" ||
     state === "rifleWalkBackwardLeft" ||
@@ -93,18 +146,17 @@ export function resolveFootstepPlaybackRate(state: CharacterAnimState): number {
     state === "rifleJogBackwardLeft" ||
     state === "rifleJogBackwardRight"
   ) {
-    return 0.98;
-  }
-  if (
+    baseRate = 0.98;
+  } else if (
     state === "rifleJog" ||
     state === "rifleJogBack" ||
     state === "rifleRun" ||
     state === "rifleRunStart" ||
     state === "rifleRunStop"
   ) {
-    return 1.12;
+    baseRate = 1.12;
   }
-  return 1;
+  return isRifleLocomotionState(state) ? baseRate * locomotionScale : baseRate;
 }
 
 export function normalizeBoneName(name: string): string {
@@ -345,6 +397,10 @@ export function useCharacterModel(): CharacterModelResult {
       if (
         clipName === "walkStart" ||
         clipName === "walkStop" ||
+        clipName === "crouchEnter" ||
+        clipName === "crouchExit" ||
+        clipName === "rifleCrouchEnter" ||
+        clipName === "rifleCrouchExit" ||
         clipName === "rifleRunStart" ||
         clipName === "rifleRunStop"
       ) {
@@ -383,12 +439,13 @@ export function useCharacterModel(): CharacterModelResult {
     };
   }, []);
 
-  const setAnimState = useCallback((state: CharacterAnimState) => {
+  const setAnimState = useCallback((
+    state: CharacterAnimState,
+    options?: CharacterAnimPlaybackOptions,
+  ) => {
     const targetName = state === "sprint" ? "walk" : state;
-    const targetSpeed = resolveCharacterAnimTimeScale(state);
+    const targetSpeed = resolveCharacterAnimTimeScale(state, options);
     const stateKey = state;
-
-    if (currentAnimRef.current === stateKey) return;
 
     const actions = actionsRef.current;
     const target = actions.get(targetName);
@@ -397,6 +454,10 @@ export function useCharacterModel(): CharacterModelResult {
     const prevKey = currentAnimRef.current;
     const prevName = prevKey === "sprint" ? "walk" : prevKey;
     const prev = actions.get(prevName);
+    if (currentAnimRef.current === stateKey && prev === target) {
+      target.timeScale = targetSpeed;
+      return;
+    }
 
     if (prev && prev !== target) {
       prev.fadeOut(0.25);

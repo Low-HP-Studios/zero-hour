@@ -15,10 +15,10 @@ export type AimSensitivitySettings = {
 };
 
 export const DEFAULT_AIM_SENSITIVITY_SETTINGS: AimSensitivitySettings = {
-  look: 0.5,
-  rifleAds: 0.5,
-  sniperAds: 0.5,
-  vertical: 0.5,
+  look: 0.73,
+  rifleAds: 0.56,
+  sniperAds: 0.8,
+  vertical: 1,
 };
 
 export type ControlBindings = {
@@ -27,6 +27,8 @@ export type ControlBindings = {
   moveLeft: string;
   moveRight: string;
   sprint: string;
+  walkModifier: string;
+  crouch: string;
   jump: string;
   pickup: string;
   drop: string;
@@ -44,6 +46,8 @@ export const DEFAULT_CONTROL_BINDINGS: ControlBindings = {
   moveLeft: "KeyA",
   moveRight: "KeyD",
   sprint: "ShiftLeft",
+  walkModifier: "ControlLeft",
+  crouch: "KeyC",
   jump: "Space",
   pickup: "KeyF",
   drop: "KeyG",
@@ -66,7 +70,7 @@ export const DEFAULT_HUD_OVERLAY_TOGGLES: HudOverlayToggles = {
   practice: false,
   controls: false,
   settings: false,
-  performance: true,
+  performance: false,
 };
 
 export type WeaponAlignmentOffset = {
@@ -165,6 +169,7 @@ export type MovementProfileSettings = {
   rifleJogSpeedScale: number;
   rifleRunSpeedScale: number;
   rifleFirePrepSpeedScale: number;
+  crouchSpeedScale: number;
   rifleRunStaminaMaxMs: number;
   rifleRunStaminaDrainPerSec: number;
   rifleRunStaminaRegenPerSec: number;
@@ -178,11 +183,11 @@ export const DEFAULT_CROSSHAIR_SETTINGS: CrosshairSettings = {
   color: "white",
   centerDot: {
     enabled: true,
-    size: 4,
-    thickness: 3,
+    size: 2.5,
+    thickness: 2,
   },
   innerLines: {
-    enabled: true,
+    enabled: false,
     length: 9,
     thickness: 2,
     gap: 6,
@@ -196,12 +201,12 @@ export const DEFAULT_CROSSHAIR_SETTINGS: CrosshairSettings = {
   outline: {
     enabled: true,
     thickness: 1,
-    opacity: 0.85,
+    opacity: 0.51,
   },
   dynamic: {
     enabled: true,
     idleSpread: 0,
-    walkSpread: 2.2,
+    walkSpread: 1,
     runSpread: 5.2,
     shotKick: 1.4,
     recoveryPerSecond: 12,
@@ -212,7 +217,7 @@ export const DEFAULT_CROSSHAIR_SETTINGS: CrosshairSettings = {
   },
   ads: {
     rifleDotSize: 5,
-    rifleDotColor: "red",
+    rifleDotColor: "white",
     sniperDotSize: 6,
     sniperDotColor: "red",
   },
@@ -220,38 +225,41 @@ export const DEFAULT_CROSSHAIR_SETTINGS: CrosshairSettings = {
 
 export const DEFAULT_WEAPON_RECOIL_PROFILES: WeaponRecoilProfiles = {
   rifle: {
-    recoilPitchBase: 0.0007,
-    recoilPitchRamp: 0.00015,
-    recoilYawRange: 0.003,
+    recoilPitchBase: 0.0001,
+    recoilPitchRamp: 0.00004,
+    recoilYawRange: 0.0006,
     recoilYawDrift: 0.000005,
-    moveSpreadBase: 0.1,
-    moveSpreadSprint: 0.1,
+    moveSpreadBase: 0.02,
+    moveSpreadSprint: 0.02,
   },
   sniper: {
-    recoilPitchBase: 0.05,
+    recoilPitchBase: 0,
     recoilPitchRamp: 0,
-    recoilYawRange: 0.05,
-    recoilYawDrift: 0.0005,
-    moveSpreadBase: 0.05,
-    moveSpreadSprint: 0.05,
+    recoilYawRange: 0,
+    recoilYawDrift: 0,
+    moveSpreadBase: 0,
+    moveSpreadSprint: 0,
   },
 };
 
 export const DEFAULT_MOVEMENT_SETTINGS: MovementProfileSettings = {
-  rifleWalkSpeedScale: 0.56,
-  rifleJogSpeedScale: 0.82,
-  rifleRunSpeedScale: 1.42,
-  rifleFirePrepSpeedScale: 0.38,
-  rifleRunStaminaMaxMs: 2600,
-  rifleRunStaminaDrainPerSec: 1,
-  rifleRunStaminaRegenPerSec: 0.55,
-  rifleRunStartMs: 220,
-  rifleRunStopMs: 220,
-  rifleRunForwardThreshold: 0.42,
-  rifleRunLateralThreshold: 0.2,
+  rifleWalkSpeedScale: 0.2,
+  rifleJogSpeedScale: 0.77,
+  rifleRunSpeedScale: 2.06,
+  rifleFirePrepSpeedScale: 0.71,
+  crouchSpeedScale: 0.87,
+  rifleRunStaminaMaxMs: 6900,
+  rifleRunStaminaDrainPerSec: 3.4,
+  rifleRunStaminaRegenPerSec: 3.45,
+  rifleRunStartMs: 540,
+  rifleRunStopMs: 540,
+  rifleRunForwardThreshold: 0.71,
+  rifleRunLateralThreshold: 0.69,
 };
 
 export type EnemyOutlineColor = "red" | "yellow" | "cyan" | "magenta";
+export type CrouchMode = "hold" | "toggle";
+export const DEFAULT_CROUCH_MODE: CrouchMode = "hold";
 
 export type EnemyOutlineSettings = {
   enabled: boolean;
@@ -263,8 +271,8 @@ export type EnemyOutlineSettings = {
 export const DEFAULT_ENEMY_OUTLINE_SETTINGS: EnemyOutlineSettings = {
   enabled: true,
   color: "red",
-  thickness: 3,
-  opacity: 0.88,
+  thickness: 8,
+  opacity: 1,
 };
 
 export type GameSettings = {
@@ -273,6 +281,7 @@ export type GameSettings = {
   showR3fPerf: boolean;
   sensitivity: AimSensitivitySettings;
   keybinds: ControlBindings;
+  crouchMode: CrouchMode;
   fov: number;
   weaponAlignment: WeaponAlignmentOffset;
   crosshair: CrosshairSettings;
@@ -290,6 +299,8 @@ export type PerfMetrics = {
   textures: number;
 };
 
+export type MovementTier = "walk" | "jog" | "run";
+
 export const DEFAULT_PERF_METRICS: PerfMetrics = {
   fps: 0,
   frameMs: 0,
@@ -305,6 +316,8 @@ export type PlayerSnapshot = {
   z: number;
   speed: number;
   sprinting: boolean;
+  movementTier: MovementTier;
+  crouched: boolean;
   moving: boolean;
   grounded: boolean;
   pointerLocked: boolean;
@@ -317,6 +330,8 @@ export const DEFAULT_PLAYER_SNAPSHOT: PlayerSnapshot = {
   z: 6,
   speed: 0,
   sprinting: false,
+  movementTier: "jog",
+  crouched: false,
   moving: false,
   grounded: true,
   pointerLocked: false,

@@ -28,6 +28,8 @@ declare global {
 
   type ElectronApi = {
     platform: string;
+    quitApp: () => Promise<void>;
+    setGameplayActive: (active: boolean) => void;
     updater: UpdaterApi;
   };
 

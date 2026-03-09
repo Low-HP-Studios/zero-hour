@@ -95,8 +95,40 @@ export const ANIM_CLIPS: { name: string; url: string }[] = [
     name: "walkBackwardRight",
     url: "/assets/animations/walk/Walk Backward Right.fbx",
   },
+  { name: "crouchEnter", url: "/assets/animations/crouch/Stand To Crouch.fbx" },
+  { name: "crouchExit", url: "/assets/animations/crouch/Crouch To Stand.fbx" },
+  { name: "crouchIdle", url: "/assets/animations/crouch/Crouch Idle.fbx" },
+  {
+    name: "crouchForward",
+    url: "/assets/animations/crouch/Crouch Move Forward Stealth.fbx",
+  },
+  {
+    name: "crouchBack",
+    url: "/assets/animations/crouch/Crouch Move Backward Stealth.fbx",
+  },
+  {
+    name: "crouchLeft",
+    url: "/assets/animations/crouch/Crouch Move Left Stealth.fbx",
+  },
+  {
+    name: "crouchRight",
+    url: "/assets/animations/crouch/Crouch Move Right Stealth.fbx",
+  },
   { name: "rifleAimHold", url: "/assets/animations/walking with gun/Rifle Aim Idle.fbx" },
   { name: "rifleIdle", url: "/assets/animations/rifle-hold/Rifle Hold Idle Animation.fbx" },
+  {
+    name: "rifleCrouchEnter",
+    url: "/assets/animations/crouch/Rifle Hold To Crouch.fbx",
+  },
+  {
+    name: "rifleCrouchExit",
+    url: "/assets/animations/crouch/Rifle Crouch To Stand Hold.fbx",
+  },
+  { name: "rifleCrouchIdle", url: "/assets/animations/crouch/Rifle Crouch Idle.fbx" },
+  {
+    name: "rifleCrouchWalk",
+    url: "/assets/animations/crouch/Rifle Crouch Walk Forward Loop.fbx",
+  },
   { name: "rifleWalk", url: "/assets/animations/rifle-hold/Rifle Hold Walk Forward Loop.fbx" },
   { name: "rifleWalkBack", url: "/assets/animations/rifle-hold/Rifle Hold Walk Backward Loop.fbx" },
   { name: "rifleWalkLeft", url: "/assets/animations/rifle-hold/Rifle Hold Walk Left Loop.fbx" },
@@ -211,6 +243,8 @@ export const RIFLE_HOLD_JOG_TIME_SCALE = 0.96;
 export const RIFLE_HOLD_RUN_TIME_SCALE = 1.6;
 export const RIFLE_HOLD_RUN_START_TIME_SCALE = 1.2;
 export const RIFLE_HOLD_RUN_STOP_TIME_SCALE = 1.2;
+export const CROUCH_ANIM_TIME_SCALE = 0.92;
+export const RIFLE_CROUCH_ANIM_TIME_SCALE = 0.8;
 export const BASE_FOOTSTEP_INTERVAL_SECONDS = 0.566;
 export const RIFLE_HOLD_WALK_SPEED_SCALE = 0.56;
 export const RIFLE_HOLD_JOG_SPEED_SCALE = 0.82;
@@ -236,7 +270,18 @@ export type CharacterAnimState =
   | "walkForwardRight"
   | "walkBackwardLeft"
   | "walkBackwardRight"
+  | "crouchEnter"
+  | "crouchExit"
+  | "crouchIdle"
+  | "crouchForward"
+  | "crouchBack"
+  | "crouchLeft"
+  | "crouchRight"
   | "rifleIdle"
+  | "rifleCrouchEnter"
+  | "rifleCrouchExit"
+  | "rifleCrouchIdle"
+  | "rifleCrouchWalk"
   | "rifleWalk"
   | "rifleWalkBack"
   | "rifleWalkLeft"

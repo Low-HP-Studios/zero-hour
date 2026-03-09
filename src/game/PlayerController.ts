@@ -7,6 +7,8 @@ import type {
   CollisionCircle,
   CollisionRect,
   ControlBindings,
+  CrouchMode,
+  MovementTier,
   PlayerSnapshot,
   WorldBounds,
 } from "./types";
@@ -24,6 +26,7 @@ type PlayerAction =
 
 type MovementProfile = {
   walkScale: number;
+  jogScale: number;
   sprintScale: number;
   allowSprint: boolean;
 };
@@ -34,6 +37,7 @@ type UsePlayerControllerOptions = {
   worldBounds: WorldBounds;
   sensitivity: AimSensitivitySettings;
   keybinds: ControlBindings;
+  crouchMode: CrouchMode;
   fov: number;
   inputEnabled: boolean;
   cameraEnabled: boolean;
@@ -44,17 +48,27 @@ type UsePlayerControllerOptions = {
   getActiveWeapon: () => WeaponKind;
 };
 
+export type RunFacingPhase = "off" | "start" | "running" | "stop";
+
 export type PlayerControllerApi = {
   addRecoil: (pitchRadians: number, yawRadians: number) => void;
+  alignBodyToAim: (durationMs?: number) => void;
   getPosition: () => THREE.Vector3;
   getYaw: () => number;
+  getAimYaw: () => number;
+  getBodyYaw: () => number;
+  getPlanarSpeed: () => number;
   getMoveInput: () => THREE.Vector2;
   isFirstPerson: () => boolean;
   isADS: () => boolean;
   isSprinting: () => boolean;
   isSprintPressed: () => boolean;
+  isWalkPressed: () => boolean;
+  isCrouched: () => boolean;
   isMoving: () => boolean;
   isGrounded: () => boolean;
+  getMovementTier: () => MovementTier;
+  setRunFacing: (phase: RunFacingPhase, headingYaw?: number) => void;
   setMovementProfile: (profile: Partial<MovementProfile>) => void;
   requestPointerLock: () => void;
   releasePointerLock: () => void;
@@ -88,11 +102,21 @@ const SHOULDER_OFFSET_ADS = 0.3;
 const SHOULDER_OFFSET_SNIPER_ADS = 0.16;
 const AIM_LOOK_DISTANCE = 120;
 const FIRST_PERSON_CAMERA_HEIGHT = 1.55;
+const FIRST_PERSON_CAMERA_HEIGHT_CROUCH = 1.18;
+const TPP_CROUCH_LOOK_HEIGHT_OFFSET = -0.28;
 const FIRST_PERSON_CAMERA_FORWARD_OFFSET = 0.06;
 const RIFLE_ADS_FOV = 58;
 const SNIPER_ADS_FOV = 26;
 const VIEW_MODE_TRANSITION_SPEED = 10;
 const SHOULDER_SWAP_TRANSITION_SPEED = 12;
+const CROUCH_TRANSITION_SPEED = 14;
+const BODY_YAW_DAMP = 14;
+const RUN_BODY_YAW_DAMP = 24;
+const RUN_TRANSITION_BODY_YAW_DAMP = 16;
+const ADS_BODY_YAW_DAMP = 22;
+const SHOOT_BODY_YAW_DAMP = 34;
+const SHOOT_ALIGN_WINDOW_MS = 180;
+const MAX_FREE_LOOK_YAW_OFFSET = THREE.MathUtils.degToRad(120);
 // Hide the character early on FPP enter and show it later on FPP exit to reduce camera/model popping.
 const FPP_ENTER_VISUAL_THRESHOLD = 0.35;
 const FPP_EXIT_VISUAL_THRESHOLD = 0.75;
@@ -103,6 +127,7 @@ export function usePlayerController({
   worldBounds,
   sensitivity,
   keybinds,
+  crouchMode,
   fov,
   inputEnabled,
   cameraEnabled,
@@ -120,22 +145,32 @@ export function usePlayerController({
   const velocityRef = useRef(new THREE.Vector2(0, 0));
   const moveInputRef = useRef(new THREE.Vector2(0, 0));
   const sprintPressedRef = useRef(false);
+  const walkPressedRef = useRef(false);
+  const crouchedRef = useRef(false);
   const resolvedXZRef = useRef(new THREE.Vector2(positionRef.current.x, positionRef.current.z));
   const pointerLockedRef = useRef(false);
   const triggerHeldRef = useRef(false);
   const movementProfileRef = useRef<MovementProfile>({
     walkScale: 1,
+    jogScale: 1,
     sprintScale: 1,
     allowSprint: true,
   });
   const movingRef = useRef(false);
   const sprintingRef = useRef(false);
+  const planarSpeedRef = useRef(0);
+  const movementTierRef = useRef<MovementTier>("jog");
   const groundedRef = useRef(true);
   const verticalVelocityRef = useRef(0);
   const jumpQueuedRef = useRef(false);
   const yawRef = useRef(0);
+  const bodyYawRef = useRef(0);
   const pitchRef = useRef(0);
   const targetYawRef = useRef(0);
+  const targetBodyYawRef = useRef(0);
+  const shootAlignUntilRef = useRef(0);
+  const runFacingPhaseRef = useRef<RunFacingPhase>("off");
+  const runFacingYawRef = useRef(0);
   const targetPitchRef = useRef(0);
   const pendingMouseRef = useRef(new THREE.Vector2(0, 0));
   const recoilPitchRef = useRef(0);
@@ -143,7 +178,10 @@ export function usePlayerController({
   const firstPersonRef = useRef(false);
   const adsRef = useRef(false);
   const adsLerpRef = useRef(0);
+  const crouchLerpRef = useRef(0);
   const viewModeLerpRef = useRef(0);
+  const crouchModeRef = useRef<CrouchMode>(crouchMode);
+  const crouchHoldLatchRef = useRef(false);
   const shoulderSideTargetRef = useRef(1);
   const shoulderSideLerpRef = useRef(1);
   const tempLookAtRef = useRef(new THREE.Vector3());
@@ -153,7 +191,7 @@ export function usePlayerController({
   const snapshotAccumulatorRef = useRef(0);
   const snapshotObjectRef = useRef<PlayerSnapshot>({
     x: 0, y: 0, z: 0, speed: 0,
-    sprinting: false, moving: false, grounded: true,
+    sprinting: false, movementTier: "jog", crouched: false, moving: false, grounded: true,
     pointerLocked: false, canInteract: false,
   });
   const actionCallbackRef = useRef(onAction);
@@ -163,6 +201,7 @@ export function usePlayerController({
   const activeWeaponGetterRef = useRef(getActiveWeapon);
   const sensitivityRef = useRef(sensitivity);
   const keybindsRef = useRef(keybinds);
+  const crouchModeSettingRef = useRef(crouchMode);
   const fovRef = useRef(fov);
   const inputEnabledRef = useRef(inputEnabled);
   const cameraEnabledRef = useRef(cameraEnabled);
@@ -196,6 +235,15 @@ export function usePlayerController({
   }, [keybinds]);
 
   useEffect(() => {
+    crouchModeSettingRef.current = crouchMode;
+    crouchModeRef.current = crouchMode;
+    crouchHoldLatchRef.current = false;
+    if (crouchMode === "hold" && !isBindingDown(keyStateRef.current, keybindsRef.current.crouch)) {
+      crouchedRef.current = false;
+    }
+  }, [crouchMode]);
+
+  useEffect(() => {
     fovRef.current = fov;
   }, [fov]);
 
@@ -205,6 +253,14 @@ export function usePlayerController({
       keyStateRef.current = {};
       jumpQueuedRef.current = false;
       adsRef.current = false;
+      crouchedRef.current = false;
+      crouchHoldLatchRef.current = false;
+      sprintPressedRef.current = false;
+      walkPressedRef.current = false;
+      movementTierRef.current = "jog";
+      shootAlignUntilRef.current = 0;
+      runFacingPhaseRef.current = "off";
+      runFacingYawRef.current = bodyYawRef.current;
       if (triggerHeldRef.current) {
         triggerHeldRef.current = false;
         triggerCallbackRef.current(false);
@@ -232,6 +288,9 @@ export function usePlayerController({
         return;
       }
       const bindings = keybindsRef.current;
+      const crouchBinding = bindings.crouch;
+
+      keyStateRef.current[event.code] = true;
 
       if (event.code === bindings.pickup && !event.repeat) {
         actionCallbackRef.current("pickup");
@@ -258,15 +317,38 @@ export function usePlayerController({
         shoulderSideTargetRef.current = 1;
       }
 
-      if (event.code === bindings.jump && !event.repeat && pointerLockedRef.current && groundedRef.current) {
-        jumpQueuedRef.current = true;
+      if (event.code === crouchBinding && pointerLockedRef.current) {
+        if (crouchModeSettingRef.current === "toggle") {
+          if (!event.repeat) {
+            crouchedRef.current = !crouchedRef.current;
+          }
+        } else if (!crouchHoldLatchRef.current) {
+          crouchedRef.current = true;
+        }
       }
 
-      keyStateRef.current[event.code] = true;
+      if (event.code === bindings.jump && !event.repeat && pointerLockedRef.current && groundedRef.current) {
+        if (crouchedRef.current) {
+          crouchedRef.current = false;
+          if (
+            crouchModeSettingRef.current === "hold" &&
+            isBindingDown(keyStateRef.current, crouchBinding)
+          ) {
+            crouchHoldLatchRef.current = true;
+          }
+        }
+        jumpQueuedRef.current = true;
+      }
     };
 
     const onKeyUp = (event: KeyboardEvent) => {
       keyStateRef.current[event.code] = false;
+      if (event.code === keybindsRef.current.crouch) {
+        crouchHoldLatchRef.current = false;
+        if (crouchModeSettingRef.current === "hold") {
+          crouchedRef.current = false;
+        }
+      }
     };
 
     const onMouseDown = (event: MouseEvent) => {
@@ -339,6 +421,14 @@ export function usePlayerController({
       if (!locked) {
         keyStateRef.current = {};
         jumpQueuedRef.current = false;
+        crouchedRef.current = false;
+        crouchHoldLatchRef.current = false;
+        sprintPressedRef.current = false;
+        walkPressedRef.current = false;
+        movementTierRef.current = "jog";
+        shootAlignUntilRef.current = 0;
+        runFacingPhaseRef.current = "off";
+        runFacingYawRef.current = bodyYawRef.current;
       }
     };
 
@@ -363,6 +453,7 @@ export function usePlayerController({
 
   useFrame((_, rawDelta) => {
     const delta = Math.min(rawDelta, 1 / 20);
+    const nowMs = performance.now();
     const keys = keyStateRef.current;
     const controlsEnabled = pointerLockedRef.current && inputEnabledRef.current;
     const activeWeapon = activeWeaponGetterRef.current();
@@ -398,18 +489,50 @@ export function usePlayerController({
       moveInputRef.current.normalize();
     }
 
+    const crouchBinding = bindings.crouch;
+    const crouchHeld = controlsEnabled && isBindingDown(keys, crouchBinding);
+    if (crouchModeRef.current === "hold") {
+      if (!controlsEnabled) {
+        crouchedRef.current = false;
+      } else if (!crouchHeld) {
+        crouchedRef.current = false;
+        crouchHoldLatchRef.current = false;
+      } else if (!crouchHoldLatchRef.current) {
+        crouchedRef.current = true;
+      }
+    }
+
     const movementProfile = movementProfileRef.current;
-    const sprintPressed = controlsEnabled && isBindingDown(keys, keybindsRef.current.sprint);
+    const hasDirectionalInput = moveInputRef.current.lengthSq() > 0.001;
+    const sprintPressed = controlsEnabled &&
+      isBindingDown(keys, bindings.sprint) &&
+      !crouchedRef.current &&
+      !adsRef.current;
+    const walkPressed = controlsEnabled &&
+      isBindingDown(keys, bindings.walkModifier) &&
+      !crouchedRef.current &&
+      !sprintPressed;
     sprintPressedRef.current = sprintPressed;
+    walkPressedRef.current = walkPressed;
+
     const sprinting =
       controlsEnabled &&
       movementProfile.allowSprint &&
       sprintPressed &&
-      moveInputRef.current.y >= 0 &&
-      groundedRef.current;
-    const moveSpeed = sprinting
+      groundedRef.current &&
+      hasDirectionalInput;
+    const movementTier: MovementTier = sprinting
+      ? "run"
+      : walkPressed ? "walk" : "jog";
+    movementTierRef.current = movementTier;
+
+    const moveSpeed = movementTier === "run"
       ? SPRINT_SPEED * movementProfile.sprintScale
-      : WALK_SPEED * movementProfile.walkScale;
+      : WALK_SPEED * (
+        movementTier === "walk"
+          ? movementProfile.walkScale
+          : movementProfile.jogScale
+      );
 
     const sinYaw = Math.sin(yawRef.current);
     const cosYaw = Math.cos(yawRef.current);
@@ -423,6 +546,51 @@ export function usePlayerController({
       velocityRef.current.y = desiredZ * moveSpeed;
     } else {
       velocityRef.current.set(0, 0);
+    }
+    planarSpeedRef.current = Math.hypot(
+      velocityRef.current.x,
+      velocityRef.current.y,
+    );
+
+    const fppLocked = firstPersonRef.current;
+    const shootingAlignActive = nowMs < shootAlignUntilRef.current;
+    if (fppLocked) {
+      targetBodyYawRef.current = yawRef.current;
+      bodyYawRef.current = yawRef.current;
+    } else if (adsRef.current || shootingAlignActive) {
+      targetBodyYawRef.current = yawRef.current;
+      bodyYawRef.current = dampAngle(
+        bodyYawRef.current,
+        targetBodyYawRef.current,
+        shootingAlignActive ? SHOOT_BODY_YAW_DAMP : ADS_BODY_YAW_DAMP,
+        delta,
+      );
+    } else {
+      const runFacingPhase = runFacingPhaseRef.current;
+      const runFacingActive = runFacingPhase !== "off";
+      if (runFacingActive) {
+        targetBodyYawRef.current = runFacingYawRef.current;
+      } else if (controlsEnabled && hasDirectionalInput) {
+        targetBodyYawRef.current = Math.atan2(-desiredX, -desiredZ);
+      } else {
+        targetBodyYawRef.current = bodyYawRef.current;
+      }
+      const aimBodyDelta = normalizeAngle(yawRef.current - targetBodyYawRef.current);
+      if (Math.abs(aimBodyDelta) > MAX_FREE_LOOK_YAW_OFFSET) {
+        targetBodyYawRef.current = yawRef.current -
+          Math.sign(aimBodyDelta) * MAX_FREE_LOOK_YAW_OFFSET;
+      }
+      const bodyYawDamp = runFacingPhase === "running"
+        ? RUN_BODY_YAW_DAMP
+        : runFacingActive
+        ? RUN_TRANSITION_BODY_YAW_DAMP
+        : BODY_YAW_DAMP;
+      bodyYawRef.current = dampAngle(
+        bodyYawRef.current,
+        targetBodyYawRef.current,
+        bodyYawDamp,
+        delta,
+      );
     }
 
     resolvedXZRef.current.set(positionRef.current.x, positionRef.current.z);
@@ -488,6 +656,15 @@ export function usePlayerController({
     adsLerpRef.current = THREE.MathUtils.damp(adsLerpRef.current, adsTarget, 12, delta);
     const adsT = adsLerpRef.current;
     const sniperADS = activeWeapon === "sniper" ? adsT : 0;
+    const crouchTarget = crouchedRef.current ? 1 : 0;
+    crouchLerpRef.current = THREE.MathUtils.damp(
+      crouchLerpRef.current,
+      crouchTarget,
+      CROUCH_TRANSITION_SPEED,
+      delta,
+    );
+    const crouchT = crouchLerpRef.current;
+    const crouchLookHeightOffset = TPP_CROUCH_LOOK_HEIGHT_OFFSET * crouchT;
     const viewTarget = firstPersonRef.current || adsRef.current ? 1 : 0;
     viewModeLerpRef.current = THREE.MathUtils.damp(
       viewModeLerpRef.current,
@@ -519,7 +696,11 @@ export function usePlayerController({
     const fppCameraPos = tempFirstPersonCameraPosRef.current;
     fppCameraPos.set(
       positionRef.current.x,
-      positionRef.current.y + FIRST_PERSON_CAMERA_HEIGHT,
+      positionRef.current.y + THREE.MathUtils.lerp(
+        FIRST_PERSON_CAMERA_HEIGHT,
+        FIRST_PERSON_CAMERA_HEIGHT_CROUCH,
+        crouchT,
+      ),
       positionRef.current.z,
     );
     fppCameraPos.addScaledVector(aimDir, FIRST_PERSON_CAMERA_FORWARD_OFFSET);
@@ -551,7 +732,7 @@ export function usePlayerController({
     const tppCameraPos = tempThirdPersonCameraPosRef.current;
     tppCameraPos.set(
       positionRef.current.x + horizontalDist * backX + shoulder * rightX,
-      positionRef.current.y + LOOK_AT_HEIGHT + verticalDist - sniperADS * 0.08,
+      positionRef.current.y + LOOK_AT_HEIGHT + crouchLookHeightOffset + verticalDist - sniperADS * 0.08,
       positionRef.current.z + horizontalDist * backZ + shoulder * rightZ,
     );
 
@@ -594,9 +775,9 @@ export function usePlayerController({
       }
     }
 
-    const speed = Math.hypot(velocityRef.current.x, velocityRef.current.y);
+    const speed = planarSpeedRef.current;
     movingRef.current = speed > 0.15;
-    sprintingRef.current = sprinting && movingRef.current;
+    sprintingRef.current = movementTierRef.current === "run" && movingRef.current;
 
     snapshotAccumulatorRef.current += delta;
     if (snapshotAccumulatorRef.current >= 0.05) {
@@ -607,6 +788,8 @@ export function usePlayerController({
       snap.z = positionRef.current.z;
       snap.speed = speed;
       snap.sprinting = sprintingRef.current;
+      snap.movementTier = movementTierRef.current;
+      snap.crouched = crouchedRef.current;
       snap.moving = movingRef.current;
       snap.grounded = groundedRef.current;
       snap.pointerLocked = pointerLockedRef.current;
@@ -626,8 +809,17 @@ export function usePlayerController({
       );
       targetYawRef.current += yawRadians * 0.6;
     },
+    alignBodyToAim: (durationMs = SHOOT_ALIGN_WINDOW_MS) => {
+      shootAlignUntilRef.current = Math.max(
+        shootAlignUntilRef.current,
+        performance.now() + Math.max(0, durationMs),
+      );
+    },
     getPosition: () => positionRef.current,
     getYaw: () => yawRef.current,
+    getAimYaw: () => yawRef.current,
+    getBodyYaw: () => bodyYawRef.current,
+    getPlanarSpeed: () => planarSpeedRef.current,
     getMoveInput: () => moveInputRef.current,
     isFirstPerson: () =>
       firstPersonRef.current
@@ -636,8 +828,20 @@ export function usePlayerController({
     isADS: () => adsRef.current,
     isSprinting: () => sprintingRef.current,
     isSprintPressed: () => sprintPressedRef.current,
+    isWalkPressed: () => walkPressedRef.current,
+    isCrouched: () => crouchedRef.current,
     isMoving: () => movingRef.current,
     isGrounded: () => groundedRef.current,
+    getMovementTier: () => movementTierRef.current,
+    setRunFacing: (phase, headingYaw) => {
+      runFacingPhaseRef.current = phase;
+      if (typeof headingYaw === "number" && Number.isFinite(headingYaw)) {
+        runFacingYawRef.current = normalizeAngle(headingYaw);
+      }
+      if (phase === "off") {
+        runFacingYawRef.current = bodyYawRef.current;
+      }
+    },
     setMovementProfile: (profile) => {
       movementProfileRef.current = {
         ...movementProfileRef.current,
@@ -645,6 +849,10 @@ export function usePlayerController({
         walkScale: Math.max(
           0.15,
           profile.walkScale ?? movementProfileRef.current.walkScale,
+        ),
+        jogScale: Math.max(
+          0.15,
+          profile.jogScale ?? movementProfileRef.current.jogScale,
         ),
         sprintScale: Math.max(
           0.15,
@@ -674,6 +882,8 @@ export function usePlayerController({
       jumpQueuedRef.current = false;
       yawRef.current = yawRadians;
       targetYawRef.current = yawRadians;
+      bodyYawRef.current = yawRadians;
+      targetBodyYawRef.current = yawRadians;
       pitchRef.current = pitchRadians;
       targetPitchRef.current = pitchRadians;
       recoilPitchRef.current = 0;
@@ -681,10 +891,20 @@ export function usePlayerController({
       pendingMouseRef.current.set(0, 0);
       adsRef.current = false;
       adsLerpRef.current = 0;
+      crouchedRef.current = false;
+      crouchLerpRef.current = 0;
+      crouchHoldLatchRef.current = false;
       firstPersonRef.current = false;
       viewModeLerpRef.current = 0;
       shoulderSideTargetRef.current = 1;
       shoulderSideLerpRef.current = 1;
+      sprintPressedRef.current = false;
+      walkPressedRef.current = false;
+      movementTierRef.current = "jog";
+      shootAlignUntilRef.current = 0;
+      runFacingPhaseRef.current = "off";
+      runFacingYawRef.current = yawRadians;
+      planarSpeedRef.current = 0;
       keyStateRef.current = {};
       if (triggerHeldRef.current) {
         triggerHeldRef.current = false;
@@ -696,6 +916,8 @@ export function usePlayerController({
       snapshot.z = position.z;
       snapshot.speed = 0;
       snapshot.sprinting = false;
+      snapshot.movementTier = "jog";
+      snapshot.crouched = false;
       snapshot.moving = false;
       snapshot.grounded = true;
       snapshot.pointerLocked = pointerLockedRef.current;
@@ -703,6 +925,7 @@ export function usePlayerController({
       snapshotCallbackRef.current(snapshot);
       movementProfileRef.current = {
         walkScale: 1,
+        jogScale: 1,
         sprintScale: 1,
         allowSprint: true,
       };
@@ -728,6 +951,21 @@ function resolveCircleCollisions(
 
 function isBindingDown(keys: KeyState, bindingCode: string) {
   return Boolean(bindingCode && keys[bindingCode]);
+}
+
+function normalizeAngle(angleRadians: number) {
+  return Math.atan2(Math.sin(angleRadians), Math.cos(angleRadians));
+}
+
+function dampAngle(
+  current: number,
+  target: number,
+  smoothing: number,
+  delta: number,
+) {
+  const deltaAngle = normalizeAngle(target - current);
+  const next = THREE.MathUtils.damp(0, deltaAngle, smoothing, delta);
+  return normalizeAngle(current + next);
 }
 
 function resolveLookSensitivity(

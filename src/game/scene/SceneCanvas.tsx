@@ -54,6 +54,8 @@ const LIVE_SKY_LIGHT = new THREE.Color("#c8dce8");
 const VOID_GROUND_LIGHT = new THREE.Color("#141820");
 const LIVE_GROUND_LIGHT = new THREE.Color("#d4a862");
 const MENU_KEY_LIGHT = new THREE.Color("#c0d0f0");
+const LOBBY_FRAME_RATE = 60;
+const LOBBY_FRAME_INTERVAL_MS = 1000 / LOBBY_FRAME_RATE;
 
 function clamp01(value: number) {
   return Math.max(0, Math.min(1, value));
@@ -151,6 +153,28 @@ function SceneBootCompiler({
   return null;
 }
 
+function SceneFramePacer({
+  lobbyCapEnabled,
+}: {
+  lobbyCapEnabled: boolean;
+}) {
+  const advance = useThree((state) => state.advance);
+
+  useEffect(() => {
+    if (!lobbyCapEnabled) return;
+    advance(performance.now());
+    const intervalId = window.setInterval(() => {
+      advance(performance.now());
+    }, LOBBY_FRAME_INTERVAL_MS);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [advance, lobbyCapEnabled]);
+
+  return null;
+}
+
 export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
   settings,
   audioVolumes,
@@ -179,6 +203,7 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
   const resetTimeoutsRef = useRef<Map<string, number>>(new Map());
   const compileReady = booting && bootAssetsReady && runtimeAssetsReady &&
     targetAssetsReady;
+  const lobbyFrameCapEnabled = presentation.phase !== "playing";
 
   const dpr = useMemo(() => {
     const devicePixelRatio =
@@ -297,7 +322,9 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
       dpr={dpr}
       camera={CANVAS_CAMERA}
       gl={CANVAS_GL}
+      frameloop={lobbyFrameCapEnabled ? "never" : "always"}
     >
+      <SceneFramePacer lobbyCapEnabled={lobbyFrameCapEnabled} />
       <color attach="background" args={[backgroundColor]} />
       <fog attach="fog" args={[fogColor, 60, 420]} />
       <hemisphereLight
@@ -351,6 +378,7 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
         presentation={presentation}
         sensitivity={settings.sensitivity}
         keybinds={settings.keybinds}
+        crouchMode={settings.crouchMode}
         fov={settings.fov}
         weaponAlignment={settings.weaponAlignment}
         movement={settings.movement}

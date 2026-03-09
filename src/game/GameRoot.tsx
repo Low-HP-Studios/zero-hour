@@ -181,6 +181,8 @@ export function GameRoot({
       prev.grounded === snapshot.grounded &&
       prev.moving === snapshot.moving &&
       prev.sprinting === snapshot.sprinting &&
+      prev.movementTier === snapshot.movementTier &&
+      prev.crouched === snapshot.crouched &&
       prev.pointerLocked === snapshot.pointerLocked &&
       prev.canInteract === snapshot.canInteract
     ) {
@@ -285,6 +287,10 @@ export function GameRoot({
 
     rafId = window.requestAnimationFrame(tick);
     return () => window.cancelAnimationFrame(rafId);
+  }, [phase]);
+
+  useEffect(() => {
+    window.electronAPI?.setGameplayActive(phase === "playing");
   }, [phase]);
 
   // Auto-lock the pointer once we enter playing state.
@@ -935,6 +941,11 @@ export function GameRoot({
     (settings.sensitivity.look * settings.sensitivity.rifleAds).toFixed(2);
   const effectiveSniperAds =
     (settings.sensitivity.look * settings.sensitivity.sniperAds).toFixed(2);
+  const movementTierLabel = player.movementTier === "run"
+    ? "Run"
+    : player.movementTier === "walk"
+    ? "Walk"
+    : "Jog";
 
   const controlsPreview = useMemo(() => {
     const b = settings.keybinds;
@@ -942,7 +953,9 @@ export function GameRoot({
       `${formatKeyCode(b.moveForward)}/${formatKeyCode(b.moveLeft)}/${
         formatKeyCode(b.moveBackward)
       }/${formatKeyCode(b.moveRight)} move`,
-      `${formatKeyCode(b.sprint)} sprint`,
+      `${formatKeyCode(b.sprint)} run modifier`,
+      `${formatKeyCode(b.walkModifier)} walk modifier`,
+      `${formatKeyCode(b.crouch)} crouch (${settings.crouchMode})`,
       `${formatKeyCode(b.jump)} jump`,
       `${formatKeyCode(b.toggleView)} FPP/TPP`,
       `${formatKeyCode(b.reset)} reset targets`,
@@ -950,7 +963,7 @@ export function GameRoot({
       "P perf panel",
       "Esc pause",
     ];
-  }, [settings.keybinds]);
+  }, [settings.crouchMode, settings.keybinds]);
   const updaterPhaseLabel = formatUpdaterPhase(updaterStatus.phase);
   const updaterPhaseClass = updaterStatus.phase === "error"
     ? "error"
@@ -967,6 +980,7 @@ export function GameRoot({
     : null;
   const installUpdateInProgress = updaterBusyAction === "install";
   const gameplayHudVisible = phase === "playing";
+  const liveFps = Number.isFinite(perfMetrics.fps) ? Math.max(0, perfMetrics.fps) : 0;
 
   return (
     <div
@@ -1037,7 +1051,7 @@ export function GameRoot({
                 <dd>
                   {player.grounded
                     ? player.moving
-                      ? player.sprinting ? "Sprint" : "Walk"
+                      ? movementTierLabel
                       : "Idle"
                     : "Jump / Air"}
                 </dd>
@@ -1410,8 +1424,10 @@ export function GameRoot({
                               />
                               <MetricCard
                                 label="Movement"
-                                value={player.moving
-                                  ? (player.sprinting ? "Sprint" : "Walk")
+                                value={player.crouched
+                                  ? (player.moving ? "Crouch Move" : "Crouch Idle")
+                                  : player.moving
+                                  ? movementTierLabel
                                   : "Idle"}
                               />
                               <MetricCard
@@ -1701,7 +1717,7 @@ export function GameRoot({
 
                           <MenuSection
                             title="Rifle Movement Tuning"
-                            blurb="Change rifle walk/jog/run feel live. This controls speed scales, run stamina, and run gating."
+                            blurb="Change walk/jog/run feel live. This controls speed scales, run stamina, and forward-biased slide gating."
                           >
                             <RangeField
                               label="Rifle Walk Speed Scale"
@@ -1760,6 +1776,21 @@ export function GameRoot({
                                   movement: {
                                     ...prev.movement,
                                     rifleFirePrepSpeedScale: value,
+                                  },
+                                }))}
+                            />
+                            <RangeField
+                              label="Crouch Speed Scale"
+                              value={settings.movement.crouchSpeedScale}
+                              min={0.2}
+                              max={1.2}
+                              step={0.01}
+                              onChange={(value) =>
+                                setSettings((prev) => ({
+                                  ...prev,
+                                  movement: {
+                                    ...prev.movement,
+                                    crouchSpeedScale: value,
                                   },
                                 }))}
                             />
@@ -1844,7 +1875,7 @@ export function GameRoot({
                                 }))}
                             />
                             <RangeField
-                              label="Run Forward Threshold"
+                              label="Slide Forward Threshold"
                               value={settings.movement.rifleRunForwardThreshold}
                               min={0.05}
                               max={1}
@@ -1859,7 +1890,7 @@ export function GameRoot({
                                 }))}
                             />
                             <RangeField
-                              label="Run Lateral Threshold"
+                              label="Slide Lateral Threshold"
                               value={settings.movement.rifleRunLateralThreshold}
                               min={0}
                               max={1}
@@ -2248,6 +2279,42 @@ export function GameRoot({
                             title="Keyboard Shortcuts"
                             blurb="Click a row, press a key. Escape cancels capture."
                           >
+                            <div className="field-row">
+                              <div>
+                                <div className="field-label">Crouch Mode</div>
+                                <div className="field-hint">
+                                  Hold keeps crouch active while pressed. Toggle flips state per key press.
+                                </div>
+                              </div>
+                              <div className="segmented-row compact">
+                                <button
+                                  type="button"
+                                  className={`chip-btn ${
+                                    settings.crouchMode === "hold" ? "active" : ""
+                                  }`}
+                                  onClick={() =>
+                                    setSettings((prev) => ({
+                                      ...prev,
+                                      crouchMode: "hold",
+                                    }))}
+                                >
+                                  Hold
+                                </button>
+                                <button
+                                  type="button"
+                                  className={`chip-btn ${
+                                    settings.crouchMode === "toggle" ? "active" : ""
+                                  }`}
+                                  onClick={() =>
+                                    setSettings((prev) => ({
+                                      ...prev,
+                                      crouchMode: "toggle",
+                                    }))}
+                                >
+                                  Toggle
+                                </button>
+                              </div>
+                            </div>
                             <div className="keybind-grid">
                               {BINDING_ROWS.map((row) => {
                                 const code = settings.keybinds[row.key];
@@ -3081,9 +3148,10 @@ export function GameRoot({
           )
           : null}
 
-        {gameplayHudVisible && hudPanels.settings
+        <div className="corner-bottom-right-stack">
+          {gameplayHudVisible && hudPanels.settings
           ? (
-            <div className="corner-bottom-right panel tactical-panel compact-panel">
+            <div className="panel tactical-panel compact-panel">
               <div className="panel-eyebrow">Settings Snapshot</div>
               <h2>Tactical Console</h2>
               <div className="quick-settings-stack">
@@ -3157,6 +3225,10 @@ export function GameRoot({
             </div>
           )
           : null}
+          <div className="fps-minimal" aria-label={`FPS ${liveFps.toFixed(0)}`}>
+            {liveFps.toFixed(0)} FPS
+          </div>
+        </div>
       </div>
       <div
         className="kill-pulse-overlay"

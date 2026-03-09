@@ -20,6 +20,10 @@ const distPath = path.join(__dirname, '..', 'dist');
 app.commandLine.appendSwitch('enable-gpu-rasterization');
 app.commandLine.appendSwitch('enable-zero-copy');
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
+app.commandLine.appendSwitch('force_high_performance_gpu');
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
+app.commandLine.appendSwitch('disable-frame-rate-limit');
+app.commandLine.appendSwitch('disable-gpu-vsync');
 
 const MIME_TYPES = {
   '.html': 'text/html',
@@ -60,6 +64,21 @@ protocol.registerSchemesAsPrivileged([
 let mainWindow = null;
 let updaterService = null;
 
+function applyGameplayFrameRate(isPlaying) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+  const webContents = mainWindow.webContents;
+  if (!webContents || webContents.isDestroyed()) {
+    return;
+  }
+
+  void isPlaying;
+  // For regular BrowserWindow rendering, Chromium chooses present cadence.
+  // Keep throttling disabled so the renderer is never intentionally slowed down.
+  webContents.setBackgroundThrottling(false);
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1600,
@@ -74,6 +93,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
+      backgroundThrottling: false,
     },
   });
 
@@ -84,6 +104,7 @@ function createWindow() {
   } else {
     mainWindow.loadURL('app://game/index.html');
   }
+  applyGameplayFrameRate(false);
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -92,6 +113,10 @@ function createWindow() {
 
 ipcMain.handle('app:quit', () => {
   app.quit();
+});
+
+ipcMain.on('app:set-gameplay-active', (_event, isPlaying) => {
+  applyGameplayFrameRate(Boolean(isPlaying));
 });
 
 function registerUpdaterHandlers() {
