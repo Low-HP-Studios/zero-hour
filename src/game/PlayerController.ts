@@ -57,6 +57,8 @@ export type PlayerControllerApi = {
   getYaw: () => number;
   getAimYaw: () => number;
   getBodyYaw: () => number;
+  getHeadYawOffset: () => number;
+  getLeanValue: () => number;
   getPlanarSpeed: () => number;
   getMoveInput: () => THREE.Vector2;
   isFirstPerson: () => boolean;
@@ -108,7 +110,6 @@ const FIRST_PERSON_CAMERA_FORWARD_OFFSET = 0.06;
 const RIFLE_ADS_FOV = 58;
 const SNIPER_ADS_FOV = 26;
 const VIEW_MODE_TRANSITION_SPEED = 10;
-const SHOULDER_SWAP_TRANSITION_SPEED = 12;
 const CROUCH_TRANSITION_SPEED = 14;
 const BODY_YAW_DAMP = 14;
 const RUN_BODY_YAW_DAMP = 24;
@@ -116,7 +117,12 @@ const RUN_TRANSITION_BODY_YAW_DAMP = 16;
 const ADS_BODY_YAW_DAMP = 22;
 const SHOOT_BODY_YAW_DAMP = 34;
 const SHOOT_ALIGN_WINDOW_MS = 180;
+const HEAD_TURN_DEAD_ZONE = THREE.MathUtils.degToRad(45);
 const MAX_FREE_LOOK_YAW_OFFSET = THREE.MathUtils.degToRad(120);
+const FORWARD_DIAGONAL_BODY_YAW_THRESHOLD = 0.35;
+const LEAN_TRANSITION_SPEED = 10;
+const LEAN_CAMERA_OFFSET_X = 0.54;
+const LEAN_CAMERA_TILT = THREE.MathUtils.degToRad(14.4);
 // Hide the character early on FPP enter and show it later on FPP exit to reduce camera/model popping.
 const FPP_ENTER_VISUAL_THRESHOLD = 0.35;
 const FPP_EXIT_VISUAL_THRESHOLD = 0.75;
@@ -171,6 +177,7 @@ export function usePlayerController({
   const shootAlignUntilRef = useRef(0);
   const runFacingPhaseRef = useRef<RunFacingPhase>("off");
   const runFacingYawRef = useRef(0);
+  const headYawOffsetRef = useRef(0);
   const targetPitchRef = useRef(0);
   const pendingMouseRef = useRef(new THREE.Vector2(0, 0));
   const recoilPitchRef = useRef(0);
@@ -182,8 +189,8 @@ export function usePlayerController({
   const viewModeLerpRef = useRef(0);
   const crouchModeRef = useRef<CrouchMode>(crouchMode);
   const crouchHoldLatchRef = useRef(false);
-  const shoulderSideTargetRef = useRef(1);
-  const shoulderSideLerpRef = useRef(1);
+  const leanTargetRef = useRef(0);
+  const leanLerpRef = useRef(0);
   const tempLookAtRef = useRef(new THREE.Vector3());
   const tempAimDirRef = useRef(new THREE.Vector3());
   const tempFirstPersonCameraPosRef = useRef(new THREE.Vector3());
@@ -261,6 +268,9 @@ export function usePlayerController({
       shootAlignUntilRef.current = 0;
       runFacingPhaseRef.current = "off";
       runFacingYawRef.current = bodyYawRef.current;
+      headYawOffsetRef.current = 0;
+      leanTargetRef.current = 0;
+      leanLerpRef.current = 0;
       if (triggerHeldRef.current) {
         triggerHeldRef.current = false;
         triggerCallbackRef.current(false);
@@ -309,12 +319,6 @@ export function usePlayerController({
       }
       if (event.code === bindings.toggleView && !event.repeat) {
         firstPersonRef.current = !firstPersonRef.current;
-      }
-      if (event.code === bindings.shoulderLeft && !event.repeat) {
-        shoulderSideTargetRef.current = -1;
-      }
-      if (event.code === bindings.shoulderRight && !event.repeat) {
-        shoulderSideTargetRef.current = 1;
       }
 
       if (event.code === crouchBinding && pointerLockedRef.current) {
@@ -429,6 +433,9 @@ export function usePlayerController({
         shootAlignUntilRef.current = 0;
         runFacingPhaseRef.current = "off";
         runFacingYawRef.current = bodyYawRef.current;
+        headYawOffsetRef.current = 0;
+        leanTargetRef.current = 0;
+        leanLerpRef.current = 0;
       }
     };
 
@@ -557,6 +564,7 @@ export function usePlayerController({
     if (fppLocked) {
       targetBodyYawRef.current = yawRef.current;
       bodyYawRef.current = yawRef.current;
+      headYawOffsetRef.current = 0;
     } else if (adsRef.current || shootingAlignActive) {
       targetBodyYawRef.current = yawRef.current;
       bodyYawRef.current = dampAngle(
@@ -565,15 +573,29 @@ export function usePlayerController({
         shootingAlignActive ? SHOOT_BODY_YAW_DAMP : ADS_BODY_YAW_DAMP,
         delta,
       );
+      headYawOffsetRef.current = 0;
     } else {
       const runFacingPhase = runFacingPhaseRef.current;
       const runFacingActive = runFacingPhase !== "off";
-      if (runFacingActive) {
+      const movingWithInput = controlsEnabled && hasDirectionalInput;
+      const forwardDiagonalMove = movingWithInput &&
+        localZ > FORWARD_DIAGONAL_BODY_YAW_THRESHOLD &&
+        Math.abs(localX) > FORWARD_DIAGONAL_BODY_YAW_THRESHOLD;
+      if (movingWithInput) {
+        targetBodyYawRef.current = forwardDiagonalMove
+          ? yawRef.current - Math.sign(localX) * HEAD_TURN_DEAD_ZONE
+          : yawRef.current;
+      } else if (runFacingActive) {
         targetBodyYawRef.current = runFacingYawRef.current;
-      } else if (controlsEnabled && hasDirectionalInput) {
-        targetBodyYawRef.current = Math.atan2(-desiredX, -desiredZ);
+        headYawOffsetRef.current = 0;
       } else {
-        targetBodyYawRef.current = bodyYawRef.current;
+        const rawOffset = normalizeAngle(yawRef.current - bodyYawRef.current);
+        if (Math.abs(rawOffset) <= HEAD_TURN_DEAD_ZONE) {
+          targetBodyYawRef.current = bodyYawRef.current;
+        } else {
+          targetBodyYawRef.current = yawRef.current -
+            Math.sign(rawOffset) * HEAD_TURN_DEAD_ZONE;
+        }
       }
       const aimBodyDelta = normalizeAngle(yawRef.current - targetBodyYawRef.current);
       if (Math.abs(aimBodyDelta) > MAX_FREE_LOOK_YAW_OFFSET) {
@@ -582,6 +604,8 @@ export function usePlayerController({
       }
       const bodyYawDamp = runFacingPhase === "running"
         ? RUN_BODY_YAW_DAMP
+        : movingWithInput
+        ? RUN_TRANSITION_BODY_YAW_DAMP
         : runFacingActive
         ? RUN_TRANSITION_BODY_YAW_DAMP
         : BODY_YAW_DAMP;
@@ -591,6 +615,21 @@ export function usePlayerController({
         bodyYawDamp,
         delta,
       );
+      if (movingWithInput) {
+        headYawOffsetRef.current = forwardDiagonalMove
+          ? THREE.MathUtils.clamp(
+            normalizeAngle(yawRef.current - bodyYawRef.current),
+            -HEAD_TURN_DEAD_ZONE,
+            HEAD_TURN_DEAD_ZONE,
+          )
+          : 0;
+      } else if (!runFacingActive) {
+        headYawOffsetRef.current = THREE.MathUtils.clamp(
+          normalizeAngle(yawRef.current - bodyYawRef.current),
+          -HEAD_TURN_DEAD_ZONE,
+          HEAD_TURN_DEAD_ZONE,
+        );
+      }
     }
 
     resolvedXZRef.current.set(positionRef.current.x, positionRef.current.z);
@@ -673,13 +712,22 @@ export function usePlayerController({
       delta,
     );
     const viewT = viewModeLerpRef.current;
-    shoulderSideLerpRef.current = THREE.MathUtils.damp(
-      shoulderSideLerpRef.current,
-      shoulderSideTargetRef.current,
-      SHOULDER_SWAP_TRANSITION_SPEED,
+    const peekLeftHeld = controlsEnabled &&
+      isBindingDown(keys, bindings.peekLeft);
+    const peekRightHeld = controlsEnabled &&
+      isBindingDown(keys, bindings.peekRight);
+    leanTargetRef.current = !sprinting && peekLeftHeld && !peekRightHeld
+      ? -1
+      : !sprinting && peekRightHeld && !peekLeftHeld
+      ? 1
+      : 0;
+    leanLerpRef.current = THREE.MathUtils.damp(
+      leanLerpRef.current,
+      leanTargetRef.current,
+      LEAN_TRANSITION_SPEED,
       delta,
     );
-    const shoulderSide = shoulderSideLerpRef.current;
+    const leanT = leanLerpRef.current;
 
     const currentYaw = yawRef.current + recoilYawRef.current;
     const currentPitch = pitchRef.current + recoilPitchRef.current;
@@ -705,9 +753,9 @@ export function usePlayerController({
     );
     fppCameraPos.addScaledVector(aimDir, FIRST_PERSON_CAMERA_FORWARD_OFFSET);
     if (sniperADS > 0) {
-      fppCameraPos.x += cosCurrentYaw * (0.045 * shoulderSide) * sniperADS;
+      fppCameraPos.x += cosCurrentYaw * 0.045 * sniperADS;
       fppCameraPos.y -= 0.02 * sniperADS;
-      fppCameraPos.z += -sinCurrentYaw * (0.045 * shoulderSide) * sniperADS;
+      fppCameraPos.z += -sinCurrentYaw * 0.045 * sniperADS;
     }
 
     const elevationAngle = clamp(
@@ -719,7 +767,7 @@ export function usePlayerController({
     const armLenAdsTarget = activeWeapon === "sniper" ? CAMERA_ARM_LENGTH_SNIPER_ADS : CAMERA_ARM_LENGTH_ADS;
     const shoulderAdsTarget = activeWeapon === "sniper" ? SHOULDER_OFFSET_SNIPER_ADS : SHOULDER_OFFSET_ADS;
     const armLen = THREE.MathUtils.lerp(CAMERA_ARM_LENGTH, armLenAdsTarget, adsT);
-    const shoulder = THREE.MathUtils.lerp(SHOULDER_OFFSET, shoulderAdsTarget, adsT) * shoulderSide;
+    const shoulder = THREE.MathUtils.lerp(SHOULDER_OFFSET, shoulderAdsTarget, adsT);
 
     const horizontalDist = armLen * Math.cos(elevationAngle);
     const verticalDist = armLen * Math.sin(elevationAngle);
@@ -735,6 +783,13 @@ export function usePlayerController({
       positionRef.current.y + LOOK_AT_HEIGHT + crouchLookHeightOffset + verticalDist - sniperADS * 0.08,
       positionRef.current.z + horizontalDist * backZ + shoulder * rightZ,
     );
+    if (Math.abs(leanT) > 0.001) {
+      const leanOffsetX = leanT * LEAN_CAMERA_OFFSET_X;
+      fppCameraPos.x += cosCurrentYaw * leanOffsetX;
+      fppCameraPos.z += -sinCurrentYaw * leanOffsetX;
+      tppCameraPos.x += cosCurrentYaw * leanOffsetX;
+      tppCameraPos.z += -sinCurrentYaw * leanOffsetX;
+    }
 
     if (cameraEnabledRef.current) {
       camera.position.copy(tppCameraPos).lerp(fppCameraPos, viewT);
@@ -761,6 +816,9 @@ export function usePlayerController({
       const lookAt = tempLookAtRef.current;
       lookAt.copy(camera.position).addScaledVector(aimDir, AIM_LOOK_DISTANCE);
       camera.lookAt(lookAt);
+      if (Math.abs(leanT) > 0.001 && viewT > 0.95) {
+        camera.rotateZ(-leanT * LEAN_CAMERA_TILT);
+      }
     } else if ("isPerspectiveCamera" in camera && camera.isPerspectiveCamera) {
       const perspectiveCamera = camera as THREE.PerspectiveCamera;
       const nextFov = THREE.MathUtils.damp(
@@ -819,6 +877,8 @@ export function usePlayerController({
     getYaw: () => yawRef.current,
     getAimYaw: () => yawRef.current,
     getBodyYaw: () => bodyYawRef.current,
+    getHeadYawOffset: () => headYawOffsetRef.current,
+    getLeanValue: () => leanLerpRef.current,
     getPlanarSpeed: () => planarSpeedRef.current,
     getMoveInput: () => moveInputRef.current,
     isFirstPerson: () =>
@@ -896,8 +956,9 @@ export function usePlayerController({
       crouchHoldLatchRef.current = false;
       firstPersonRef.current = false;
       viewModeLerpRef.current = 0;
-      shoulderSideTargetRef.current = 1;
-      shoulderSideLerpRef.current = 1;
+      headYawOffsetRef.current = 0;
+      leanTargetRef.current = 0;
+      leanLerpRef.current = 0;
       sprintPressedRef.current = false;
       walkPressedRef.current = false;
       movementTierRef.current = "jog";

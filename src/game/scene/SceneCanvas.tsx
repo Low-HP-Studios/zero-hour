@@ -162,13 +162,19 @@ function SceneFramePacer({
 
   useEffect(() => {
     if (!lobbyCapEnabled) return;
-    advance(performance.now());
-    const intervalId = window.setInterval(() => {
-      advance(performance.now());
-    }, LOBBY_FRAME_INTERVAL_MS);
+    let rafId: number;
+    let lastTime = 0;
+    const loop = (time: number) => {
+      if (time - lastTime >= LOBBY_FRAME_INTERVAL_MS) {
+        lastTime = time - ((time - lastTime) % LOBBY_FRAME_INTERVAL_MS);
+        advance(time);
+      }
+      rafId = window.requestAnimationFrame(loop);
+    };
+    rafId = window.requestAnimationFrame(loop);
 
     return () => {
-      window.clearInterval(intervalId);
+      window.cancelAnimationFrame(rafId);
     };
   }, [advance, lobbyCapEnabled]);
 
@@ -235,7 +241,7 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
   );
   const ambientIntensity = THREE.MathUtils.lerp(0.35, 0.5, worldTheme);
   const hemisphereIntensity = THREE.MathUtils.lerp(0.45, 0.95, worldTheme);
-  const sunIntensity = THREE.MathUtils.lerp(0.18, 1.95, worldTheme);
+  const sunIntensity = THREE.MathUtils.lerp(0.18, 0.8, worldTheme);
   const fillIntensity = THREE.MathUtils.lerp(0.25, 0.6, worldTheme);
   const voidCharacterLightIntensity = THREE.MathUtils.lerp(3.0, 0.16, worldTheme);
 

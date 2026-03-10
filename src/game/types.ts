@@ -15,9 +15,9 @@ export type AimSensitivitySettings = {
 };
 
 export const DEFAULT_AIM_SENSITIVITY_SETTINGS: AimSensitivitySettings = {
-  look: 0.73,
-  rifleAds: 0.56,
-  sniperAds: 0.8,
+  look: 0.6,
+  rifleAds: 0.42,
+  sniperAds: 0.83,
   vertical: 1,
 };
 
@@ -36,8 +36,8 @@ export type ControlBindings = {
   equipRifle: string;
   equipSniper: string;
   toggleView: string;
-  shoulderLeft: string;
-  shoulderRight: string;
+  peekLeft: string;
+  peekRight: string;
 };
 
 export const DEFAULT_CONTROL_BINDINGS: ControlBindings = {
@@ -55,8 +55,8 @@ export const DEFAULT_CONTROL_BINDINGS: ControlBindings = {
   equipRifle: "Digit1",
   equipSniper: "Digit2",
   toggleView: "KeyV",
-  shoulderLeft: "KeyQ",
-  shoulderRight: "KeyE",
+  peekLeft: "KeyQ",
+  peekRight: "KeyE",
 };
 
 export type HudOverlayToggles = {
@@ -183,14 +183,14 @@ export const DEFAULT_CROSSHAIR_SETTINGS: CrosshairSettings = {
   color: "white",
   centerDot: {
     enabled: true,
-    size: 2.5,
-    thickness: 2,
+    size: 3.5,
+    thickness: 3,
   },
   innerLines: {
     enabled: false,
-    length: 9,
-    thickness: 2,
-    gap: 6,
+    length: 6.5,
+    thickness: 1.5,
+    gap: 8.5,
   },
   outerLines: {
     enabled: false,
@@ -201,15 +201,15 @@ export const DEFAULT_CROSSHAIR_SETTINGS: CrosshairSettings = {
   outline: {
     enabled: true,
     thickness: 1,
-    opacity: 0.51,
+    opacity: 0.85,
   },
   dynamic: {
     enabled: true,
-    idleSpread: 0,
-    walkSpread: 1,
-    runSpread: 5.2,
-    shotKick: 1.4,
-    recoveryPerSecond: 12,
+    idleSpread: 1.1,
+    walkSpread: 2,
+    runSpread: 11.6,
+    shotKick: 0.8,
+    recoveryPerSecond: 9,
   },
   weaponModifiers: {
     rifleGapMultiplier: 1,
@@ -217,7 +217,7 @@ export const DEFAULT_CROSSHAIR_SETTINGS: CrosshairSettings = {
   },
   ads: {
     rifleDotSize: 5,
-    rifleDotColor: "white",
+    rifleDotColor: "red",
     sniperDotSize: 6,
     sniperDotColor: "red",
   },
@@ -226,40 +226,40 @@ export const DEFAULT_CROSSHAIR_SETTINGS: CrosshairSettings = {
 export const DEFAULT_WEAPON_RECOIL_PROFILES: WeaponRecoilProfiles = {
   rifle: {
     recoilPitchBase: 0.0001,
-    recoilPitchRamp: 0.00004,
-    recoilYawRange: 0.0006,
+    recoilPitchRamp: 0.00003,
+    recoilYawRange: 0.0003,
     recoilYawDrift: 0.000005,
-    moveSpreadBase: 0.02,
-    moveSpreadSprint: 0.02,
+    moveSpreadBase: 0.01,
+    moveSpreadSprint: 0.01,
   },
   sniper: {
-    recoilPitchBase: 0,
+    recoilPitchBase: 0.008,
     recoilPitchRamp: 0,
-    recoilYawRange: 0,
-    recoilYawDrift: 0,
-    moveSpreadBase: 0,
-    moveSpreadSprint: 0,
+    recoilYawRange: 0.01,
+    recoilYawDrift: 0.0002,
+    moveSpreadBase: 0.01,
+    moveSpreadSprint: 0.01,
   },
 };
 
 export const DEFAULT_MOVEMENT_SETTINGS: MovementProfileSettings = {
-  rifleWalkSpeedScale: 0.2,
-  rifleJogSpeedScale: 0.77,
-  rifleRunSpeedScale: 2.06,
-  rifleFirePrepSpeedScale: 0.71,
-  crouchSpeedScale: 0.87,
-  rifleRunStaminaMaxMs: 6900,
-  rifleRunStaminaDrainPerSec: 3.4,
-  rifleRunStaminaRegenPerSec: 3.45,
-  rifleRunStartMs: 540,
-  rifleRunStopMs: 540,
-  rifleRunForwardThreshold: 0.71,
-  rifleRunLateralThreshold: 0.69,
+  rifleWalkSpeedScale: 0.54,
+  rifleJogSpeedScale: 1.08,
+  rifleRunSpeedScale: 1.13,
+  rifleFirePrepSpeedScale: 0.37,
+  crouchSpeedScale: 0.52,
+  rifleRunStaminaMaxMs: 10000,
+  rifleRunStaminaDrainPerSec: 5,
+  rifleRunStaminaRegenPerSec: 5,
+  rifleRunStartMs: 800,
+  rifleRunStopMs: 800,
+  rifleRunForwardThreshold: 1,
+  rifleRunLateralThreshold: 1,
 };
 
 export type EnemyOutlineColor = "red" | "yellow" | "cyan" | "magenta";
 export type CrouchMode = "hold" | "toggle";
-export const DEFAULT_CROUCH_MODE: CrouchMode = "hold";
+export const DEFAULT_CROUCH_MODE: CrouchMode = "toggle";
 
 export type EnemyOutlineSettings = {
   enabled: boolean;

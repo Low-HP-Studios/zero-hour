@@ -65,7 +65,7 @@ export const DEFAULT_GAME_SETTINGS: GameSettings = {
   sensitivity: { ...DEFAULT_AIM_SENSITIVITY_SETTINGS },
   keybinds: { ...DEFAULT_CONTROL_BINDINGS },
   crouchMode: DEFAULT_CROUCH_MODE,
-  fov: 45,
+  fov: 50,
   weaponAlignment: { ...DEFAULT_WEAPON_ALIGNMENT },
   crosshair: cloneDefaultCrosshairSettings(),
   enemyOutline: cloneDefaultEnemyOutlineSettings(),
@@ -304,13 +304,19 @@ export function parsePersistedSettings(value: unknown): PersistedSettings {
           keybinds.toggleView,
           defaults.settings.keybinds.toggleView,
         ),
-        shoulderLeft: readString(
-          keybinds.shoulderLeft,
-          defaults.settings.keybinds.shoulderLeft,
+        peekLeft: readString(
+          keybinds.peekLeft,
+          readString(
+            keybinds.shoulderLeft,
+            defaults.settings.keybinds.peekLeft,
+          ),
         ),
-        shoulderRight: readString(
-          keybinds.shoulderRight,
-          defaults.settings.keybinds.shoulderRight,
+        peekRight: readString(
+          keybinds.peekRight,
+          readString(
+            keybinds.shoulderRight,
+            defaults.settings.keybinds.peekRight,
+          ),
         ),
       },
       weaponAlignment: {

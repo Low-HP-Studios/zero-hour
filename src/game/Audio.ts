@@ -112,9 +112,9 @@ const AUDIO_URL_CANDIDATES = {
 } as const;
 
 export const DEFAULT_AUDIO_VOLUMES: AudioVolumeSettings = {
-  master: 0.98,
-  gunshot: 0.41,
-  footsteps: 0.06,
+  master: 0.8,
+  gunshot: 0.85,
+  footsteps: 0.32,
   hit: 0.42,
 };
 

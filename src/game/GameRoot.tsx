@@ -958,6 +958,7 @@ export function GameRoot({
       `${formatKeyCode(b.crouch)} crouch (${settings.crouchMode})`,
       `${formatKeyCode(b.jump)} jump`,
       `${formatKeyCode(b.toggleView)} FPP/TPP`,
+      `${formatKeyCode(b.peekLeft)}/${formatKeyCode(b.peekRight)} lean`,
       `${formatKeyCode(b.reset)} reset targets`,
       "Mouse look / fire / ADS",
       "P perf panel",
@@ -3228,6 +3229,16 @@ export function GameRoot({
           <div className="fps-minimal" aria-label={`FPS ${liveFps.toFixed(0)}`}>
             {liveFps.toFixed(0)} FPS
           </div>
+          {gameplayHudVisible
+            ? (
+              <div
+                className="fps-minimal"
+                aria-label={`Version ${updaterStatus.currentVersion}`}
+              >
+                v{updaterStatus.currentVersion}
+              </div>
+            )
+            : null}
         </div>
       </div>
       <div

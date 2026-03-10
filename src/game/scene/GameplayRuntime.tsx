@@ -45,7 +45,6 @@ import {
   resolveFootstepPlaybackRate,
   useCharacterModel,
 } from "./CharacterModel";
-import { PATH_POINTS } from "./DesertProps";
 import { BloodImpactMarks, BulletImpactMarks } from "./ImpactMarks";
 import {
   computeWeaponMuzzleOffset,
@@ -62,10 +61,10 @@ import {
   MAX_BLOOD_SPLAT_MARKS,
   MAX_BULLET_IMPACT_MARKS,
   MIN_TRACER_DISTANCE,
+  PATH_POINTS,
   PLAYER_SPAWN_PITCH,
   PLAYER_SPAWN_POSITION,
   PLAYER_SPAWN_YAW,
-  RIFLE_FIRE_AIM_PREP_MS,
   TRACER_CAMERA_START_OFFSET,
   TRACER_DISTANCE,
   TRACER_MUZZLE_FORWARD_OFFSET,
@@ -135,6 +134,10 @@ const TRANSITION_BACK_DISTANCE = 2.11;
 const TRANSITION_BACK_HEIGHT = 1.97;
 const TRANSITION_SHOULDER = 0.5;
 const TRANSITION_LOOK_DISTANCE = 14;
+const HEAD_YAW_AXIS = new THREE.Vector3(0, 1, 0);
+const HEAD_YAW_QUAT = new THREE.Quaternion();
+const UPPER_TORSO_LEAN_QUAT = new THREE.Quaternion();
+const UPPER_TORSO_LEAN_ANGLE = THREE.MathUtils.degToRad(18);
 
 function resolveShotDamage(
   shot: WeaponShotEvent,
@@ -589,7 +592,6 @@ export const GameplayRuntime = forwardRef<
   const lastADSRef = useRef<boolean | null>(null);
   const lastFirstPersonRef = useRef<boolean | null>(null);
   const rifleFireIntentRef = useRef(false);
-  const rifleFireDelayUntilRef = useRef(0);
   const rifleRunStateRef = useRef<RifleRunVisualState>("idle");
   const rifleRunStateUntilRef = useRef(0);
   const rifleRunInputGraceUntilRef = useRef(0);
@@ -652,6 +654,7 @@ export const GameplayRuntime = forwardRef<
   const lastSniperRechamberProgressStepRef = useRef(-1);
   const characterWeaponAttachBoneRef = useRef<THREE.Bone | null>(null);
   const characterHeadBoneRef = useRef<THREE.Bone | null>(null);
+  const characterUpperTorsoBoneRef = useRef<THREE.Bone | null>(null);
   const tempCharacterWeaponAnchorWorldRef = useRef(new THREE.Vector3());
   const tempBoneWorldQuatRef = useRef(new THREE.Quaternion());
   const characterWeaponAnchorRef = useRef<{
@@ -721,11 +724,14 @@ export const GameplayRuntime = forwardRef<
     if (!characterModel) {
       characterWeaponAttachBoneRef.current = null;
       characterHeadBoneRef.current = null;
+      characterUpperTorsoBoneRef.current = null;
       return;
     }
 
     let rightHandBone: THREE.Bone | null = null;
     let headBone: THREE.Bone | null = null;
+    let upperTorsoBone: THREE.Bone | null = null;
+    let upperTorsoPriority = Number.POSITIVE_INFINITY;
     characterModel.traverse((child) => {
       if (!(child as THREE.Bone).isBone) return;
       const bone = child as THREE.Bone;
@@ -756,10 +762,22 @@ export const GameplayRuntime = forwardRef<
           headBone = bone;
         }
       }
+      const torsoPriority = normalized === "upper_chest" || normalized === "upperchest"
+        ? 0
+        : normalized === "chest"
+        ? 1
+        : normalized === "spine"
+        ? 2
+        : Number.POSITIVE_INFINITY;
+      if (torsoPriority < upperTorsoPriority) {
+        upperTorsoBone = bone;
+        upperTorsoPriority = torsoPriority;
+      }
     });
 
     characterWeaponAttachBoneRef.current = rightHandBone;
     characterHeadBoneRef.current = headBone;
+    characterUpperTorsoBoneRef.current = upperTorsoBone;
     if (!rightHandBone) {
       console.warn("[Character] Could not find right-hand bone for weapon attach");
     }
@@ -963,7 +981,6 @@ export const GameplayRuntime = forwardRef<
   const handleTriggerChange = useCallback((firing: boolean) => {
     rifleFireIntentRef.current = firing;
     if (!firing) {
-      rifleFireDelayUntilRef.current = 0;
       weaponRef.current.setTriggerHeld(false);
     }
   }, []);
@@ -1030,7 +1047,6 @@ export const GameplayRuntime = forwardRef<
     lastSniperRechamberActiveRef.current = false;
     lastSniperRechamberProgressStepRef.current = 100;
     rifleFireIntentRef.current = false;
-    rifleFireDelayUntilRef.current = 0;
     rifleRunStateRef.current = "idle";
     rifleRunStateUntilRef.current = 0;
     rifleRunInputGraceUntilRef.current = 0;
@@ -1502,21 +1518,7 @@ export const GameplayRuntime = forwardRef<
       nextAnimState = weaponEquipped ? "rifleAimHold" : "idle";
     }
 
-    if (rifleFireIntentRef.current) {
-      if (firePrepIntent) {
-        if (rifleFireDelayUntilRef.current === 0) {
-          rifleFireDelayUntilRef.current = nowMs + RIFLE_FIRE_AIM_PREP_MS;
-        }
-      } else {
-        rifleFireDelayUntilRef.current = 0;
-      }
-      const canFireNow = !firePrepIntent ||
-        nowMs >= rifleFireDelayUntilRef.current;
-      weapon.setTriggerHeld(canFireNow);
-    } else {
-      rifleFireDelayUntilRef.current = 0;
-      weapon.setTriggerHeld(false);
-    }
+    weapon.setTriggerHeld(rifleFireIntentRef.current);
 
     let movementProfileWalkScale = rifleWalkSpeedScale;
     let movementProfileJogScale = rifleJogSpeedScale;
@@ -1620,19 +1622,38 @@ export const GameplayRuntime = forwardRef<
       playerChar.updateMatrixWorld(true);
     }
 
-    const headBone = characterHeadBoneRef.current;
-    if (headBone) {
-      headBone.scale.setScalar(
-        presentation.phase === "playing" && firstPerson ? 0 : 1,
-      );
-    }
-
     if (characterModel) {
       const mixer = characterModel.userData.__mixer as
         | THREE.AnimationMixer
         | undefined;
       if (mixer) {
         mixer.update(clampedDelta);
+      }
+    }
+
+    const headBone = characterHeadBoneRef.current;
+    if (headBone) {
+      headBone.scale.setScalar(
+        presentation.phase === "playing" && firstPerson ? 0 : 1,
+      );
+      if (presentation.phase === "playing" && !firstPerson) {
+        const headYawOffset = controller.getHeadYawOffset();
+        if (Math.abs(headYawOffset) > 0.001) {
+          HEAD_YAW_QUAT.setFromAxisAngle(HEAD_YAW_AXIS, -headYawOffset);
+          headBone.quaternion.premultiply(HEAD_YAW_QUAT);
+        }
+      }
+    }
+
+    const upperTorsoBone = characterUpperTorsoBoneRef.current;
+    if (upperTorsoBone && presentation.phase === "playing") {
+      const leanValue = controller.getLeanValue();
+      if (Math.abs(leanValue) > 0.001) {
+        UPPER_TORSO_LEAN_QUAT.setFromAxisAngle(
+          Z_AXIS,
+          leanValue * UPPER_TORSO_LEAN_ANGLE,
+        );
+        upperTorsoBone.quaternion.premultiply(UPPER_TORSO_LEAN_QUAT);
       }
     }
 

@@ -57,6 +57,19 @@ export const PLAYER_SPAWN_PITCH = -0.05;
 
 export const Z_AXIS = new THREE.Vector3(0, 0, 1);
 
+export const PATH_POINTS: [number, number][] = [
+  [20, 60],
+  [15, 45],
+  [8, 30],
+  [0, 15],
+  [-5, 0],
+  [-8, -15],
+  [-3, -30],
+  [5, -45],
+  [12, -55],
+  [18, -65],
+];
+
 export const CHARACTER_MODEL_URL = "/assets/models/character/Trooper/tactical guy.fbx";
 export const CHARACTER_TARGET_HEIGHT = 1.65;
 export const CHARACTER_YAW_OFFSET = Math.PI;
@@ -251,7 +264,6 @@ export const RIFLE_HOLD_JOG_SPEED_SCALE = 0.82;
 export const RIFLE_HOLD_RUN_SPEED_SCALE = 1.42;
 export const RIFLE_HOLD_FIRE_PREP_SPEED_SCALE = 0.38;
 
-export const RIFLE_FIRE_AIM_PREP_MS = 140;
 export const RIFLE_RUN_STAMINA_MAX_MS = 2600;
 export const RIFLE_RUN_STAMINA_DRAIN_PER_SEC = 1;
 export const RIFLE_RUN_STAMINA_REGEN_PER_SEC = 0.55;
