@@ -15,7 +15,7 @@ export type AimSensitivitySettings = {
 };
 
 export const DEFAULT_AIM_SENSITIVITY_SETTINGS: AimSensitivitySettings = {
-  look: 0.6,
+  look: 0.54,
   rifleAds: 0.42,
   sniperAds: 0.83,
   vertical: 1,
@@ -170,11 +170,6 @@ export type MovementProfileSettings = {
   rifleRunSpeedScale: number;
   rifleFirePrepSpeedScale: number;
   crouchSpeedScale: number;
-  rifleRunStaminaMaxMs: number;
-  rifleRunStaminaDrainPerSec: number;
-  rifleRunStaminaRegenPerSec: number;
-  rifleRunStartMs: number;
-  rifleRunStopMs: number;
   rifleRunForwardThreshold: number;
   rifleRunLateralThreshold: number;
 };
@@ -204,12 +199,12 @@ export const DEFAULT_CROSSHAIR_SETTINGS: CrosshairSettings = {
     opacity: 0.85,
   },
   dynamic: {
-    enabled: true,
-    idleSpread: 1.1,
-    walkSpread: 2,
-    runSpread: 11.6,
-    shotKick: 0.8,
-    recoveryPerSecond: 9,
+    enabled: false,
+    idleSpread: 0.6,
+    walkSpread: 0.8,
+    runSpread: 1.1,
+    shotKick: 0.3,
+    recoveryPerSecond: 3.5,
   },
   weaponModifiers: {
     rifleGapMultiplier: 1,
@@ -225,12 +220,12 @@ export const DEFAULT_CROSSHAIR_SETTINGS: CrosshairSettings = {
 
 export const DEFAULT_WEAPON_RECOIL_PROFILES: WeaponRecoilProfiles = {
   rifle: {
-    recoilPitchBase: 0.0001,
-    recoilPitchRamp: 0.00003,
-    recoilYawRange: 0.0003,
-    recoilYawDrift: 0.000005,
-    moveSpreadBase: 0.01,
-    moveSpreadSprint: 0.01,
+    recoilPitchBase: 0.0065,
+    recoilPitchRamp: 0.00065,
+    recoilYawRange: 0.01,
+    recoilYawDrift: 0.001,
+    moveSpreadBase: 0.02,
+    moveSpreadSprint: 0.02,
   },
   sniper: {
     recoilPitchBase: 0.008,
@@ -243,16 +238,11 @@ export const DEFAULT_WEAPON_RECOIL_PROFILES: WeaponRecoilProfiles = {
 };
 
 export const DEFAULT_MOVEMENT_SETTINGS: MovementProfileSettings = {
-  rifleWalkSpeedScale: 0.54,
+  rifleWalkSpeedScale: 0.2,
   rifleJogSpeedScale: 1.08,
   rifleRunSpeedScale: 1.13,
   rifleFirePrepSpeedScale: 0.37,
   crouchSpeedScale: 0.52,
-  rifleRunStaminaMaxMs: 10000,
-  rifleRunStaminaDrainPerSec: 5,
-  rifleRunStaminaRegenPerSec: 5,
-  rifleRunStartMs: 800,
-  rifleRunStopMs: 800,
   rifleRunForwardThreshold: 1,
   rifleRunLateralThreshold: 1,
 };

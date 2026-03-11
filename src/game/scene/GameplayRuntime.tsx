@@ -10,22 +10,19 @@ import {
 } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
-import { sharedAudioManager, type AudioVolumeSettings } from "../Audio";
+import { type AudioVolumeSettings, sharedAudioManager } from "../Audio";
 import {
-  usePlayerController,
   type PlayerControllerApi,
   type RunFacingPhase,
+  usePlayerController,
 } from "../PlayerController";
+import { raycastTargets, type TargetRaycastHit } from "../Targets";
 import {
-  raycastTargets,
-  type TargetRaycastHit,
-} from "../Targets";
-import {
-  WeaponSystem,
   type SniperRechamberState,
   type WeaponKind,
   type WeaponShotEvent,
   type WeaponSwitchState,
+  WeaponSystem,
 } from "../Weapon";
 import type {
   CollisionRect,
@@ -35,10 +32,11 @@ import type {
   PlayerSnapshot,
   ScenePresentation,
   TargetState,
-  WeaponRecoilProfiles,
   WeaponAlignmentOffset,
+  WeaponRecoilProfiles,
   WorldBounds,
 } from "../types";
+import { isSprintInputEligible } from "../movement";
 import {
   normalizeBoneName,
   resolveFootstepIntervalSeconds,
@@ -48,16 +46,19 @@ import {
 import { BloodImpactMarks, BulletImpactMarks } from "./ImpactMarks";
 import {
   computeWeaponMuzzleOffset,
-  WeaponModelInstance,
   useWeaponModels,
+  WeaponModelInstance,
 } from "./WeaponModels";
 import {
   BLOOD_SPLAT_LIFETIME_MS,
+  type BloodSplatMark,
   BULLET_HIT_EPSILON,
   BULLET_IMPACT_CLEANUP_INTERVAL_MS,
   BULLET_IMPACT_LIFETIME_MS,
   BULLET_IMPACT_MARK_SURFACE_OFFSET,
+  type BulletImpactMark,
   CHARACTER_YAW_OFFSET,
+  type CharacterAnimState,
   MAX_BLOOD_SPLAT_MARKS,
   MAX_BULLET_IMPACT_MARKS,
   MIN_TRACER_DISTANCE,
@@ -65,15 +66,14 @@ import {
   PLAYER_SPAWN_PITCH,
   PLAYER_SPAWN_POSITION,
   PLAYER_SPAWN_YAW,
+  RIFLE_RUN_START_MS,
+  RIFLE_RUN_STOP_MS,
   TRACER_CAMERA_START_OFFSET,
   TRACER_DISTANCE,
   TRACER_MUZZLE_FORWARD_OFFSET,
   WEAPON_MODEL_TRANSFORMS,
-  Z_AXIS,
-  type BloodSplatMark,
-  type BulletImpactMark,
-  type CharacterAnimState,
   type WorldRaycastHit,
+  Z_AXIS,
 } from "./scene-constants";
 
 export type HitMarkerKind = "body" | "head" | "kill";
@@ -135,9 +135,14 @@ const TRANSITION_BACK_HEIGHT = 1.97;
 const TRANSITION_SHOULDER = 0.5;
 const TRANSITION_LOOK_DISTANCE = 14;
 const HEAD_YAW_AXIS = new THREE.Vector3(0, 1, 0);
+const X_AXIS = new THREE.Vector3(1, 0, 0);
 const HEAD_YAW_QUAT = new THREE.Quaternion();
+const HEAD_PITCH_QUAT = new THREE.Quaternion();
 const UPPER_TORSO_LEAN_QUAT = new THREE.Quaternion();
+const UPPER_TORSO_PITCH_QUAT = new THREE.Quaternion();
 const UPPER_TORSO_LEAN_ANGLE = THREE.MathUtils.degToRad(18);
+const CROUCH_AIM_HEAD_LIFT_ANGLE = THREE.MathUtils.degToRad(12);
+const CROUCH_AIM_UPPER_TORSO_LIFT_ANGLE = THREE.MathUtils.degToRad(16);
 
 function resolveShotDamage(
   shot: WeaponShotEvent,
@@ -174,6 +179,12 @@ function clamp01(value: number) {
   return Math.max(0, Math.min(1, value));
 }
 
+function resolveCrouchTransitionTargetPose(
+  state: Exclude<CrouchTransitionState, "idle">,
+): number {
+  return state === "enter" ? 1 : 0;
+}
+
 type RifleRunVisualState = "idle" | "start" | "running" | "stop";
 type UnarmedWalkVisualState = "idle" | "start" | "moving" | "stop";
 type CrouchTransitionState = "idle" | "enter" | "exit";
@@ -189,10 +200,18 @@ type SlideIntentHookState = {
 
 const RIFLE_HOLD_DIAGONAL_THRESHOLD = 0.35;
 const WALK_DIAGONAL_THRESHOLD = 0.35;
+const LOCOMOTION_VISUAL_INPUT_DAMP = 12;
+const LOCOMOTION_VISUAL_LATERAL_SWITCH_THRESHOLD = 0.42;
+const LOCOMOTION_VISUAL_NEUTRAL_THRESHOLD = 0.18;
 const UNARMED_WALK_START_MS = 220;
 const UNARMED_WALK_STOP_MS = 220;
-const CROUCH_TRANSITION_MS = 260;
-const RIFLE_CROUCH_TRANSITION_MS = 220;
+const CROUCH_TRANSITION_SPEED_MULTIPLIER = 1.2;
+const CROUCH_ENTER_TRANSITION_MS = 200;
+const CROUCH_ENTER_BLEND_SECONDS = 0.08;
+const CROUCH_TRANSITION_MS = Math.round(
+  260 / CROUCH_TRANSITION_SPEED_MULTIPLIER,
+);
+const CROUCH_SPRINT_RELEASE_POSE = 0.35;
 const RIFLE_RUN_INPUT_GRACE_MS = 120;
 const RIFLE_LOCOMOTION_SCALE_MIN = 0.9;
 const RIFLE_LOCOMOTION_SCALE_MAX = 1.2;
@@ -200,11 +219,20 @@ const RIFLE_LOCOMOTION_SCALE_MAX = 1.2;
 const PLAYER_WALK_SPEED = 5.3;
 const PLAYER_SPRINT_SPEED = 8.2;
 
-function resolveRifleWalkState(moveX: number, moveY: number): CharacterAnimState {
+function resolveRifleWalkState(
+  moveX: number,
+  moveY: number,
+): CharacterAnimState {
   const absX = Math.abs(moveX);
   const absY = Math.abs(moveY);
-  const movingDiagonally =
-    absX > RIFLE_HOLD_DIAGONAL_THRESHOLD && absY > RIFLE_HOLD_DIAGONAL_THRESHOLD;
+  const movingDiagonally = absX > RIFLE_HOLD_DIAGONAL_THRESHOLD &&
+    absY > RIFLE_HOLD_DIAGONAL_THRESHOLD;
+  const movingForwardDiagonally = moveY > RIFLE_HOLD_DIAGONAL_THRESHOLD &&
+    absX > RIFLE_HOLD_DIAGONAL_THRESHOLD;
+
+  if (movingForwardDiagonally) {
+    return "rifleWalk";
+  }
 
   if (movingDiagonally) {
     if (moveY >= 0) {
@@ -220,11 +248,40 @@ function resolveRifleWalkState(moveX: number, moveY: number): CharacterAnimState
   return moveX >= 0 ? "rifleWalkRight" : "rifleWalkLeft";
 }
 
-function resolveWalkState(moveX: number, moveY: number): CharacterAnimState {
+function resolveRifleAimWalkState(
+  moveX: number,
+  moveY: number,
+): CharacterAnimState {
   const absX = Math.abs(moveX);
   const absY = Math.abs(moveY);
-  const movingDiagonally =
-    absX > WALK_DIAGONAL_THRESHOLD && absY > WALK_DIAGONAL_THRESHOLD;
+
+  if (absY >= absX) {
+    return moveY >= 0 ? "rifleAimWalk" : "rifleAimWalkBack";
+  }
+
+  return moveX >= 0 ? "rifleAimWalkRight" : "rifleAimWalkLeft";
+}
+
+type ForwardDiagonalStateOption = {
+  useForwardDiagonalClip?: boolean;
+};
+
+function resolveWalkState(
+  moveX: number,
+  moveY: number,
+  options?: ForwardDiagonalStateOption,
+): CharacterAnimState {
+  const absX = Math.abs(moveX);
+  const absY = Math.abs(moveY);
+  const useForwardDiagonalClip = options?.useForwardDiagonalClip ?? true;
+  const movingDiagonally = absX > WALK_DIAGONAL_THRESHOLD &&
+    absY > WALK_DIAGONAL_THRESHOLD;
+  const movingForwardDiagonally = moveY > WALK_DIAGONAL_THRESHOLD &&
+    absX > WALK_DIAGONAL_THRESHOLD;
+
+  if (movingForwardDiagonally && !useForwardDiagonalClip) {
+    return "walk";
+  }
 
   if (movingDiagonally) {
     if (moveY >= 0) {
@@ -240,11 +297,20 @@ function resolveWalkState(moveX: number, moveY: number): CharacterAnimState {
   return moveX >= 0 ? "walkRight" : "walkLeft";
 }
 
-function resolveRifleJogState(moveX: number, moveY: number): CharacterAnimState {
+function resolveRifleJogState(
+  moveX: number,
+  moveY: number,
+): CharacterAnimState {
   const absX = Math.abs(moveX);
   const absY = Math.abs(moveY);
-  const movingDiagonally =
-    absX > RIFLE_HOLD_DIAGONAL_THRESHOLD && absY > RIFLE_HOLD_DIAGONAL_THRESHOLD;
+  const movingDiagonally = absX > RIFLE_HOLD_DIAGONAL_THRESHOLD &&
+    absY > RIFLE_HOLD_DIAGONAL_THRESHOLD;
+  const movingForwardDiagonally = moveY > RIFLE_HOLD_DIAGONAL_THRESHOLD &&
+    absX > RIFLE_HOLD_DIAGONAL_THRESHOLD;
+
+  if (movingForwardDiagonally) {
+    return "rifleJog";
+  }
 
   if (movingDiagonally) {
     if (moveY >= 0) {
@@ -267,11 +333,88 @@ function resolveCrouchState(moveX: number, moveY: number): CharacterAnimState {
   return moveX >= 0 ? "crouchRight" : "crouchLeft";
 }
 
+function updateVisualLocomotionInput(
+  current: THREE.Vector2,
+  movementActive: boolean,
+  moveX: number,
+  moveY: number,
+  delta: number,
+): THREE.Vector2 {
+  if (!movementActive) {
+    current.set(0, 0);
+    return current;
+  }
+
+  if (current.lengthSq() <= 0.0001) {
+    current.set(moveX, moveY);
+    return current;
+  }
+
+  current.x = THREE.MathUtils.damp(
+    current.x,
+    moveX,
+    LOCOMOTION_VISUAL_INPUT_DAMP,
+    delta,
+  );
+  current.y = THREE.MathUtils.damp(
+    current.y,
+    moveY,
+    LOCOMOTION_VISUAL_INPUT_DAMP,
+    delta,
+  );
+
+  if (current.lengthSq() > 1) {
+    current.normalize();
+  }
+
+  return current;
+}
+
+function stabilizeLateralTransition(
+  nextState: CharacterAnimState,
+  previousState: CharacterAnimState,
+  rawMoveX: number,
+  rawMoveY: number,
+  visualMoveX: number,
+  visualMoveY: number,
+  leftState: CharacterAnimState,
+  rightState: CharacterAnimState,
+): CharacterAnimState {
+  const previousWasLateral = previousState === leftState ||
+    previousState === rightState;
+  const rawPureLateral = Math.abs(rawMoveX) > 0.55 && Math.abs(rawMoveY) < 0.2;
+
+  if (!previousWasLateral || !rawPureLateral) {
+    return nextState;
+  }
+
+  const targetState = rawMoveX >= 0 ? rightState : leftState;
+  if (targetState === previousState) {
+    return nextState;
+  }
+
+  const visualCommittedToTarget =
+    Math.abs(visualMoveX) >= LOCOMOTION_VISUAL_LATERAL_SWITCH_THRESHOLD &&
+    Math.sign(visualMoveX) === Math.sign(rawMoveX);
+  const visualStaysNeutral =
+    Math.abs(visualMoveY) < LOCOMOTION_VISUAL_NEUTRAL_THRESHOLD;
+
+  if (!visualCommittedToTarget && visualStaysNeutral) {
+    return previousState;
+  }
+
+  return nextState;
+}
+
 function shouldUseRifleRunInput(
   movementActive: boolean,
   runModifierPressed: boolean,
+  moveX: number,
+  moveY: number,
 ): boolean {
-  return movementActive && runModifierPressed;
+  return movementActive &&
+    runModifierPressed &&
+    isSprintInputEligible(moveX, moveY);
 }
 
 function normalizeAngle(angleRadians: number): number {
@@ -597,9 +740,10 @@ export const GameplayRuntime = forwardRef<
   const rifleRunInputGraceUntilRef = useRef(0);
   const rifleRunHeadingYawRef = useRef(PLAYER_SPAWN_YAW);
   const crouchTransitionStateRef = useRef<CrouchTransitionState>("idle");
-  const crouchTransitionUntilRef = useRef(0);
+  const crouchTransitionStartedAtRef = useRef(0);
+  const crouchTransitionDurationRef = useRef(0);
   const crouchTransitionUseRifleRef = useRef(false);
-  const crouchTransitionQueuedRef = useRef<CrouchTransitionState>("idle");
+  const crouchTransitionPoseFromRef = useRef(0);
   const wasCrouchedRef = useRef(false);
   const slideIntentHookRef = useRef<SlideIntentHookState>({
     eligible: false,
@@ -610,11 +754,10 @@ export const GameplayRuntime = forwardRef<
     lastIntentMoveY: 0,
   });
   const movementSettingsRef = useRef<MovementProfileSettings>(movement);
-  const rifleRunStaminaRef = useRef(
-    Math.max(250, movement.rifleRunStaminaMaxMs),
-  );
+  const locomotionVisualInputRef = useRef(new THREE.Vector2());
   const unarmedWalkStateRef = useRef<UnarmedWalkVisualState>("idle");
   const unarmedWalkStateUntilRef = useRef(0);
+  const lastCharacterAnimStateRef = useRef<CharacterAnimState>("idle");
   const lastPlanarPositionRef = useRef(
     new THREE.Vector2(PLAYER_SPAWN_POSITION.x, PLAYER_SPAWN_POSITION.z),
   );
@@ -655,12 +798,16 @@ export const GameplayRuntime = forwardRef<
   const characterWeaponAttachBoneRef = useRef<THREE.Bone | null>(null);
   const characterHeadBoneRef = useRef<THREE.Bone | null>(null);
   const characterUpperTorsoBoneRef = useRef<THREE.Bone | null>(null);
+  const characterHeadBaseQuatRef = useRef<THREE.Quaternion | null>(null);
+  const characterUpperTorsoBaseQuatRef = useRef<THREE.Quaternion | null>(null);
   const tempCharacterWeaponAnchorWorldRef = useRef(new THREE.Vector3());
   const tempBoneWorldQuatRef = useRef(new THREE.Quaternion());
-  const characterWeaponAnchorRef = useRef<{
-    position: THREE.Vector3;
-    quaternion: THREE.Quaternion;
-  } | null>(null);
+  const characterWeaponAnchorRef = useRef<
+    {
+      position: THREE.Vector3;
+      quaternion: THREE.Quaternion;
+    } | null
+  >(null);
   const audioUpdateOptionsRef = useRef({
     stepIntervalSeconds: 0,
     filePlaybackRate: 1,
@@ -725,6 +872,8 @@ export const GameplayRuntime = forwardRef<
       characterWeaponAttachBoneRef.current = null;
       characterHeadBoneRef.current = null;
       characterUpperTorsoBoneRef.current = null;
+      characterHeadBaseQuatRef.current = null;
+      characterUpperTorsoBaseQuatRef.current = null;
       return;
     }
 
@@ -762,24 +911,42 @@ export const GameplayRuntime = forwardRef<
           headBone = bone;
         }
       }
-      const torsoPriority = normalized === "upper_chest" || normalized === "upperchest"
-        ? 0
-        : normalized === "chest"
-        ? 1
-        : normalized === "spine"
-        ? 2
-        : Number.POSITIVE_INFINITY;
+      const torsoPriority =
+        normalized === "upper_chest" || normalized === "upperchest"
+          ? 0
+          : normalized === "chest"
+          ? 1
+          : normalized === "spine"
+          ? 2
+          : Number.POSITIVE_INFINITY;
       if (torsoPriority < upperTorsoPriority) {
         upperTorsoBone = bone;
         upperTorsoPriority = torsoPriority;
       }
     });
 
-    characterWeaponAttachBoneRef.current = rightHandBone;
-    characterHeadBoneRef.current = headBone;
-    characterUpperTorsoBoneRef.current = upperTorsoBone;
-    if (!rightHandBone) {
-      console.warn("[Character] Could not find right-hand bone for weapon attach");
+    const resolvedRightHandBone = rightHandBone as THREE.Bone | null;
+    const resolvedHeadBone = headBone as THREE.Bone | null;
+    const resolvedUpperTorsoBone = upperTorsoBone as THREE.Bone | null;
+
+    characterWeaponAttachBoneRef.current = resolvedRightHandBone;
+    characterHeadBoneRef.current = resolvedHeadBone;
+    characterUpperTorsoBoneRef.current = resolvedUpperTorsoBone;
+    if (resolvedHeadBone) {
+      characterHeadBaseQuatRef.current = resolvedHeadBone.quaternion.clone();
+    } else {
+      characterHeadBaseQuatRef.current = null;
+    }
+    if (resolvedUpperTorsoBone) {
+      characterUpperTorsoBaseQuatRef.current =
+        resolvedUpperTorsoBone.quaternion.clone();
+    } else {
+      characterUpperTorsoBaseQuatRef.current = null;
+    }
+    if (!resolvedRightHandBone) {
+      console.warn(
+        "[Character] Could not find right-hand bone for weapon attach",
+      );
     }
   }, [characterModel]);
 
@@ -789,11 +956,6 @@ export const GameplayRuntime = forwardRef<
 
   useEffect(() => {
     movementSettingsRef.current = movement;
-    const nextStaminaMaxMs = Math.max(250, movement.rifleRunStaminaMaxMs);
-    rifleRunStaminaRef.current = Math.min(
-      rifleRunStaminaRef.current,
-      nextStaminaMaxMs,
-    );
   }, [movement]);
 
   useEffect(() => {
@@ -844,7 +1006,11 @@ export const GameplayRuntime = forwardRef<
   );
 
   const pushBloodSpray = useCallback(
-    (point: THREE.Vector3, normal: THREE.Vector3, hitType: "body" | "head" | "leg") => {
+    (
+      point: THREE.Vector3,
+      normal: THREE.Vector3,
+      hitType: "body" | "head" | "leg",
+    ) => {
       const safeNormal = tempImpactNormalRef.current;
       safeNormal.copy(normal);
       if (safeNormal.lengthSq() < 1e-6) {
@@ -867,8 +1033,16 @@ export const GameplayRuntime = forwardRef<
 
       const nowMs = performance.now();
       const splatCount = hitType === "head" ? 18 : hitType === "body" ? 10 : 6;
-      const spraySpeed = hitType === "head" ? 3.5 : hitType === "body" ? 2.2 : 1.4;
-      const spreadAngle = hitType === "head" ? 0.8 : hitType === "body" ? 0.6 : 0.4;
+      const spraySpeed = hitType === "head"
+        ? 3.5
+        : hitType === "body"
+        ? 2.2
+        : 1.4;
+      const spreadAngle = hitType === "head"
+        ? 0.8
+        : hitType === "body"
+        ? 0.6
+        : 0.4;
       const lifetimeMs = hitType === "head"
         ? BLOOD_SPLAT_LIFETIME_MS + 200
         : hitType === "body"
@@ -881,16 +1055,16 @@ export const GameplayRuntime = forwardRef<
         const coneSpread = Math.random() * spreadAngle;
         // Velocity: spray outward along the hit normal with randomized cone spread
         const speed = spraySpeed * (0.4 + Math.random() * 0.8);
-        const vx = safeNormal.x * speed
-          + tangent.x * Math.cos(angle) * coneSpread * speed
-          + bitangent.x * Math.sin(angle) * coneSpread * speed;
-        const vy = safeNormal.y * speed
-          + tangent.y * Math.cos(angle) * coneSpread * speed
-          + bitangent.y * Math.sin(angle) * coneSpread * speed
-          + Math.random() * 1.2; // slight upward bias
-        const vz = safeNormal.z * speed
-          + tangent.z * Math.cos(angle) * coneSpread * speed
-          + bitangent.z * Math.sin(angle) * coneSpread * speed;
+        const vx = safeNormal.x * speed +
+          tangent.x * Math.cos(angle) * coneSpread * speed +
+          bitangent.x * Math.sin(angle) * coneSpread * speed;
+        const vy = safeNormal.y * speed +
+          tangent.y * Math.cos(angle) * coneSpread * speed +
+          bitangent.y * Math.sin(angle) * coneSpread * speed +
+          Math.random() * 1.2; // slight upward bias
+        const vz = safeNormal.z * speed +
+          tangent.z * Math.cos(angle) * coneSpread * speed +
+          bitangent.z * Math.sin(angle) * coneSpread * speed;
 
         const quaternion = tempImpactQuaternionRef.current.set(
           Math.random() - 0.5,
@@ -906,7 +1080,8 @@ export const GameplayRuntime = forwardRef<
           position: [point.x, point.y, point.z],
           velocity: [vx, vy, vz],
           quaternion: [quaternion.x, quaternion.y, quaternion.z, quaternion.w],
-          radius: (hitType === "head" ? 0.055 : hitType === "body" ? 0.04 : 0.03) *
+          radius:
+            (hitType === "head" ? 0.055 : hitType === "body" ? 0.04 : 0.03) *
             (0.5 + Math.random() * 0.8),
           opacity: hitType === "head"
             ? 0.95 - Math.random() * 0.15
@@ -989,6 +1164,10 @@ export const GameplayRuntime = forwardRef<
     audioRef.current.ensureStarted();
   }, []);
 
+  const handleGetWeaponEquipped = useCallback(() => {
+    return weaponRef.current.isEquipped();
+  }, []);
+
   const handleGetActiveWeapon = useCallback(() => {
     return weaponRef.current.getActiveWeapon();
   }, []);
@@ -1022,6 +1201,7 @@ export const GameplayRuntime = forwardRef<
     onPlayerSnapshot: handlePlayerSnapshot,
     onTriggerChange: handleTriggerChange,
     onUserGesture: handleUserGesture,
+    getWeaponEquipped: handleGetWeaponEquipped,
     getActiveWeapon: handleGetActiveWeapon,
   });
 
@@ -1052,9 +1232,10 @@ export const GameplayRuntime = forwardRef<
     rifleRunInputGraceUntilRef.current = 0;
     rifleRunHeadingYawRef.current = PLAYER_SPAWN_YAW;
     crouchTransitionStateRef.current = "idle";
-    crouchTransitionUntilRef.current = 0;
+    crouchTransitionStartedAtRef.current = 0;
+    crouchTransitionDurationRef.current = 0;
     crouchTransitionUseRifleRef.current = false;
-    crouchTransitionQueuedRef.current = "idle";
+    crouchTransitionPoseFromRef.current = 0;
     wasCrouchedRef.current = false;
     slideIntentHookRef.current = {
       eligible: false,
@@ -1064,12 +1245,10 @@ export const GameplayRuntime = forwardRef<
       lastIntentMoveX: 0,
       lastIntentMoveY: 0,
     };
-    rifleRunStaminaRef.current = Math.max(
-      250,
-      movementSettingsRef.current.rifleRunStaminaMaxMs,
-    );
+    locomotionVisualInputRef.current.set(0, 0);
     unarmedWalkStateRef.current = "idle";
     unarmedWalkStateUntilRef.current = 0;
+    lastCharacterAnimStateRef.current = "idle";
     lastPlanarPositionRef.current.set(
       PLAYER_SPAWN_POSITION.x,
       PLAYER_SPAWN_POSITION.z,
@@ -1134,9 +1313,18 @@ export const GameplayRuntime = forwardRef<
     const weapon = weaponRef.current;
     const audio = audioRef.current;
     const movementSettings = movementSettingsRef.current;
-    const rifleWalkSpeedScale = Math.max(0.2, movementSettings.rifleWalkSpeedScale);
-    const rifleJogSpeedScale = Math.max(0.2, movementSettings.rifleJogSpeedScale);
-    const rifleRunSpeedScale = Math.max(0.2, movementSettings.rifleRunSpeedScale);
+    const rifleWalkSpeedScale = Math.max(
+      0.2,
+      movementSettings.rifleWalkSpeedScale,
+    );
+    const rifleJogSpeedScale = Math.max(
+      0.2,
+      movementSettings.rifleJogSpeedScale,
+    );
+    const rifleRunSpeedScale = Math.max(
+      0.2,
+      movementSettings.rifleRunSpeedScale,
+    );
     const rifleFirePrepSpeedScale = Math.max(
       0.1,
       movementSettings.rifleFirePrepSpeedScale,
@@ -1146,20 +1334,6 @@ export const GameplayRuntime = forwardRef<
       0.2,
       1.2,
     );
-    const rifleRunStaminaMaxMs = Math.max(
-      250,
-      movementSettings.rifleRunStaminaMaxMs,
-    );
-    const rifleRunStaminaDrainPerSec = Math.max(
-      0,
-      movementSettings.rifleRunStaminaDrainPerSec,
-    );
-    const rifleRunStaminaRegenPerSec = Math.max(
-      0,
-      movementSettings.rifleRunStaminaRegenPerSec,
-    );
-    const rifleRunStartMs = Math.max(0, movementSettings.rifleRunStartMs);
-    const rifleRunStopMs = Math.max(0, movementSettings.rifleRunStopMs);
     const rifleRunForwardThreshold = THREE.MathUtils.clamp(
       movementSettings.rifleRunForwardThreshold,
       0.05,
@@ -1173,7 +1347,7 @@ export const GameplayRuntime = forwardRef<
 
     if (
       nowMs - lastImpactCleanupAtRef.current >=
-      BULLET_IMPACT_CLEANUP_INTERVAL_MS
+        BULLET_IMPACT_CLEANUP_INTERVAL_MS
     ) {
       lastImpactCleanupAtRef.current = nowMs;
       setImpactMarks((previous) => {
@@ -1229,9 +1403,18 @@ export const GameplayRuntime = forwardRef<
     lastPlanarPosition.set(playerPosition.x, playerPosition.z);
     const moveX = moveInput.x;
     const moveY = moveInput.y;
-    const hasDirectionalInput =
-      Math.abs(moveX) > 0.05 || Math.abs(moveY) > 0.05;
+    const hasDirectionalInput = Math.abs(moveX) > 0.05 ||
+      Math.abs(moveY) > 0.05;
     const movementActive = moving && hasDirectionalInput;
+    const visualLocomotionInput = updateVisualLocomotionInput(
+      locomotionVisualInputRef.current,
+      movementActive,
+      moveX,
+      moveY,
+      clampedDelta,
+    );
+    const animMoveX = visualLocomotionInput.x;
+    const animMoveY = visualLocomotionInput.y;
     const isRifleEquipped = weaponEquipped && activeWeapon === "rifle";
     const previousRunState = rifleRunStateRef.current;
     const previousCrouched = wasCrouchedRef.current;
@@ -1239,8 +1422,7 @@ export const GameplayRuntime = forwardRef<
     const crouchExited = !crouched && previousCrouched;
     wasCrouchedRef.current = crouched;
     const slideIntent = slideIntentHookRef.current;
-    slideIntent.eligible =
-      isRifleEquipped &&
+    slideIntent.eligible = isRifleEquipped &&
       !adsActive &&
       movementActive &&
       controller.isGrounded() &&
@@ -1260,49 +1442,97 @@ export const GameplayRuntime = forwardRef<
     }
 
     let crouchTransitionState = crouchTransitionStateRef.current;
-    let crouchTransitionUntil = crouchTransitionUntilRef.current;
+    let crouchTransitionStartedAt = crouchTransitionStartedAtRef.current;
+    let crouchTransitionDuration = crouchTransitionDurationRef.current;
     let crouchTransitionUseRifle = crouchTransitionUseRifleRef.current;
-    let queuedCrouchTransition = crouchTransitionQueuedRef.current;
-    const startCrouchTransition = (nextState: CrouchTransitionState) => {
+    let crouchTransitionPoseFrom = crouchTransitionPoseFromRef.current;
+    let crouchTransitionSeekNormalized: number | undefined;
+    let currentCrouchPose = previousCrouched ? 1 : 0;
+
+    if (
+      crouchTransitionState !== "idle" &&
+      crouchTransitionDuration > 0
+    ) {
+      const targetPose = resolveCrouchTransitionTargetPose(
+        crouchTransitionState,
+      );
+      const progress = clamp01(
+        (nowMs - crouchTransitionStartedAt) / crouchTransitionDuration,
+      );
+      currentCrouchPose = THREE.MathUtils.lerp(
+        crouchTransitionPoseFrom,
+        targetPose,
+        progress,
+      );
+      if (progress >= 1) {
+        crouchTransitionState = "idle";
+        crouchTransitionStartedAt = 0;
+        crouchTransitionDuration = 0;
+        crouchTransitionPoseFrom = targetPose;
+        currentCrouchPose = targetPose;
+      }
+    }
+
+    const startCrouchTransition = (
+      nextState: Exclude<CrouchTransitionState, "idle">,
+      fromPose: number,
+    ) => {
+      const targetPose = resolveCrouchTransitionTargetPose(nextState);
+      const remainingDistance = Math.abs(targetPose - fromPose);
+      if (remainingDistance <= 0.001) {
+        crouchTransitionState = "idle";
+        crouchTransitionStartedAt = 0;
+        crouchTransitionDuration = 0;
+        crouchTransitionPoseFrom = targetPose;
+        currentCrouchPose = targetPose;
+        return;
+      }
       crouchTransitionState = nextState;
       crouchTransitionUseRifle = weaponEquipped;
-      crouchTransitionUntil = nowMs + (weaponEquipped
-        ? RIFLE_CROUCH_TRANSITION_MS
-        : CROUCH_TRANSITION_MS);
+      crouchTransitionStartedAt = nowMs;
+      crouchTransitionDuration = (
+        nextState === "enter"
+          ? CROUCH_ENTER_TRANSITION_MS
+          : CROUCH_TRANSITION_MS
+      ) * remainingDistance;
+      crouchTransitionPoseFrom = fromPose;
+      currentCrouchPose = fromPose;
+      crouchTransitionSeekNormalized = nextState === "enter"
+        ? fromPose
+        : 1 - fromPose;
     };
 
     if (crouchEntered || crouchExited) {
-      const requestedState: CrouchTransitionState = crouchEntered
-        ? "enter"
-        : "exit";
-      if (crouchTransitionState === "idle") {
-        startCrouchTransition(requestedState);
-      } else if (crouchTransitionState !== requestedState) {
-        queuedCrouchTransition = requestedState;
-      }
-    }
-    if (
-      crouchTransitionState !== "idle" &&
-      nowMs >= crouchTransitionUntil
-    ) {
-      if (queuedCrouchTransition !== "idle") {
-        startCrouchTransition(queuedCrouchTransition);
-        queuedCrouchTransition = "idle";
-      } else {
+      const requestedState: Exclude<CrouchTransitionState, "idle"> =
+        crouchEntered ? "enter" : "exit";
+      const requestedPose = resolveCrouchTransitionTargetPose(requestedState);
+      if (Math.abs(currentCrouchPose - requestedPose) <= 0.001) {
         crouchTransitionState = "idle";
-        crouchTransitionUntil = 0;
+        crouchTransitionStartedAt = 0;
+        crouchTransitionDuration = 0;
+        crouchTransitionPoseFrom = requestedPose;
+      } else if (
+        crouchTransitionState === "idle" ||
+        crouchTransitionState !== requestedState
+      ) {
+        startCrouchTransition(requestedState, currentCrouchPose);
       }
     }
     crouchTransitionStateRef.current = crouchTransitionState;
-    crouchTransitionUntilRef.current = crouchTransitionUntil;
+    crouchTransitionStartedAtRef.current = crouchTransitionStartedAt;
+    crouchTransitionDurationRef.current = crouchTransitionDuration;
     crouchTransitionUseRifleRef.current = crouchTransitionUseRifle;
-    crouchTransitionQueuedRef.current = queuedCrouchTransition;
+    crouchTransitionPoseFromRef.current = crouchTransitionPoseFrom;
 
     const firePrepIntent = isRifleEquipped &&
       !adsActive &&
       !crouched &&
       rifleFireIntentRef.current;
     const firePrepVisual = firePrepIntent && !movementActive;
+    const crouchAimCompositeActive = isRifleEquipped &&
+      rifleFireIntentRef.current &&
+      !adsActive &&
+      (crouched || crouchTransitionState !== "idle");
     const movementHeadingYaw = resolveMovementHeadingYaw(
       controller.getAimYaw(),
       moveX,
@@ -1320,11 +1550,6 @@ export const GameplayRuntime = forwardRef<
       rifleRunStateUntilRef.current = 0;
       rifleRunInputGraceUntilRef.current = 0;
       rifleRunHeadingYawRef.current = controller.getBodyYaw();
-      rifleRunStaminaRef.current = Math.min(
-        rifleRunStaminaMaxMs,
-        rifleRunStaminaRef.current + clampedDelta * 1000 *
-          rifleRunStaminaRegenPerSec,
-      );
       if (!isRifleEquipped && !crouched) {
         if (!movementActive) {
           if (
@@ -1366,6 +1591,8 @@ export const GameplayRuntime = forwardRef<
       const runInputActive = shouldUseRifleRunInput(
         movementActive,
         sprintPressed,
+        moveX,
+        moveY,
       ) && !firePrepIntent;
       if (runInputActive) {
         rifleRunInputGraceUntilRef.current = nowMs + RIFLE_RUN_INPUT_GRACE_MS;
@@ -1378,9 +1605,8 @@ export const GameplayRuntime = forwardRef<
             nowMs < rifleRunInputGraceUntilRef.current
           )
         );
-      const runAvailable = rifleRunStaminaRef.current > 0;
-      const runStartDurationMs = Math.max(80, rifleRunStartMs);
-      const runStopDurationMs = Math.max(80, rifleRunStopMs);
+      const runStartDurationMs = RIFLE_RUN_START_MS;
+      const runStopDurationMs = RIFLE_RUN_STOP_MS;
 
       if (!runInputAllowed) {
         if (
@@ -1401,8 +1627,8 @@ export const GameplayRuntime = forwardRef<
         nextRunState === "start" &&
         nowMs >= runStateUntil
       ) {
-        nextRunState = runAvailable ? "running" : "stop";
-        runStateUntil = runAvailable ? 0 : nowMs + runStopDurationMs;
+        nextRunState = "running";
+        runStateUntil = 0;
       } else if (
         nextRunState === "stop" &&
         nowMs >= runStateUntil &&
@@ -1415,24 +1641,6 @@ export const GameplayRuntime = forwardRef<
 
       if (nextRunState === "running" && movementActive) {
         rifleRunHeadingYawRef.current = movementHeadingYaw;
-      }
-
-      if (nextRunState === "running" || nextRunState === "start") {
-        rifleRunStaminaRef.current = Math.max(
-          0,
-          rifleRunStaminaRef.current - clampedDelta * 1000 *
-            rifleRunStaminaDrainPerSec,
-        );
-        if (rifleRunStaminaRef.current <= 0) {
-          nextRunState = "stop";
-          runStateUntil = nowMs + runStopDurationMs;
-        }
-      } else {
-        rifleRunStaminaRef.current = Math.min(
-          rifleRunStaminaMaxMs,
-          rifleRunStaminaRef.current + clampedDelta * 1000 *
-            rifleRunStaminaRegenPerSec,
-        );
       }
 
       if (nextRunState === "stop" && nowMs >= runStateUntil) {
@@ -1451,8 +1659,8 @@ export const GameplayRuntime = forwardRef<
     unarmedWalkStateRef.current = unarmedWalkState;
     unarmedWalkStateUntilRef.current = unarmedWalkUntil;
     const runFacingPhase: RunFacingPhase = runState === "start" ||
-      runState === "running" ||
-      runState === "stop"
+        runState === "running" ||
+        runState === "stop"
       ? runState
       : "off";
     if (runFacingPhase === "off") {
@@ -1461,20 +1669,41 @@ export const GameplayRuntime = forwardRef<
       controller.setRunFacing(runFacingPhase, rifleRunHeadingYawRef.current);
     }
 
+    const useUnarmedWalkLocomotion = !weaponEquipped &&
+      movementTier !== "run";
+
     let nextAnimState: CharacterAnimState = weaponEquipped
       ? "rifleIdle"
       : "idle";
+    let lowerBodyOverlayState: CharacterAnimState | null = null;
     if (crouchTransitionState === "enter") {
-      nextAnimState = crouchTransitionUseRifle
+      nextAnimState = crouchAimCompositeActive
+        ? "rifleAimHold"
+        : crouchTransitionUseRifle
         ? "rifleCrouchEnter"
         : "crouchEnter";
+      lowerBodyOverlayState = crouchAimCompositeActive ? "crouchEnter" : null;
     } else if (crouchTransitionState === "exit") {
-      nextAnimState = crouchTransitionUseRifle
+      nextAnimState = crouchAimCompositeActive
+        ? "rifleAimHold"
+        : crouchTransitionUseRifle
         ? "rifleCrouchExit"
         : "crouchExit";
+      lowerBodyOverlayState = crouchAimCompositeActive ? "crouchExit" : null;
     } else if (crouched) {
       if (weaponEquipped) {
-        nextAnimState = movementActive ? "rifleCrouchWalk" : "rifleCrouchIdle";
+        nextAnimState = crouchAimCompositeActive
+          ? (
+            movementActive
+              ? resolveRifleAimWalkState(animMoveX, animMoveY)
+              : "rifleAimHold"
+          )
+          : (movementActive ? "rifleCrouchWalk" : "rifleCrouchIdle");
+        lowerBodyOverlayState = crouchAimCompositeActive
+          ? (movementActive
+            ? resolveCrouchState(animMoveX, animMoveY)
+            : "crouchIdle")
+          : null;
       } else {
         nextAnimState = movementActive
           ? resolveCrouchState(moveX, moveY)
@@ -1489,8 +1718,22 @@ export const GameplayRuntime = forwardRef<
         } else if (unarmedWalkState === "stop") {
           nextAnimState = "walkStop";
         } else {
-          nextAnimState = resolveWalkState(moveX, moveY);
+          nextAnimState = stabilizeLateralTransition(
+            resolveWalkState(animMoveX, animMoveY, {
+              useForwardDiagonalClip: useUnarmedWalkLocomotion ||
+                movementTier === "walk",
+            }),
+            lastCharacterAnimStateRef.current,
+            moveX,
+            moveY,
+            animMoveX,
+            animMoveY,
+            "walkLeft",
+            "walkRight",
+          );
         }
+      } else if (isRifleEquipped && firePrepIntent) {
+        nextAnimState = resolveRifleAimWalkState(animMoveX, animMoveY);
       } else if (isRifleEquipped && !adsActive) {
         if (runState === "start") {
           nextAnimState = "rifleRunStart";
@@ -1499,17 +1742,35 @@ export const GameplayRuntime = forwardRef<
         } else if (runState === "stop") {
           nextAnimState = "rifleRunStop";
         } else if (walkPressed) {
-          nextAnimState = resolveRifleWalkState(moveX, moveY);
+          nextAnimState = stabilizeLateralTransition(
+            resolveRifleWalkState(animMoveX, animMoveY),
+            lastCharacterAnimStateRef.current,
+            moveX,
+            moveY,
+            animMoveX,
+            animMoveY,
+            "rifleWalkLeft",
+            "rifleWalkRight",
+          );
         } else {
-          nextAnimState = resolveRifleJogState(moveX, moveY);
+          nextAnimState = stabilizeLateralTransition(
+            resolveRifleJogState(animMoveX, animMoveY),
+            lastCharacterAnimStateRef.current,
+            moveX,
+            moveY,
+            animMoveX,
+            animMoveY,
+            "rifleJogLeft",
+            "rifleJogRight",
+          );
         }
       } else if (movementTier === "run") {
         nextAnimState = "sprint";
-      } else if (Math.abs(moveY) >= Math.abs(moveX)) {
-        nextAnimState = moveY >= 0
+      } else if (Math.abs(animMoveY) >= Math.abs(animMoveX)) {
+        nextAnimState = animMoveY >= 0
           ? (weaponEquipped ? "rifleWalk" : "walk")
           : (weaponEquipped ? "rifleWalkBack" : "walkBack");
-      } else if (moveX >= 0) {
+      } else if (animMoveX >= 0) {
         nextAnimState = weaponEquipped ? "rifleWalkRight" : "walkRight";
       } else {
         nextAnimState = weaponEquipped ? "rifleWalkLeft" : "walkLeft";
@@ -1520,21 +1781,45 @@ export const GameplayRuntime = forwardRef<
 
     weapon.setTriggerHeld(rifleFireIntentRef.current);
 
-    let movementProfileWalkScale = rifleWalkSpeedScale;
-    let movementProfileJogScale = rifleJogSpeedScale;
-    let movementProfileRunScale = rifleRunSpeedScale;
-    let movementProfileAllowSprint = !adsActive;
-    if (crouched) {
-      movementProfileWalkScale = crouchSpeedScale;
-      movementProfileJogScale = crouchSpeedScale;
-      movementProfileRunScale = crouchSpeedScale;
-      movementProfileAllowSprint = false;
-    } else if (firePrepIntent) {
-      movementProfileWalkScale = rifleFirePrepSpeedScale;
-      movementProfileJogScale = rifleFirePrepSpeedScale;
-      movementProfileRunScale = rifleFirePrepSpeedScale;
-      movementProfileAllowSprint = false;
-    }
+    const crouchPose = crouchTransitionState !== "idle"
+      ? currentCrouchPose
+      : crouched
+      ? 1
+      : 0;
+    const crouchAimCompositePose = crouchAimCompositeActive ? crouchPose : 0;
+    const standingWalkScale = !weaponEquipped
+      ? 1
+      : firePrepIntent
+      ? rifleFirePrepSpeedScale
+      : rifleWalkSpeedScale;
+    const standingJogScale = !weaponEquipped
+      ? 1
+      : firePrepIntent
+      ? rifleFirePrepSpeedScale
+      : rifleJogSpeedScale;
+    const standingRunScale = !weaponEquipped
+      ? 1
+      : firePrepIntent
+      ? rifleFirePrepSpeedScale
+      : rifleRunSpeedScale;
+    const movementProfileWalkScale = THREE.MathUtils.lerp(
+      standingWalkScale,
+      crouchSpeedScale,
+      crouchPose,
+    );
+    const movementProfileJogScale = THREE.MathUtils.lerp(
+      standingJogScale,
+      crouchSpeedScale,
+      crouchPose,
+    );
+    const movementProfileRunScale = THREE.MathUtils.lerp(
+      standingRunScale,
+      crouchSpeedScale,
+      crouchPose,
+    );
+    const movementProfileAllowSprint = !adsActive &&
+      !firePrepIntent &&
+      crouchPose < CROUCH_SPRINT_RELEASE_POSE;
     controller.setMovementProfile({
       walkScale: movementProfileWalkScale,
       jogScale: movementProfileJogScale,
@@ -1553,7 +1838,7 @@ export const GameplayRuntime = forwardRef<
     const targetTierSpeed = runVisualState
       ? PLAYER_SPRINT_SPEED * movementProfileRunScale
       : PLAYER_WALK_SPEED * (
-        movementTier === "walk"
+        useUnarmedWalkLocomotion || movementTier === "walk"
           ? movementProfileWalkScale
           : movementProfileJogScale
       );
@@ -1564,18 +1849,60 @@ export const GameplayRuntime = forwardRef<
         RIFLE_LOCOMOTION_SCALE_MAX,
       )
       : 1;
+    const lowerBodyOverlayLocomotionScale = lowerBodyOverlayState &&
+        (
+          lowerBodyOverlayState.startsWith("crouch") ||
+          lowerBodyOverlayState.startsWith("rifleCrouch")
+        )
+      ? THREE.MathUtils.clamp(
+        controller.getPlanarSpeed() /
+          Math.max(0.01, PLAYER_WALK_SPEED * movementProfileWalkScale),
+        RIFLE_LOCOMOTION_SCALE_MIN,
+        RIFLE_LOCOMOTION_SCALE_MAX,
+      )
+      : 1;
+    const audioAnimState = lowerBodyOverlayState ?? nextAnimState;
 
     setCharacterAnim(nextAnimState, {
       locomotionScale: rifleLocomotionScale,
+      seekNormalizedTime: crouchTransitionSeekNormalized,
+      desiredDurationSeconds:
+        nextAnimState === "crouchEnter" || nextAnimState === "rifleCrouchEnter"
+          ? CROUCH_ENTER_TRANSITION_MS / 1000
+          : undefined,
+      fadeDurationSeconds:
+        nextAnimState === "crouchEnter" || nextAnimState === "rifleCrouchEnter"
+          ? CROUCH_ENTER_BLEND_SECONDS
+          : undefined,
+      lowerBodyState: lowerBodyOverlayState,
+      lowerBodyLocomotionScale: lowerBodyOverlayLocomotionScale,
+      lowerBodySeekNormalizedTime: crouchTransitionSeekNormalized,
+      lowerBodyDesiredDurationSeconds:
+        lowerBodyOverlayState === "crouchEnter"
+          ? CROUCH_ENTER_TRANSITION_MS / 1000
+          : undefined,
+      lowerBodyFadeDurationSeconds:
+        lowerBodyOverlayState === "crouchEnter"
+          ? CROUCH_ENTER_BLEND_SECONDS
+          : 0.12,
     });
+    lastCharacterAnimStateRef.current = nextAnimState;
     const audioOpts = audioUpdateOptionsRef.current;
     audioOpts.stepIntervalSeconds = resolveFootstepIntervalSeconds(
-      nextAnimState,
-      { locomotionScale: rifleLocomotionScale },
+      audioAnimState,
+      {
+        locomotionScale: lowerBodyOverlayState
+          ? lowerBodyOverlayLocomotionScale
+          : rifleLocomotionScale,
+      },
     );
     audioOpts.filePlaybackRate = resolveFootstepPlaybackRate(
-      nextAnimState,
-      { locomotionScale: rifleLocomotionScale },
+      audioAnimState,
+      {
+        locomotionScale: lowerBodyOverlayState
+          ? lowerBodyOverlayLocomotionScale
+          : rifleLocomotionScale,
+      },
     );
 
     const playerPos = controller.getPosition();
@@ -1623,11 +1950,35 @@ export const GameplayRuntime = forwardRef<
     }
 
     if (characterModel) {
+      const headBone = characterHeadBoneRef.current;
+      const headBaseQuat = characterHeadBaseQuatRef.current;
+      if (headBone && headBaseQuat) {
+        headBone.quaternion.copy(headBaseQuat);
+      }
+      const upperTorsoBone = characterUpperTorsoBoneRef.current;
+      const upperTorsoBaseQuat = characterUpperTorsoBaseQuatRef.current;
+      if (upperTorsoBone && upperTorsoBaseQuat) {
+        upperTorsoBone.quaternion.copy(upperTorsoBaseQuat);
+      }
       const mixer = characterModel.userData.__mixer as
         | THREE.AnimationMixer
         | undefined;
       if (mixer) {
         mixer.update(clampedDelta);
+      }
+      if (headBone) {
+        if (!characterHeadBaseQuatRef.current) {
+          characterHeadBaseQuatRef.current = headBone.quaternion.clone();
+        } else {
+          characterHeadBaseQuatRef.current.copy(headBone.quaternion);
+        }
+      }
+      if (upperTorsoBone) {
+        if (!characterUpperTorsoBaseQuatRef.current) {
+          characterUpperTorsoBaseQuatRef.current = upperTorsoBone.quaternion.clone();
+        } else {
+          characterUpperTorsoBaseQuatRef.current.copy(upperTorsoBone.quaternion);
+        }
       }
     }
 
@@ -1639,14 +1990,28 @@ export const GameplayRuntime = forwardRef<
       if (presentation.phase === "playing" && !firstPerson) {
         const headYawOffset = controller.getHeadYawOffset();
         if (Math.abs(headYawOffset) > 0.001) {
-          HEAD_YAW_QUAT.setFromAxisAngle(HEAD_YAW_AXIS, -headYawOffset);
+          HEAD_YAW_QUAT.setFromAxisAngle(HEAD_YAW_AXIS, headYawOffset);
           headBone.quaternion.premultiply(HEAD_YAW_QUAT);
+        }
+        if (crouchAimCompositePose > 0.001) {
+          HEAD_PITCH_QUAT.setFromAxisAngle(
+            X_AXIS,
+            -CROUCH_AIM_HEAD_LIFT_ANGLE * crouchAimCompositePose,
+          );
+          headBone.quaternion.premultiply(HEAD_PITCH_QUAT);
         }
       }
     }
 
     const upperTorsoBone = characterUpperTorsoBoneRef.current;
     if (upperTorsoBone && presentation.phase === "playing") {
+      if (crouchAimCompositePose > 0.001) {
+        UPPER_TORSO_PITCH_QUAT.setFromAxisAngle(
+          X_AXIS,
+          -CROUCH_AIM_UPPER_TORSO_LIFT_ANGLE * crouchAimCompositePose,
+        );
+        upperTorsoBone.quaternion.premultiply(UPPER_TORSO_PITCH_QUAT);
+      }
       const leanValue = controller.getLeanValue();
       if (Math.abs(leanValue) > 0.001) {
         UPPER_TORSO_LEAN_QUAT.setFromAxisAngle(
@@ -1747,8 +2112,7 @@ export const GameplayRuntime = forwardRef<
         tracerOrigin.copy(shot.origin);
       }
 
-      const cameraTargetVisible =
-        !!cameraTargetHit &&
+      const cameraTargetVisible = !!cameraTargetHit &&
         (!cameraWorldHit ||
           cameraTargetHit.distance <=
             cameraWorldHit.distance + BULLET_HIT_EPSILON);
@@ -1759,7 +2123,10 @@ export const GameplayRuntime = forwardRef<
       } else if (cameraWorldHit) {
         aimPoint.copy(cameraWorldHit.point);
       } else {
-        aimPoint.copy(shot.origin).addScaledVector(shot.direction, TRACER_DISTANCE);
+        aimPoint.copy(shot.origin).addScaledVector(
+          shot.direction,
+          TRACER_DISTANCE,
+        );
       }
 
       const fireDirection = tempFireDirectionRef.current;
@@ -1803,28 +2170,25 @@ export const GameplayRuntime = forwardRef<
         tempImpactNormalMatrixRef.current,
         maxFireDistance,
       );
-      const targetVisible =
-        !!targetHit &&
+      const targetVisible = !!targetHit &&
         (!worldHit ||
           targetHit.distance <= worldHit.distance + BULLET_HIT_EPSILON);
       const cameraTargetDistanceFromMuzzle = cameraTargetHit
         ? tracerOrigin.distanceTo(cameraTargetHit.point)
         : Number.POSITIVE_INFINITY;
-      const cameraTargetReachableFromMuzzle =
-        !!cameraTargetHit &&
+      const cameraTargetReachableFromMuzzle = !!cameraTargetHit &&
         (!worldHit ||
           cameraTargetDistanceFromMuzzle <=
             worldHit.distance + BULLET_HIT_EPSILON);
-      const preferCameraTarget =
-        !!cameraTargetHit &&
+      const preferCameraTarget = !!cameraTargetHit &&
         cameraTargetVisible &&
         cameraTargetReachableFromMuzzle &&
         (!targetHit || targetHit.id === cameraTargetHit.id);
       const resolvedTargetHit = preferCameraTarget
         ? {
-            ...cameraTargetHit,
-            distance: cameraTargetDistanceFromMuzzle,
-          }
+          ...cameraTargetHit,
+          distance: cameraTargetDistanceFromMuzzle,
+        }
         : targetVisible
         ? targetHit
         : null;
@@ -1851,9 +2215,21 @@ export const GameplayRuntime = forwardRef<
           );
         }
 
-        pushBloodSpray(resolvedTargetHit.point, resolvedTargetHit.normal, hitType);
-        targetHitCallbackRef.current(resolvedTargetHit.id, resolvedDamage, nowMs);
-        const markerKind: HitMarkerKind = killed ? "kill" : hitType === "head" ? "head" : "body";
+        pushBloodSpray(
+          resolvedTargetHit.point,
+          resolvedTargetHit.normal,
+          hitType,
+        );
+        targetHitCallbackRef.current(
+          resolvedTargetHit.id,
+          resolvedDamage,
+          nowMs,
+        );
+        const markerKind: HitMarkerKind = killed
+          ? "kill"
+          : hitType === "head"
+          ? "head"
+          : "body";
         hitMarkerCallbackRef.current(markerKind);
         if (killed) {
           audio.playKill();
@@ -2062,9 +2438,7 @@ export const GameplayRuntime = forwardRef<
         color="#8eb5ff"
       />
       <group ref={playerCharacterRef}>
-        {characterModel ? (
-          <primitive object={characterModel} />
-        ) : (
+        {characterModel ? <primitive object={characterModel} /> : (
           <>
             <mesh position={[0, 1.0, 0]} castShadow receiveShadow>
               <boxGeometry args={[0.4, 0.55, 0.25]} />
@@ -2120,94 +2494,98 @@ export const GameplayRuntime = forwardRef<
 
       <group ref={characterWeaponRef} visible={false}>
         <group ref={characterRifleModelRef}>
-          {weaponModels.rifle ? (
-            <WeaponModelInstance
-              source={weaponModels.rifle}
-              transform={WEAPON_MODEL_TRANSFORMS.character.rifle}
-            />
-          ) : (
-            <>
-              <mesh castShadow receiveShadow>
-                <boxGeometry args={[0.55, 0.09, 0.13]} />
-                <meshStandardMaterial
-                  color="#30363c"
-                  roughness={0.55}
-                  metalness={0.4}
-                />
-              </mesh>
-              <mesh
-                position={[0.16, -0.08, 0.01]}
-                rotation={[0.15, 0, -0.2]}
-              >
-                <boxGeometry args={[0.18, 0.17, 0.05]} />
-                <meshStandardMaterial
-                  color="#4d463f"
-                  roughness={0.85}
-                  metalness={0.1}
-                />
-              </mesh>
-              <mesh
-                position={[-0.24, 0.015, 0]}
-                rotation={[0, 0, Math.PI / 2]}
-              >
-                <cylinderGeometry args={[0.015, 0.015, 0.42, 8]} />
-                <meshStandardMaterial
-                  color="#20262b"
-                  roughness={0.4}
-                  metalness={0.6}
-                />
-              </mesh>
-            </>
-          )}
+          {weaponModels.rifle
+            ? (
+              <WeaponModelInstance
+                source={weaponModels.rifle}
+                transform={WEAPON_MODEL_TRANSFORMS.character.rifle}
+              />
+            )
+            : (
+              <>
+                <mesh castShadow receiveShadow>
+                  <boxGeometry args={[0.55, 0.09, 0.13]} />
+                  <meshStandardMaterial
+                    color="#30363c"
+                    roughness={0.55}
+                    metalness={0.4}
+                  />
+                </mesh>
+                <mesh
+                  position={[0.16, -0.08, 0.01]}
+                  rotation={[0.15, 0, -0.2]}
+                >
+                  <boxGeometry args={[0.18, 0.17, 0.05]} />
+                  <meshStandardMaterial
+                    color="#4d463f"
+                    roughness={0.85}
+                    metalness={0.1}
+                  />
+                </mesh>
+                <mesh
+                  position={[-0.24, 0.015, 0]}
+                  rotation={[0, 0, Math.PI / 2]}
+                >
+                  <cylinderGeometry args={[0.015, 0.015, 0.42, 8]} />
+                  <meshStandardMaterial
+                    color="#20262b"
+                    roughness={0.4}
+                    metalness={0.6}
+                  />
+                </mesh>
+              </>
+            )}
         </group>
         <group ref={characterSniperModelRef}>
-          {weaponModels.sniper ? (
-            <WeaponModelInstance
-              source={weaponModels.sniper}
-              transform={WEAPON_MODEL_TRANSFORMS.character.sniper}
-            />
-          ) : (
-            <>
-              <mesh castShadow receiveShadow>
-                <boxGeometry args={[0.72, 0.08, 0.11]} />
-                <meshStandardMaterial
-                  color="#2a3036"
-                  roughness={0.53}
-                  metalness={0.42}
-                />
-              </mesh>
-              <mesh
-                position={[0.2, -0.07, 0.01]}
-                rotation={[0.14, 0, -0.2]}
-              >
-                <boxGeometry args={[0.2, 0.16, 0.05]} />
-                <meshStandardMaterial
-                  color="#4a4139"
-                  roughness={0.86}
-                  metalness={0.08}
-                />
-              </mesh>
-              <mesh position={[-0.08, 0.07, 0]}>
-                <cylinderGeometry args={[0.03, 0.03, 0.28, 12]} />
-                <meshStandardMaterial
-                  color="#1d2227"
-                  roughness={0.42}
-                  metalness={0.58}
-                />
-              </mesh>
-              <mesh
-                position={[-0.34, 0.01, 0]}
-                rotation={[0, 0, Math.PI / 2]}
-              >
-                <cylinderGeometry args={[0.014, 0.014, 0.68, 10]} />
-                <meshStandardMaterial
-                  color="#1b2025"
-                  roughness={0.45}
-                  metalness={0.62}
-                />
-              </mesh>
-            </>
-          )}
+          {weaponModels.sniper
+            ? (
+              <WeaponModelInstance
+                source={weaponModels.sniper}
+                transform={WEAPON_MODEL_TRANSFORMS.character.sniper}
+              />
+            )
+            : (
+              <>
+                <mesh castShadow receiveShadow>
+                  <boxGeometry args={[0.72, 0.08, 0.11]} />
+                  <meshStandardMaterial
+                    color="#2a3036"
+                    roughness={0.53}
+                    metalness={0.42}
+                  />
+                </mesh>
+                <mesh
+                  position={[0.2, -0.07, 0.01]}
+                  rotation={[0.14, 0, -0.2]}
+                >
+                  <boxGeometry args={[0.2, 0.16, 0.05]} />
+                  <meshStandardMaterial
+                    color="#4a4139"
+                    roughness={0.86}
+                    metalness={0.08}
+                  />
+                </mesh>
+                <mesh position={[-0.08, 0.07, 0]}>
+                  <cylinderGeometry args={[0.03, 0.03, 0.28, 12]} />
+                  <meshStandardMaterial
+                    color="#1d2227"
+                    roughness={0.42}
+                    metalness={0.58}
+                  />
+                </mesh>
+                <mesh
+                  position={[-0.34, 0.01, 0]}
+                  rotation={[0, 0, Math.PI / 2]}
+                >
+                  <cylinderGeometry args={[0.014, 0.014, 0.68, 10]} />
+                  <meshStandardMaterial
+                    color="#1b2025"
+                    roughness={0.45}
+                    metalness={0.62}
+                  />
+                </mesh>
+              </>
+            )}
         </group>
         <mesh ref={characterMuzzleRef} position={[0, 0, 0]} visible={false}>
           <sphereGeometry args={[0.05, 8, 8]} />
@@ -2217,52 +2595,56 @@ export const GameplayRuntime = forwardRef<
 
       <group ref={worldGunRef} visible>
         <group ref={worldRifleModelRef}>
-          {weaponModels.rifle ? (
-            <WeaponModelInstance
-              source={weaponModels.rifle}
-              transform={WEAPON_MODEL_TRANSFORMS.world.rifle}
-            />
-          ) : (
-            <>
-              <mesh castShadow receiveShadow>
-                <boxGeometry args={[0.7, 0.12, 0.18]} />
-                <meshStandardMaterial
-                  color="#30363c"
-                  roughness={0.6}
-                  metalness={0.35}
-                />
-              </mesh>
-              <mesh position={[0.22, -0.08, 0]} castShadow receiveShadow>
-                <boxGeometry args={[0.22, 0.18, 0.06]} />
-                <meshStandardMaterial
-                  color="#514942"
-                  roughness={0.85}
-                  metalness={0.1}
-                />
-              </mesh>
-              <mesh
-                position={[-0.22, 0, 0]}
-                rotation={[0, 0, Math.PI / 2]}
-                castShadow
-                receiveShadow
-              >
-                <cylinderGeometry args={[0.02, 0.02, 0.55, 10]} />
-                <meshStandardMaterial
-                  color="#1e2328"
-                  roughness={0.5}
-                  metalness={0.55}
-                />
-              </mesh>
-            </>
-          )}
+          {weaponModels.rifle
+            ? (
+              <WeaponModelInstance
+                source={weaponModels.rifle}
+                transform={WEAPON_MODEL_TRANSFORMS.world.rifle}
+              />
+            )
+            : (
+              <>
+                <mesh castShadow receiveShadow>
+                  <boxGeometry args={[0.7, 0.12, 0.18]} />
+                  <meshStandardMaterial
+                    color="#30363c"
+                    roughness={0.6}
+                    metalness={0.35}
+                  />
+                </mesh>
+                <mesh position={[0.22, -0.08, 0]} castShadow receiveShadow>
+                  <boxGeometry args={[0.22, 0.18, 0.06]} />
+                  <meshStandardMaterial
+                    color="#514942"
+                    roughness={0.85}
+                    metalness={0.1}
+                  />
+                </mesh>
+                <mesh
+                  position={[-0.22, 0, 0]}
+                  rotation={[0, 0, Math.PI / 2]}
+                  castShadow
+                  receiveShadow
+                >
+                  <cylinderGeometry args={[0.02, 0.02, 0.55, 10]} />
+                  <meshStandardMaterial
+                    color="#1e2328"
+                    roughness={0.5}
+                    metalness={0.55}
+                  />
+                </mesh>
+              </>
+            )}
         </group>
         <group ref={worldSniperModelRef}>
-          {weaponModels.sniper ? (
-            <WeaponModelInstance
-              source={weaponModels.sniper}
-              transform={WEAPON_MODEL_TRANSFORMS.world.sniper}
-            />
-          ) : null}
+          {weaponModels.sniper
+            ? (
+              <WeaponModelInstance
+                source={weaponModels.sniper}
+                transform={WEAPON_MODEL_TRANSFORMS.world.sniper}
+              />
+            )
+            : null}
         </group>
       </group>
 

@@ -157,6 +157,17 @@ code {
   padding: 14px;
 }
 
+.ui-overlay.ui-overlay--practice {
+  padding: 0;
+}
+
+.ui-overlay.ui-overlay--practice .corner-top-left,
+.ui-overlay.ui-overlay--practice .corner-top-right,
+.ui-overlay.ui-overlay--practice .corner-bottom-left,
+.ui-overlay.ui-overlay--practice .corner-bottom-right-stack {
+  margin: 14px;
+}
+
 .panel {
   pointer-events: auto;
   border-radius: 16px;
@@ -542,44 +553,117 @@ code {
   opacity: 1;
 }
 
+/* ── Rifle ADS Overlay (PUBG-style red dot sight) ── */
 .rifle-ads-overlay {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  --ads-dot-size: 5;
+  --ads-dot-size: 7;
   --ads-dot-color: #ff374e;
   --ch-outline-enabled: 1;
   --ch-outline-thickness: 1;
   --ch-outline-opacity: 0.85;
+  --ads-emitter-core-size: clamp(2px, calc(var(--ads-dot-size) * 0.32px), 5px);
+  --ads-emitter-glow-size: clamp(10px, calc(var(--ads-dot-size) * 1.9px), 22px);
+  --rifle-scope-size: min(22vh, 22vw);
 }
 
-.rifle-ads-ring {
+.rifle-scope-housing {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: clamp(28px, 2.8vw, 44px);
-  height: clamp(28px, 2.8vw, 44px);
+  width: var(--rifle-scope-size);
+  height: var(--rifle-scope-size);
   transform: translate(-50%, -50%);
   border-radius: 50%;
-  border: 2px solid rgba(16, 18, 22, 0.85);
+  border: 3px solid rgba(8, 10, 14, 0.92);
   box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.18),
-    0 0 0 1px rgba(0, 0, 0, 0.62);
+    inset 0 0 0 2px rgba(40, 42, 48, 0.7),
+    inset 0 0 0 4px rgba(20, 22, 26, 0.85),
+    inset 0 0 40px rgba(0, 0, 0, 0.08),
+    0 0 0 1px rgba(0, 0, 0, 0.9),
+    0 0 0 3px rgba(30, 32, 38, 0.6),
+    0 0 0 5px rgba(0, 0, 0, 0.7);
+  overflow: hidden;
+}
+
+.rifle-scope-glass {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 40% 35%,
+    rgba(180, 210, 255, 0.04) 0%,
+    transparent 60%
+  );
+  box-shadow: inset 0 0 60px rgba(0, 0, 0, 0.05);
+}
+
+.rifle-scope-glass::after {
+  content: "";
+  position: absolute;
+  left: 26%;
+  top: 22%;
+  width: 42%;
+  height: 18%;
+  border-radius: 999px;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(255, 255, 255, 0.2) 0%,
+    rgba(255, 255, 255, 0.08) 45%,
+    transparent 78%
+  );
+  transform: rotate(-12deg);
+  opacity: 0.55;
 }
 
 .rifle-ads-dot {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: calc(var(--ads-dot-size) * 1px);
-  height: calc(var(--ads-dot-size) * 1px);
+  width: var(--ads-emitter-core-size);
+  height: var(--ads-emitter-core-size);
   transform: translate(-50%, -50%);
   border-radius: 50%;
-  background: var(--ads-dot-color);
+  background: color-mix(in srgb, var(--ads-dot-color) 82%, white 18%);
   box-shadow:
     0 0 0 calc(var(--ch-outline-enabled) * var(--ch-outline-thickness) * 1px)
       rgba(0, 0, 0, var(--ch-outline-opacity)),
-    0 0 10px color-mix(in srgb, var(--ads-dot-color) 66%, transparent);
+    0 0 2px 1px color-mix(in srgb, var(--ads-dot-color) 76%, transparent),
+    0 0 6px 1px color-mix(in srgb, var(--ads-dot-color) 30%, transparent);
+}
+
+.rifle-ads-dot::before,
+.rifle-ads-dot::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.rifle-ads-dot::before {
+  width: var(--ads-emitter-glow-size);
+  height: var(--ads-emitter-glow-size);
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at center,
+    color-mix(in srgb, var(--ads-dot-color) 54%, white 12%) 0%,
+    color-mix(in srgb, var(--ads-dot-color) 22%, transparent) 42%,
+    transparent 76%
+  );
+  filter: blur(0.4px);
+  opacity: 0.95;
+}
+
+.rifle-ads-dot::after {
+  width: calc(var(--ads-emitter-core-size) + 2px);
+  height: 2px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ads-dot-color) 64%, white 36%);
+  filter: blur(0.7px);
+  opacity: 0.38;
 }
 
 .sniper-scope-overlay {
@@ -1593,6 +1677,13 @@ code {
     grid-template-rows: auto auto 1fr auto auto;
     gap: 10px;
     padding: 10px;
+  }
+
+  .ui-overlay.ui-overlay--practice .corner-top-left,
+  .ui-overlay.ui-overlay--practice .corner-top-right,
+  .ui-overlay.ui-overlay--practice .corner-bottom-left,
+  .ui-overlay.ui-overlay--practice .corner-bottom-right-stack {
+    margin: 10px;
   }
 
   .corner-top-left,

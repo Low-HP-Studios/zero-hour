@@ -61,7 +61,7 @@ const CROUCH_MODES: CrouchMode[] = ["hold", "toggle"];
 export const DEFAULT_GAME_SETTINGS: GameSettings = {
   shadows: false,
   pixelRatioScale: 1,
-  showR3fPerf: true,
+  showR3fPerf: false,
   sensitivity: { ...DEFAULT_AIM_SENSITIVITY_SETTINGS },
   keybinds: { ...DEFAULT_CONTROL_BINDINGS },
   crouchMode: DEFAULT_CROUCH_MODE,
@@ -571,36 +571,6 @@ export function parsePersistedSettings(value: unknown): PersistedSettings {
           0.2,
           1.2,
           defaults.settings.movement.crouchSpeedScale,
-        ),
-        rifleRunStaminaMaxMs: readClampedNumber(
-          movement.rifleRunStaminaMaxMs,
-          400,
-          12000,
-          defaults.settings.movement.rifleRunStaminaMaxMs,
-        ),
-        rifleRunStaminaDrainPerSec: readClampedNumber(
-          movement.rifleRunStaminaDrainPerSec,
-          0.05,
-          12,
-          defaults.settings.movement.rifleRunStaminaDrainPerSec,
-        ),
-        rifleRunStaminaRegenPerSec: readClampedNumber(
-          movement.rifleRunStaminaRegenPerSec,
-          0,
-          12,
-          defaults.settings.movement.rifleRunStaminaRegenPerSec,
-        ),
-        rifleRunStartMs: readClampedNumber(
-          movement.rifleRunStartMs,
-          60,
-          2200,
-          defaults.settings.movement.rifleRunStartMs,
-        ),
-        rifleRunStopMs: readClampedNumber(
-          movement.rifleRunStopMs,
-          60,
-          2200,
-          defaults.settings.movement.rifleRunStopMs,
         ),
         rifleRunForwardThreshold: readClampedNumber(
           movement.rifleRunForwardThreshold,
