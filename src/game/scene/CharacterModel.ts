@@ -25,9 +25,13 @@ import {
   RIFLE_HOLD_WALK_TIME_SCALE,
   SPRINT_ANIM_TIME_SCALE,
   WALK_ANIM_TIME_SCALE,
-  BASE_FOOTSTEP_INTERVAL_SECONDS,
   type CharacterAnimState,
 } from "./scene-constants";
+
+export type CharacterFootstepSample = {
+  state: CharacterAnimState;
+  normalizedTime: number;
+};
 
 export type CharacterModelResult = {
   model: THREE.Group | null;
@@ -36,6 +40,7 @@ export type CharacterModelResult = {
     state: CharacterAnimState,
     options?: CharacterAnimPlaybackOptions,
   ) => void;
+  getFootstepSample: () => CharacterFootstepSample | null;
 };
 
 export type CharacterAnimPlaybackOptions = {
@@ -55,13 +60,35 @@ export type CharacterAnimPlaybackOptions = {
   upperBodyFadeDurationSeconds?: number;
 };
 
-function isRifleLocomotionState(state: CharacterAnimState): boolean {
+function isUnarmedSharedLocomotionState(state: CharacterAnimState): boolean {
+  return state === "walk" ||
+    state === "walkBack" ||
+    state === "walkLeft" ||
+    state === "walkRight" ||
+    state === "walkForwardLeft" ||
+    state === "walkForwardRight" ||
+    state === "walkBackwardLeft" ||
+    state === "walkBackwardRight";
+}
+
+function isScaledLocomotionState(state: CharacterAnimState): boolean {
   return state.startsWith("rifleWalk") ||
     state.startsWith("rifleAimWalk") ||
     state.startsWith("rifleJog") ||
+    isUnarmedSharedLocomotionState(state) ||
     state === "rifleRun" ||
     state === "rifleRunStart" ||
     state === "rifleRunStop";
+}
+
+function isFootstepLocomotionState(state: CharacterAnimState): boolean {
+  return state === "sprint" ||
+    state === "crouchForward" ||
+    state === "crouchBack" ||
+    state === "crouchLeft" ||
+    state === "crouchRight" ||
+    state === "rifleCrouchWalk" ||
+    isScaledLocomotionState(state);
 }
 
 function resolveCharacterAnimTimeScale(
@@ -112,15 +139,7 @@ function resolveCharacterAnimTimeScale(
   } else if (state === "rifleRun") {
     baseScale = RIFLE_HOLD_RUN_TIME_SCALE;
   }
-  return isRifleLocomotionState(state) ? baseScale * locomotionScale : baseScale;
-}
-
-export function resolveFootstepIntervalSeconds(
-  state: CharacterAnimState,
-  options?: CharacterAnimPlaybackOptions,
-): number {
-  const animTimeScale = resolveCharacterAnimTimeScale(state, options);
-  return BASE_FOOTSTEP_INTERVAL_SECONDS / Math.max(0.1, animTimeScale);
+  return isScaledLocomotionState(state) ? baseScale * locomotionScale : baseScale;
 }
 
 export function resolveFootstepPlaybackRate(
@@ -188,7 +207,7 @@ export function resolveFootstepPlaybackRate(
   ) {
     baseRate = 1.12;
   }
-  return isRifleLocomotionState(state) ? baseRate * locomotionScale : baseRate;
+  return isScaledLocomotionState(state) ? baseRate * locomotionScale : baseRate;
 }
 
 export function normalizeBoneName(name: string): string {
@@ -470,6 +489,9 @@ export function useCharacterModel(): CharacterModelResult {
   const currentBaseActionRef = useRef<THREE.AnimationAction | null>(null);
   const currentLowerBodyActionRef = useRef<THREE.AnimationAction | null>(null);
   const currentUpperBodyActionRef = useRef<THREE.AnimationAction | null>(null);
+  const currentBaseStateRef = useRef<CharacterAnimState | null>(null);
+  const currentLowerBodyStateRef = useRef<CharacterAnimState | null>(null);
+  const currentUpperBodyStateRef = useRef<CharacterAnimState | null>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -567,6 +589,7 @@ export function useCharacterModel(): CharacterModelResult {
         if (idleAction) {
           idleAction.play();
           currentBaseActionRef.current = idleAction;
+          currentBaseStateRef.current = "idle";
         }
 
         setModel(clone);
@@ -596,6 +619,7 @@ export function useCharacterModel(): CharacterModelResult {
     const fadeDuration = Math.max(0, options?.fadeDurationSeconds ?? 0.25);
     const playLayer = (
       currentActionRef: MutableRefObject<THREE.AnimationAction | null>,
+      currentStateRef: MutableRefObject<CharacterAnimState | null>,
       target: THREE.AnimationAction | null,
       targetState: CharacterAnimState | null,
       layerOptions: {
@@ -611,6 +635,7 @@ export function useCharacterModel(): CharacterModelResult {
           currentAction.fadeOut(layerOptions.fadeDurationSeconds);
           currentActionRef.current = null;
         }
+        currentStateRef.current = null;
         return;
       }
 
@@ -646,6 +671,7 @@ export function useCharacterModel(): CharacterModelResult {
       }
 
       currentActionRef.current = target;
+      currentStateRef.current = targetState;
     };
 
     const lowerOverlayState = options?.lowerBodyState ?? null;
@@ -656,7 +682,7 @@ export function useCharacterModel(): CharacterModelResult {
         null
       : fullActionsRef.current.get(state) ?? null;
 
-    playLayer(currentBaseActionRef, baseAction, state, {
+    playLayer(currentBaseActionRef, currentBaseStateRef, baseAction, state, {
       desiredDurationSeconds: options?.desiredDurationSeconds,
       fadeDurationSeconds: fadeDuration,
       locomotionScale: options?.locomotionScale,
@@ -665,6 +691,7 @@ export function useCharacterModel(): CharacterModelResult {
 
     playLayer(
       currentLowerBodyActionRef,
+      currentLowerBodyStateRef,
       lowerOverlayState
         ? lowerBodyActionsRef.current.get(lowerOverlayState) ?? null
         : null,
@@ -682,6 +709,7 @@ export function useCharacterModel(): CharacterModelResult {
 
     playLayer(
       currentUpperBodyActionRef,
+      currentUpperBodyStateRef,
       upperOverlayState
         ? upperBodyActionsRef.current.get(upperOverlayState) ?? null
         : null,
@@ -698,5 +726,30 @@ export function useCharacterModel(): CharacterModelResult {
     );
   }, []);
 
-  return { model, ready, setAnimState };
+  const getFootstepSample = useCallback((): CharacterFootstepSample | null => {
+    const sampleFrom = (
+      action: THREE.AnimationAction | null,
+      state: CharacterAnimState | null,
+    ): CharacterFootstepSample | null => {
+      if (!action || !state || !isFootstepLocomotionState(state)) {
+        return null;
+      }
+      const duration = action.getClip().duration;
+      if (!(duration > 0)) {
+        return null;
+      }
+      return {
+        state,
+        normalizedTime: THREE.MathUtils.euclideanModulo(action.time, duration) /
+          duration,
+      };
+    };
+
+    return sampleFrom(
+      currentLowerBodyActionRef.current,
+      currentLowerBodyStateRef.current,
+    ) ?? sampleFrom(currentBaseActionRef.current, currentBaseStateRef.current);
+  }, []);
+
+  return { model, ready, setAnimState, getFootstepSample };
 }

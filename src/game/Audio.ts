@@ -47,18 +47,7 @@ const AUDIO_BUFFER_KEYS: AudioBufferKey[] = [
 
 const AUDIO_URL_CANDIDATES = {
   rifleShot: [
-    "/assets/audio/rifle-shoot.mp3",
-    "/assets/audio/rifle-shoot.ogg",
-    "/assets/audio/rifle-shoot.wav",
-    "/assets/audio/gunshot.mp3",
-    "/assets/audio/gunshot.ogg",
-    "/assets/audio/gunshot.wav",
-    "/audio/rifle-shoot.mp3",
-    "/audio/rifle-shoot.ogg",
-    "/audio/rifle-shoot.wav",
-    "/audio/gunshot.mp3",
-    "/audio/gunshot.ogg",
-    "/audio/gunshot.wav",
+    "/assets/audio/improved/gun-sound.wav",
   ],
   sniperShot: [
     "/assets/audio/sniper-shooting.mp3",
@@ -80,26 +69,10 @@ const AUDIO_URL_CANDIDATES = {
     "/audio/sniper-shelling.wav",
   ],
   footstep: [
-    "/assets/audio/dirt-steps.ogg",
-    "/assets/audio/dirt-steps.mp3",
-    "/assets/audio/dirt-steps.wav",
-    "/assets/audio/footstep.mp3",
-    "/assets/audio/footstep.ogg",
     "/assets/audio/footstep.wav",
-    "/audio/dirt-steps.ogg",
-    "/audio/dirt-steps.mp3",
-    "/audio/dirt-steps.wav",
-    "/audio/footstep.mp3",
-    "/audio/footstep.ogg",
-    "/audio/footstep.wav",
   ],
   kill: [
-    "/assets/audio/kill-sound.mp3",
-    "/assets/audio/kill-sound.ogg",
-    "/assets/audio/kill-sound.wav",
-    "/audio/kill-sound.mp3",
-    "/audio/kill-sound.ogg",
-    "/audio/kill-sound.wav",
+    "/assets/audio/improved/kill-sound.wav",
   ],
   hit: [
     "/assets/audio/hit.mp3",
@@ -112,10 +85,10 @@ const AUDIO_URL_CANDIDATES = {
 } as const;
 
 export const DEFAULT_AUDIO_VOLUMES: AudioVolumeSettings = {
-  master: 0.8,
-  gunshot: 0.85,
-  footsteps: 0.32,
-  hit: 0.42,
+  master: 0.5,
+  gunshot: 1,
+  footsteps: 1,
+  hit: 1,
 };
 
 export class AudioManager {
@@ -143,11 +116,9 @@ export class AudioManager {
     hit: null,
   };
   private volumes: AudioVolumeSettings = { ...DEFAULT_AUDIO_VOLUMES };
-  private nextFootstepAtSeconds = 0;
   private whiteNoiseBuffer: AudioBuffer | null = null;
   private footstepFileGain = 1;
   private footstepDebugCounter = 0;
-  private warnedSynthFootstepFallback = false;
   private gunshotDebugCounter = 0;
   private shellingDebugCounter = 0;
   private shellingSource: AudioBufferSourceNode | null = null;
@@ -236,38 +207,11 @@ export class AudioManager {
     this.applyVolumeSettings();
   }
 
-  update(
-    nowSeconds: number,
-    moving: boolean,
-    sprinting: boolean,
-    options?: {
-      stepIntervalSeconds?: number;
-      filePlaybackRate?: number;
-      surface?: "rock" | "dirt";
-    },
-  ) {
+  playFootstep(filePlaybackRate?: number) {
     if (!this.context || this.context.state !== "running") {
       return;
     }
-
-    if (!moving) {
-      this.nextFootstepAtSeconds = 0;
-      return;
-    }
-
-    if (this.nextFootstepAtSeconds <= 0) {
-      this.nextFootstepAtSeconds = nowSeconds;
-    }
-
-    const stepInterval = options?.stepIntervalSeconds ?? (sprinting ? 0.27 : 0.4);
-    if (nowSeconds >= this.nextFootstepAtSeconds) {
-      if (options?.surface === "rock") {
-        this.playRockFootstepInternal(sprinting);
-      } else {
-        this.playFootstepInternal(sprinting, options?.filePlaybackRate);
-      }
-      this.nextFootstepAtSeconds = nowSeconds + stepInterval;
-    }
+    this.playFootstepInternal(filePlaybackRate);
   }
 
   playGunshot(kind: WeaponKind = "rifle") {
@@ -564,7 +508,6 @@ export class AudioManager {
     this.footstepGain = null;
     this.hitGain = null;
     this.whiteNoiseBuffer = null;
-    this.nextFootstepAtSeconds = 0;
   }
 
   private ensureContext(): AudioContext | null {
@@ -626,7 +569,7 @@ export class AudioManager {
         });
       }
     } else if (AUDIO_DEBUG) {
-      console.warn("[Audio] Footstep file not found. Using synth fallback.");
+      console.warn("[Audio] Footstep file not found.");
     }
 
     if (AUDIO_DEBUG) {
@@ -640,34 +583,33 @@ export class AudioManager {
     }
   }
 
-  private playFootstepInternal(sprinting: boolean, filePlaybackRate?: number) {
+  private playFootstepInternal(filePlaybackRate?: number) {
     if (!this.context || this.context.state !== "running" || !this.footstepGain) {
       return;
     }
 
     const now = this.context.currentTime;
-    const stepGainBoost = sprinting ? 1.18 : 1;
 
     if (this.buffers.footstep) {
       const source = this.context.createBufferSource();
       source.buffer = this.buffers.footstep;
-      const fileRate = clamp(filePlaybackRate ?? (sprinting ? 1.18 : 0.95), 0.6, 2.4);
+      const fileRate = clamp(filePlaybackRate ?? 1, 0.72, 1.8);
+      const rateMix = clamp((fileRate - 0.72) / 1.08, 0, 1);
       source.playbackRate.value = fileRate;
       const gain = this.context.createGain();
       const tone = this.context.createBiquadFilter();
       tone.type = "lowpass";
-      tone.frequency.value = sprinting ? 3000 : 2400;
-      gain.gain.value = (sprinting ? 1.1 : 0.95) * this.footstepFileGain;
+      tone.frequency.value = 2100 + rateMix * 1100;
+      gain.gain.value = (0.88 + rateMix * 0.2) * this.footstepFileGain;
       source.connect(tone);
       tone.connect(gain);
       gain.connect(this.footstepGain);
       source.start(now);
-      source.stop(now + Math.min(sprinting ? 0.35 : 0.42, source.buffer.duration));
+      source.stop(now + Math.min(0.32, source.buffer.duration));
       if (AUDIO_DEBUG) {
         this.footstepDebugCounter += 1;
         if (this.footstepDebugCounter % 8 === 0) {
           console.debug("[Audio] Footstep trigger", {
-            sprinting,
             source: this.sourceUrls.footstep,
             fileGain: Number(this.footstepFileGain.toFixed(2)),
             fileRate: Number(fileRate.toFixed(2)),
@@ -677,151 +619,9 @@ export class AudioManager {
       }
       return;
     }
-
-    if (AUDIO_DEBUG && !this.warnedSynthFootstepFallback) {
-      console.warn("[Audio] No footstep file buffer available; synth fallback active.");
-      this.warnedSynthFootstepFallback = true;
+    if (AUDIO_DEBUG) {
+      console.warn("[Audio] Footstep file buffer unavailable.");
     }
-
-    const heel = this.context.createOscillator();
-    const heelGain = this.context.createGain();
-    const heelFilter = this.context.createBiquadFilter();
-    heel.type = "triangle";
-    heel.frequency.setValueAtTime(sprinting ? 112 : 88, now);
-    heel.frequency.exponentialRampToValueAtTime(42, now + 0.055);
-    heelFilter.type = "lowpass";
-    heelFilter.frequency.value = 240;
-    heelGain.gain.setValueAtTime(0.001, now);
-    heelGain.gain.exponentialRampToValueAtTime((sprinting ? 0.11 : 0.08) * stepGainBoost, now + 0.004);
-    heelGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.07);
-    heel.connect(heelFilter);
-    heelFilter.connect(heelGain);
-    heelGain.connect(this.footstepGain);
-    heel.start(now);
-    heel.stop(now + 0.08);
-
-    if (this.whiteNoiseBuffer) {
-      const crunch = this.context.createBufferSource();
-      crunch.buffer = this.whiteNoiseBuffer;
-      crunch.playbackRate.value = sprinting ? 1.35 + Math.random() * 0.2 : 1.02 + Math.random() * 0.18;
-      const crunchHigh = this.context.createBiquadFilter();
-      const crunchBand = this.context.createBiquadFilter();
-      const crunchLow = this.context.createBiquadFilter();
-      const crunchGain = this.context.createGain();
-      crunchHigh.type = "highpass";
-      crunchHigh.frequency.value = sprinting ? 260 : 220;
-      crunchBand.type = "bandpass";
-      crunchBand.frequency.value = 1400 + Math.random() * 700;
-      crunchBand.Q.value = 0.75;
-      crunchLow.type = "lowpass";
-      crunchLow.frequency.value = 2800;
-      crunchGain.gain.setValueAtTime(0.001, now);
-      crunchGain.gain.exponentialRampToValueAtTime((sprinting ? 0.18 : 0.13) * stepGainBoost, now + 0.005);
-      crunchGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.085);
-      crunch.connect(crunchHigh);
-      crunchHigh.connect(crunchBand);
-      crunchBand.connect(crunchLow);
-      crunchLow.connect(crunchGain);
-      crunchGain.connect(this.footstepGain);
-      crunch.start(now);
-      crunch.stop(now + 0.1);
-
-      const scrape = this.context.createBufferSource();
-      scrape.buffer = this.whiteNoiseBuffer;
-      scrape.playbackRate.value = sprinting ? 0.95 : 0.8;
-      const scrapeHigh = this.context.createBiquadFilter();
-      const scrapeLow = this.context.createBiquadFilter();
-      const scrapeGain = this.context.createGain();
-      scrapeHigh.type = "highpass";
-      scrapeHigh.frequency.value = 120;
-      scrapeLow.type = "lowpass";
-      scrapeLow.frequency.value = 760;
-      scrapeGain.gain.setValueAtTime(0.001, now + 0.01);
-      scrapeGain.gain.exponentialRampToValueAtTime((sprinting ? 0.08 : 0.055) * stepGainBoost, now + 0.02);
-      scrapeGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.1);
-      scrape.connect(scrapeHigh);
-      scrapeHigh.connect(scrapeLow);
-      scrapeLow.connect(scrapeGain);
-      scrapeGain.connect(this.footstepGain);
-      scrape.start(now);
-      scrape.stop(now + 0.11);
-    }
-
-    if (Math.random() < 0.45) {
-      const grit = this.context.createOscillator();
-      const gritGain = this.context.createGain();
-      grit.type = "triangle";
-      grit.frequency.setValueAtTime(1700 + Math.random() * 800, now);
-      grit.frequency.exponentialRampToValueAtTime(820 + Math.random() * 240, now + 0.03);
-      gritGain.gain.setValueAtTime(0.001, now);
-      gritGain.gain.exponentialRampToValueAtTime((sprinting ? 0.03 : 0.02) * stepGainBoost, now + 0.003);
-      gritGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.035);
-      grit.connect(gritGain);
-      gritGain.connect(this.footstepGain);
-      grit.start(now);
-      grit.stop(now + 0.04);
-    }
-  }
-
-  private playRockFootstepInternal(sprinting: boolean) {
-    if (!this.context || this.context.state !== "running" || !this.footstepGain) {
-      return;
-    }
-
-    const now = this.context.currentTime;
-    const stepGainBoost = sprinting ? 1.18 : 1;
-
-    const impact = this.context.createOscillator();
-    const impactGain = this.context.createGain();
-    const impactFilter = this.context.createBiquadFilter();
-    impact.type = "triangle";
-    impact.frequency.setValueAtTime(sprinting ? 260 : 210, now);
-    impact.frequency.exponentialRampToValueAtTime(120, now + 0.04);
-    impactFilter.type = "lowpass";
-    impactFilter.frequency.value = 480;
-    impactGain.gain.setValueAtTime(0.001, now);
-    impactGain.gain.exponentialRampToValueAtTime((sprinting ? 0.14 : 0.1) * stepGainBoost, now + 0.003);
-    impactGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.055);
-    impact.connect(impactFilter);
-    impactFilter.connect(impactGain);
-    impactGain.connect(this.footstepGain);
-    impact.start(now);
-    impact.stop(now + 0.06);
-
-    if (this.whiteNoiseBuffer) {
-      const click = this.context.createBufferSource();
-      click.buffer = this.whiteNoiseBuffer;
-      click.playbackRate.value = sprinting ? 1.6 + Math.random() * 0.3 : 1.3 + Math.random() * 0.2;
-      const clickHigh = this.context.createBiquadFilter();
-      const clickLow = this.context.createBiquadFilter();
-      const clickGain = this.context.createGain();
-      clickHigh.type = "highpass";
-      clickHigh.frequency.value = 600;
-      clickLow.type = "lowpass";
-      clickLow.frequency.value = 4200;
-      clickGain.gain.setValueAtTime(0.001, now);
-      clickGain.gain.exponentialRampToValueAtTime((sprinting ? 0.2 : 0.15) * stepGainBoost, now + 0.004);
-      clickGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.05);
-      click.connect(clickHigh);
-      clickHigh.connect(clickLow);
-      clickLow.connect(clickGain);
-      clickGain.connect(this.footstepGain);
-      click.start(now);
-      click.stop(now + 0.06);
-    }
-
-    const tap = this.context.createOscillator();
-    const tapGain = this.context.createGain();
-    tap.type = "sine";
-    tap.frequency.setValueAtTime(1400 + Math.random() * 600, now);
-    tap.frequency.exponentialRampToValueAtTime(600, now + 0.025);
-    tapGain.gain.setValueAtTime(0.001, now);
-    tapGain.gain.exponentialRampToValueAtTime((sprinting ? 0.04 : 0.025) * stepGainBoost, now + 0.002);
-    tapGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.03);
-    tap.connect(tapGain);
-    tapGain.connect(this.footstepGain);
-    tap.start(now);
-    tap.stop(now + 0.035);
   }
 
   private applyVolumeSettings() {

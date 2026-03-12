@@ -104,170 +104,170 @@ export const CHARACTER_TEXTURE_MAP: Record<
 };
 
 export const ANIM_CLIPS: { name: string; url: string }[] = [
-  { name: 'idle', url: '/assets/animations/walking/Idle.fbx' },
-  { name: 'walk', url: '/assets/animations/walking/Walk Forward.fbx' },
+  { name: 'idle', url: '/assets/animations/movement/standing/idle.fbx' },
+  { name: 'walk', url: '/assets/animations/movement/standing/walk-forward.fbx' },
   {
     name: 'walkBack',
-    url: '/assets/animations/walking/Walk Backward.fbx',
+    url: '/assets/animations/movement/standing/walk-backward.fbx',
   },
-  { name: 'walkLeft', url: '/assets/animations/walking/Walk Left.fbx' },
+  { name: 'walkLeft', url: '/assets/animations/movement/standing/walk-left.fbx' },
   {
     name: 'walkRight',
-    url: '/assets/animations/walking/Walk Right.fbx',
+    url: '/assets/animations/movement/standing/walk-right.fbx',
   },
-  { name: 'walkStart', url: '/assets/animations/walking/Walk Start.fbx' },
-  { name: 'walkStop', url: '/assets/animations/walking/Walk Stop.fbx' },
-  { name: 'sprint', url: '/assets/animations/run/Sprint Animation.fbx' },
+  { name: 'walkStart', url: '/assets/animations/movement/standing/walk-start.fbx' },
+  { name: 'walkStop', url: '/assets/animations/movement/standing/walk-stop.fbx' },
+  { name: 'sprint', url: '/assets/animations/movement/standing/sprint-forward.fbx' },
   {
     name: 'walkForwardLeft',
-    url: '/assets/animations/walking/Walk Forward Left.fbx',
+    url: '/assets/animations/movement/standing/walk-forward-left.fbx',
   },
   {
     name: 'walkForwardRight',
-    url: '/assets/animations/walking/Walk Forward Right.fbx',
+    url: '/assets/animations/movement/standing/walk-forward-right.fbx',
   },
   {
     name: 'walkBackwardLeft',
-    url: '/assets/animations/walking/Walk Backward Left.fbx',
+    url: '/assets/animations/movement/standing/walk-backward-left.fbx',
   },
   {
     name: 'walkBackwardRight',
-    url: '/assets/animations/walking/Walk Backward Right.fbx',
+    url: '/assets/animations/movement/standing/walk-backward-right.fbx',
   },
-  { name: 'crouchEnter', url: '/assets/animations/crouch/Stand To Crouch.fbx' },
-  { name: 'crouchExit', url: '/assets/animations/crouch/Crouch To Stand.fbx' },
-  { name: 'crouchIdle', url: '/assets/animations/crouch/Crouch Idle.fbx' },
+  { name: 'crouchEnter', url: '/assets/animations/movement/crouch/enter.fbx' },
+  { name: 'crouchExit', url: '/assets/animations/movement/crouch/exit.fbx' },
+  { name: 'crouchIdle', url: '/assets/animations/movement/crouch/idle.fbx' },
   {
     name: 'crouchForward',
-    url: '/assets/animations/crouch/Crouch Move Forward Stealth.fbx',
+    url: '/assets/animations/movement/crouch/move-forward.fbx',
   },
   {
     name: 'crouchBack',
-    url: '/assets/animations/crouch/Crouch Move Backward Stealth.fbx',
+    url: '/assets/animations/movement/crouch/move-backward.fbx',
   },
   {
     name: 'crouchLeft',
-    url: '/assets/animations/crouch/Crouch Move Left Stealth.fbx',
+    url: '/assets/animations/movement/crouch/move-left.fbx',
   },
   {
     name: 'crouchRight',
-    url: '/assets/animations/crouch/Crouch Move Right Stealth.fbx',
+    url: '/assets/animations/movement/crouch/move-right.fbx',
   },
   {
     name: 'rifleAimHold',
-    url: '/assets/animations/walking with gun/Rifle Aim Idle.fbx',
+    url: '/assets/animations/rifle/aim/idle.fbx',
   },
   {
     name: 'rifleAimWalk',
-    url: '/assets/animations/walking with gun/Rifle Aim Walk Forward Loop.fbx',
+    url: '/assets/animations/rifle/aim/walk-forward.fbx',
   },
   {
     name: 'rifleAimWalkBack',
-    url: '/assets/animations/walking with gun/Rifle Aim Walk Backward Loop.fbx',
+    url: '/assets/animations/rifle/aim/walk-backward.fbx',
   },
   {
     name: 'rifleAimWalkLeft',
-    url: '/assets/animations/walking with gun/Rifle Aim Walk Left Loop.fbx',
+    url: '/assets/animations/rifle/aim/walk-left.fbx',
   },
   {
     name: 'rifleAimWalkRight',
-    url: '/assets/animations/walking with gun/Rifle Aim Walk Right Loop.fbx',
+    url: '/assets/animations/rifle/aim/walk-right.fbx',
   },
   {
     name: 'rifleIdle',
-    url: '/assets/animations/rifle-hold/Rifle Hold Idle Animation.fbx',
+    url: '/assets/animations/rifle/ready/idle.fbx',
   },
   {
     name: 'rifleCrouchEnter',
-    url: '/assets/animations/crouch/Rifle Hold To Crouch.fbx',
+    url: '/assets/animations/rifle/ready/crouch-enter.fbx',
   },
   {
     name: 'rifleCrouchExit',
-    url: '/assets/animations/crouch/Rifle Crouch To Stand Hold.fbx',
+    url: '/assets/animations/rifle/ready/crouch-exit.fbx',
   },
   {
     name: 'rifleCrouchIdle',
-    url: '/assets/animations/crouch/Rifle Crouch Idle.fbx',
+    url: '/assets/animations/rifle/ready/crouch-idle.fbx',
   },
   {
     name: 'rifleCrouchWalk',
-    url: '/assets/animations/crouch/Rifle Crouch Walk Forward Loop.fbx',
+    url: '/assets/animations/rifle/ready/crouch-forward.fbx',
   },
   {
     name: 'rifleWalk',
-    url: '/assets/animations/rifle-hold/Rifle Hold Walk Forward Loop.fbx',
+    url: '/assets/animations/rifle/ready/walk-forward.fbx',
   },
   {
     name: 'rifleWalkBack',
-    url: '/assets/animations/rifle-hold/Rifle Hold Walk Backward Loop.fbx',
+    url: '/assets/animations/rifle/ready/walk-backward.fbx',
   },
   {
     name: 'rifleWalkLeft',
-    url: '/assets/animations/rifle-hold/Rifle Hold Walk Left Loop.fbx',
+    url: '/assets/animations/rifle/ready/walk-left.fbx',
   },
   {
     name: 'rifleWalkRight',
-    url: '/assets/animations/rifle-hold/Rifle Hold Walk Right Loop.fbx',
+    url: '/assets/animations/rifle/ready/walk-right.fbx',
   },
   {
     name: 'rifleWalkForwardLeft',
-    url: '/assets/animations/rifle-hold/Rifle Hold Walk Forward Left Loop.fbx',
+    url: '/assets/animations/rifle/ready/walk-forward-left.fbx',
   },
   {
     name: 'rifleWalkForwardRight',
-    url: '/assets/animations/rifle-hold/Rifle Hold Walk Forward Right Loop.fbx',
+    url: '/assets/animations/rifle/ready/walk-forward-right.fbx',
   },
   {
     name: 'rifleWalkBackwardLeft',
-    url: '/assets/animations/rifle-hold/Rifle Hold Walk Backward Left Loop.fbx',
+    url: '/assets/animations/rifle/ready/walk-backward-left.fbx',
   },
   {
     name: 'rifleWalkBackwardRight',
-    url: '/assets/animations/rifle-hold/Rifle Hold Walk Backward Right Loop.fbx',
+    url: '/assets/animations/rifle/ready/walk-backward-right.fbx',
   },
   {
     name: 'rifleJog',
-    url: '/assets/animations/rifle-hold-jog/Rifle Hold Jog Forward Loop.fbx',
+    url: '/assets/animations/rifle/ready/jog-forward.fbx',
   },
   {
     name: 'rifleJogBack',
-    url: '/assets/animations/rifle-hold-jog/Rifle Hold Jog Backward Loop.fbx',
+    url: '/assets/animations/rifle/ready/jog-backward.fbx',
   },
   {
     name: 'rifleJogLeft',
-    url: '/assets/animations/rifle-hold-jog/Rifle Hold Jog Left Loop.fbx',
+    url: '/assets/animations/rifle/ready/jog-left.fbx',
   },
   {
     name: 'rifleJogRight',
-    url: '/assets/animations/rifle-hold-jog/Rifle Hold Jog Right Loop.fbx',
+    url: '/assets/animations/rifle/ready/jog-right.fbx',
   },
   {
     name: 'rifleJogForwardLeft',
-    url: '/assets/animations/rifle-hold-jog/Rifle Hold Jog Forward Left Loop.fbx',
+    url: '/assets/animations/rifle/ready/jog-forward-left.fbx',
   },
   {
     name: 'rifleJogForwardRight',
-    url: '/assets/animations/rifle-hold-jog/Rifle Hold Jog Forward Right Loop.fbx',
+    url: '/assets/animations/rifle/ready/jog-forward-right.fbx',
   },
   {
     name: 'rifleJogBackwardLeft',
-    url: '/assets/animations/rifle-hold-jog/Rifle Hold Jog Backward Left Loop.fbx',
+    url: '/assets/animations/rifle/ready/jog-backward-left.fbx',
   },
   {
     name: 'rifleJogBackwardRight',
-    url: '/assets/animations/rifle-hold-jog/Rifle Hold Jog Backward Right Loop.fbx',
+    url: '/assets/animations/rifle/ready/jog-backward-right.fbx',
   },
   {
     name: 'rifleRun',
-    url: '/assets/animations/rifle-hold-run/Rifle Hold Run Loop.fbx',
+    url: '/assets/animations/rifle/ready/run-forward.fbx',
   },
   {
     name: 'rifleRunStart',
-    url: '/assets/animations/rifle-hold-run/Rifle Hold Run Start Animation.fbx',
+    url: '/assets/animations/rifle/ready/run-start.fbx',
   },
   {
     name: 'rifleRunStop',
-    url: '/assets/animations/rifle-hold-run/Rifle Hold Run Stop Animation.fbx',
+    url: '/assets/animations/rifle/ready/run-stop.fbx',
   },
 ];
 

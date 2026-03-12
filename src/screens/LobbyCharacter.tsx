@@ -6,7 +6,7 @@ import { MapEnvironment } from "../game/scene/MapEnvironment";
 
 const CHARACTER_MODEL_URL =
   "/assets/models/character/Trooper/tactical guy.fbx";
-const IDLE_ANIM_URL = "/assets/animations/walking/Idle.fbx";
+const IDLE_ANIM_URL = "/assets/animations/movement/standing/idle.fbx";
 const CHARACTER_TARGET_HEIGHT = 1.65;
 const TEXTURE_BASE =
   "/assets/models/character/Trooper/tactical guy.fbm/";

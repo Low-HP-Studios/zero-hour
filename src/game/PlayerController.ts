@@ -374,6 +374,8 @@ export function usePlayerController({
           ) {
             crouchHoldLatchRef.current = true;
           }
+          jumpQueuedRef.current = false;
+          return;
         }
         jumpQueuedRef.current = true;
       }
@@ -769,13 +771,13 @@ export function usePlayerController({
     recoilPitchRef.current = THREE.MathUtils.damp(
       recoilPitchRef.current,
       0,
-      8,
+      25,
       delta,
     );
     recoilYawRef.current = THREE.MathUtils.damp(
       recoilYawRef.current,
       0,
-      10,
+      30,
       delta,
     );
 
@@ -808,14 +810,6 @@ export function usePlayerController({
     );
     const crouchLookHeightOffset =
       TPP_CROUCH_LOOK_HEIGHT_OFFSET * crouchCameraLerpRef.current;
-    const viewTarget = firstPersonRef.current || adsRef.current ? 1 : 0;
-    viewModeLerpRef.current = THREE.MathUtils.damp(
-      viewModeLerpRef.current,
-      viewTarget,
-      VIEW_MODE_TRANSITION_SPEED,
-      delta,
-    );
-    const viewT = viewModeLerpRef.current;
     const peekLeftHeld =
       controlsEnabled && isBindingDown(keys, bindings.peekLeft);
     const peekRightHeld =
@@ -833,6 +827,18 @@ export function usePlayerController({
       delta,
     );
     const leanT = leanLerpRef.current;
+    const viewTarget = firstPersonRef.current || adsRef.current ? 1 : 0;
+    if (adsRef.current && Math.abs(leanT) > 0.08) {
+      viewModeLerpRef.current = 1;
+    } else {
+      viewModeLerpRef.current = THREE.MathUtils.damp(
+        viewModeLerpRef.current,
+        viewTarget,
+        VIEW_MODE_TRANSITION_SPEED,
+        delta,
+      );
+    }
+    const viewT = viewModeLerpRef.current;
 
     const currentYaw = yawRef.current + recoilYawRef.current;
     const currentPitch = pitchRef.current + recoilPitchRef.current;
@@ -990,14 +996,16 @@ export function usePlayerController({
 
   return {
     addRecoil: (pitchRadians, yawRadians) => {
-      recoilPitchRef.current += pitchRadians;
-      recoilYawRef.current += yawRadians;
+      // PUBG-style: recoil moves the actual aim point (crosshair climbs),
+      // player compensates by pulling mouse down. Minimal visual shake.
+      recoilPitchRef.current += pitchRadians * 0.12;
+      recoilYawRef.current += yawRadians * 0.1;
       targetPitchRef.current = THREE.MathUtils.clamp(
-        targetPitchRef.current + pitchRadians * 0.9,
+        targetPitchRef.current + pitchRadians,
         MIN_PITCH,
         MAX_PITCH,
       );
-      targetYawRef.current += yawRadians * 0.6;
+      targetYawRef.current += yawRadians;
     },
     alignBodyToAim: (durationMs = SHOOT_ALIGN_WINDOW_MS) => {
       shootAlignUntilRef.current = Math.max(

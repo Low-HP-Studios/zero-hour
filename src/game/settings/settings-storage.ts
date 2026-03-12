@@ -21,7 +21,11 @@ import {
 import { PIXEL_RATIO_OPTIONS, STRESS_STEPS } from "./settings-constants";
 
 const LEGACY_SETTINGS_STORAGE_KEY = "zerohour.settings.v1";
-export const SETTINGS_STORAGE_KEY = "greytrace.settings.v1";
+const PRE_RESET_SETTINGS_STORAGE_KEYS = [
+  "greytrace.settings.v1",
+  LEGACY_SETTINGS_STORAGE_KEY,
+] as const;
+export const SETTINGS_STORAGE_KEY = "greytrace.settings.v2";
 
 function cloneDefaultCrosshairSettings() {
   return {
@@ -709,28 +713,20 @@ export function loadPersistedSettings(): PersistedSettings {
     if (rawSettings) {
       return parsePersistedSettings(JSON.parse(rawSettings));
     }
-
-    const legacySettings = window.localStorage.getItem(
-      LEGACY_SETTINGS_STORAGE_KEY,
-    );
-    if (!legacySettings) {
-      return fallback;
-    }
-
-    const migratedSettings = parsePersistedSettings(JSON.parse(legacySettings));
-    try {
-      window.localStorage.setItem(
-        SETTINGS_STORAGE_KEY,
-        JSON.stringify(migratedSettings),
-      );
-      window.localStorage.removeItem(LEGACY_SETTINGS_STORAGE_KEY);
-    } catch {
-      // Keep running even if migration persistence fails.
-    }
-    return migratedSettings;
   } catch {
     return fallback;
   }
+
+  try {
+    // v2 intentionally ignores older saved settings so shipped defaults win.
+    for (const storageKey of PRE_RESET_SETTINGS_STORAGE_KEYS) {
+      window.localStorage.removeItem(storageKey);
+    }
+  } catch {
+    // Ignore storage cleanup failures and keep the app usable.
+  }
+
+  return fallback;
 }
 
 export function savePersistedSettings(settings: PersistedSettings) {

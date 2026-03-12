@@ -220,10 +220,10 @@ export const DEFAULT_CROSSHAIR_SETTINGS: CrosshairSettings = {
 
 export const DEFAULT_WEAPON_RECOIL_PROFILES: WeaponRecoilProfiles = {
   rifle: {
-    recoilPitchBase: 0.0065,
-    recoilPitchRamp: 0.00065,
-    recoilYawRange: 0.01,
-    recoilYawDrift: 0.001,
+    recoilPitchBase: 0.0055,
+    recoilPitchRamp: 0.00055,
+    recoilYawRange: 0.006,
+    recoilYawDrift: 0.0005,
     moveSpreadBase: 0.02,
     moveSpreadSprint: 0.02,
   },

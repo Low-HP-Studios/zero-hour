@@ -38,8 +38,8 @@ import type {
 } from "../types";
 import { isSprintInputEligible } from "../movement";
 import {
+  type CharacterFootstepSample,
   normalizeBoneName,
-  resolveFootstepIntervalSeconds,
   resolveFootstepPlaybackRate,
   useCharacterModel,
 } from "./CharacterModel";
@@ -62,7 +62,6 @@ import {
   MAX_BLOOD_SPLAT_MARKS,
   MAX_BULLET_IMPACT_MARKS,
   MIN_TRACER_DISTANCE,
-  PATH_POINTS,
   PLAYER_SPAWN_PITCH,
   PLAYER_SPAWN_POSITION,
   PLAYER_SPAWN_YAW,
@@ -218,6 +217,75 @@ const RIFLE_LOCOMOTION_SCALE_MAX = 1.2;
 // Keep these in sync with PlayerController movement constants.
 const PLAYER_WALK_SPEED = 5.3;
 const PLAYER_SPRINT_SPEED = 8.2;
+const UNARMED_WALK_SPEED_SCALE = 0.68;
+
+type FootstepPhaseTracker = {
+  cycle: number;
+  lastNormalizedTime: number;
+  state: CharacterAnimState | null;
+};
+
+function getFootstepMarkers(state: CharacterAnimState): readonly number[] {
+  if (
+    state === "sprint" ||
+    state === "rifleRun" ||
+    state === "rifleRunStart" ||
+    state === "rifleRunStop"
+  ) {
+    return [0.12, 0.62];
+  }
+  if (
+    state === "crouchForward" ||
+    state === "crouchBack" ||
+    state === "crouchLeft" ||
+    state === "crouchRight" ||
+    state === "rifleCrouchWalk"
+  ) {
+    return [0.18, 0.68];
+  }
+  return [0.14, 0.64];
+}
+
+function consumeFootstepTrigger(
+  tracker: FootstepPhaseTracker,
+  sample: CharacterFootstepSample | null,
+): boolean {
+  if (!sample) {
+    tracker.state = null;
+    tracker.cycle = 0;
+    tracker.lastNormalizedTime = 0;
+    return false;
+  }
+
+  const normalizedTime = THREE.MathUtils.clamp(sample.normalizedTime, 0, 0.9999);
+  if (tracker.state !== sample.state) {
+    tracker.state = sample.state;
+    tracker.cycle = 0;
+    tracker.lastNormalizedTime = normalizedTime;
+    return false;
+  }
+
+  let cycle = tracker.cycle;
+  if (normalizedTime + 0.001 < tracker.lastNormalizedTime) {
+    cycle += 1;
+  }
+
+  const previousAbsolute = tracker.cycle + tracker.lastNormalizedTime;
+  const currentAbsolute = cycle + normalizedTime;
+  tracker.cycle = cycle;
+  tracker.lastNormalizedTime = normalizedTime;
+
+  for (const marker of getFootstepMarkers(sample.state)) {
+    if (
+      previousAbsolute < cycle + marker &&
+      currentAbsolute >= cycle + marker
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
 
 function resolveRifleWalkState(
   moveX: number,
@@ -689,6 +757,7 @@ export const GameplayRuntime = forwardRef<
     model: characterModel,
     ready: characterReady,
     setAnimState: setCharacterAnim,
+    getFootstepSample,
   } = useCharacterModel();
   const weaponModels = useWeaponModels();
   const rifleMuzzleOffsetRef = useRef(new THREE.Vector3(-0.44, 0.02, 0));
@@ -808,10 +877,10 @@ export const GameplayRuntime = forwardRef<
       quaternion: THREE.Quaternion;
     } | null
   >(null);
-  const audioUpdateOptionsRef = useRef({
-    stepIntervalSeconds: 0,
-    filePlaybackRate: 1,
-    surface: "dirt" as "rock" | "dirt",
+  const footstepPhaseRef = useRef<FootstepPhaseTracker>({
+    cycle: 0,
+    lastNormalizedTime: 0,
+    state: null,
   });
   const returningFreezePosRef = useRef(new THREE.Vector3());
   const returningFreezeLookRef = useRef(new THREE.Vector3());
@@ -1248,6 +1317,11 @@ export const GameplayRuntime = forwardRef<
     locomotionVisualInputRef.current.set(0, 0);
     unarmedWalkStateRef.current = "idle";
     unarmedWalkStateUntilRef.current = 0;
+    footstepPhaseRef.current = {
+      cycle: 0,
+      lastNormalizedTime: 0,
+      state: null,
+    };
     lastCharacterAnimStateRef.current = "idle";
     lastPlanarPositionRef.current.set(
       PLAYER_SPAWN_POSITION.x,
@@ -1676,6 +1750,7 @@ export const GameplayRuntime = forwardRef<
       ? "rifleIdle"
       : "idle";
     let lowerBodyOverlayState: CharacterAnimState | null = null;
+    let upperBodyOverlayState: CharacterAnimState | null = null;
     if (crouchTransitionState === "enter") {
       nextAnimState = crouchAimCompositeActive
         ? "rifleAimHold"
@@ -1692,18 +1767,21 @@ export const GameplayRuntime = forwardRef<
       lowerBodyOverlayState = crouchAimCompositeActive ? "crouchExit" : null;
     } else if (crouched) {
       if (weaponEquipped) {
-        nextAnimState = crouchAimCompositeActive
-          ? (
-            movementActive
-              ? resolveRifleAimWalkState(animMoveX, animMoveY)
-              : "rifleAimHold"
-          )
-          : (movementActive ? "rifleCrouchWalk" : "rifleCrouchIdle");
-        lowerBodyOverlayState = crouchAimCompositeActive
-          ? (movementActive
+        if (crouchAimCompositeActive) {
+          nextAnimState = movementActive
+            ? resolveRifleAimWalkState(animMoveX, animMoveY)
+            : "rifleAimHold";
+          lowerBodyOverlayState = movementActive
             ? resolveCrouchState(animMoveX, animMoveY)
-            : "crouchIdle")
-          : null;
+            : "crouchIdle";
+        } else {
+          nextAnimState = movementActive
+            ? resolveCrouchState(animMoveX, animMoveY)
+            : "crouchIdle";
+          upperBodyOverlayState = movementActive
+            ? "rifleCrouchWalk"
+            : "rifleCrouchIdle";
+        }
       } else {
         nextAnimState = movementActive
           ? resolveCrouchState(moveX, moveY)
@@ -1788,7 +1866,7 @@ export const GameplayRuntime = forwardRef<
       : 0;
     const crouchAimCompositePose = crouchAimCompositeActive ? crouchPose : 0;
     const standingWalkScale = !weaponEquipped
-      ? 1
+      ? UNARMED_WALK_SPEED_SCALE
       : firePrepIntent
       ? rifleFirePrepSpeedScale
       : rifleWalkSpeedScale;
@@ -1832,19 +1910,30 @@ export const GameplayRuntime = forwardRef<
       nextAnimState === "rifleRun" ||
       nextAnimState === "rifleRunStart" ||
       nextAnimState === "rifleRunStop";
+    const unarmedSharedLocomotionState = nextAnimState === "walk" ||
+      nextAnimState === "walkBack" ||
+      nextAnimState === "walkLeft" ||
+      nextAnimState === "walkRight" ||
+      nextAnimState === "walkForwardLeft" ||
+      nextAnimState === "walkForwardRight" ||
+      nextAnimState === "walkBackwardLeft" ||
+      nextAnimState === "walkBackwardRight";
     const runVisualState = nextAnimState === "rifleRun" ||
       nextAnimState === "rifleRunStart" ||
       nextAnimState === "rifleRunStop";
-    const targetTierSpeed = runVisualState
+    const locomotionReferenceSpeed = runVisualState
       ? PLAYER_SPRINT_SPEED * movementProfileRunScale
       : PLAYER_WALK_SPEED * (
-        useUnarmedWalkLocomotion || movementTier === "walk"
+        !weaponEquipped && useUnarmedWalkLocomotion
+          ? movementProfileJogScale
+          : movementTier === "walk"
           ? movementProfileWalkScale
           : movementProfileJogScale
       );
-    const rifleLocomotionScale = rifleLocomotionState
+    const characterLocomotionScale =
+      rifleLocomotionState || unarmedSharedLocomotionState
       ? THREE.MathUtils.clamp(
-        controller.getPlanarSpeed() / Math.max(0.01, targetTierSpeed),
+        controller.getPlanarSpeed() / Math.max(0.01, locomotionReferenceSpeed),
         RIFLE_LOCOMOTION_SCALE_MIN,
         RIFLE_LOCOMOTION_SCALE_MAX,
       )
@@ -1864,7 +1953,7 @@ export const GameplayRuntime = forwardRef<
     const audioAnimState = lowerBodyOverlayState ?? nextAnimState;
 
     setCharacterAnim(nextAnimState, {
-      locomotionScale: rifleLocomotionScale,
+      locomotionScale: characterLocomotionScale,
       seekNormalizedTime: crouchTransitionSeekNormalized,
       desiredDurationSeconds:
         nextAnimState === "crouchEnter" || nextAnimState === "rifleCrouchEnter"
@@ -1885,47 +1974,17 @@ export const GameplayRuntime = forwardRef<
         lowerBodyOverlayState === "crouchEnter"
           ? CROUCH_ENTER_BLEND_SECONDS
           : 0.12,
+      upperBodyState: upperBodyOverlayState,
+      upperBodyLocomotionScale: characterLocomotionScale,
     });
     lastCharacterAnimStateRef.current = nextAnimState;
-    const audioOpts = audioUpdateOptionsRef.current;
-    audioOpts.stepIntervalSeconds = resolveFootstepIntervalSeconds(
+    const footstepPlaybackRate = resolveFootstepPlaybackRate(
       audioAnimState,
       {
         locomotionScale: lowerBodyOverlayState
           ? lowerBodyOverlayLocomotionScale
-          : rifleLocomotionScale,
+          : characterLocomotionScale,
       },
-    );
-    audioOpts.filePlaybackRate = resolveFootstepPlaybackRate(
-      audioAnimState,
-      {
-        locomotionScale: lowerBodyOverlayState
-          ? lowerBodyOverlayLocomotionScale
-          : rifleLocomotionScale,
-      },
-    );
-
-    const playerPos = controller.getPosition();
-    let onRock = false;
-    const rockRadius = 6;
-    for (const [px, pz] of PATH_POINTS) {
-      const dx = playerPos.x - px;
-      const dz = playerPos.z - pz;
-      if (dx * dx + dz * dz < rockRadius * rockRadius) {
-        onRock = true;
-        break;
-      }
-    }
-    audioOpts.surface = onRock ? "rock" : "dirt";
-
-    audio.update(
-      nowMs / 1000,
-      movementActive,
-      nextAnimState === "sprint" ||
-        nextAnimState === "rifleRun" ||
-        nextAnimState === "rifleRunStart" ||
-        nextAnimState === "rifleRunStop",
-      audioOpts,
     );
 
     if (
@@ -1965,6 +2024,9 @@ export const GameplayRuntime = forwardRef<
         | undefined;
       if (mixer) {
         mixer.update(clampedDelta);
+      }
+      if (consumeFootstepTrigger(footstepPhaseRef.current, getFootstepSample())) {
+        audio.playFootstep(footstepPlaybackRate);
       }
       if (headBone) {
         if (!characterHeadBaseQuatRef.current) {

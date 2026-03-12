@@ -3,7 +3,7 @@
 ## Current State
 
 - **Character model**: Trooper FBX (`public/assets/models/character/Trooper/tactical guy.fbx`) with manual texture loading from `.fbm` folder
-- **Animations**: Mixamo FBX files for walking, strafing, and rifle aim (7 clips total)
+- **Animations**: Mixamo FBX files grouped by movement mode and rifle stance
 - Placeholder geometry still used for map, gun, and targets
 - Audio uses WebAudio synth fallback unless files are added
 
@@ -11,7 +11,7 @@
 
 - Models: `public/assets/models/`
 - Character textures: `public/assets/models/character/Trooper/tactical guy.fbm/`
-- Animations: `public/assets/animations/` (walking, walking with gun, turning)
+- Animations: `public/assets/animations/` (`movement/standing`, `movement/crouch`, `rifle/aim`, `rifle/ready`)
 - Audio: `public/assets/audio/`
 - Attribution file: `public/assets/ATTRIBUTION.md`
 
@@ -32,12 +32,12 @@
 
 ### Animations (FBX)
 
-- Mixamo FBX files in `public/assets/animations/`
+- Mixamo FBX files in `public/assets/animations/`, renamed to kebab-case and grouped by gameplay context
 - Each FBX contains a full rig but only `fbx.animations[0]` is extracted
 - Bone names normalized via `normalizeBoneName()` (strips `mixamorig:`, `characters3dcom___` prefixes)
 - Tracks for bones absent from the model (finger detail) are filtered out before creating actions
-- Current clips: idle, walk, walkBack, walkLeft, walkRight, rifleIdle, rifleWalk
-- Available but unused: sprint, walk start/stop, diagonal walks, turning, rifle aim strafe
+- Current clips: movement locomotion, crouch, rifle aim, and rifle ready states
+- Unused legacy FBX files were removed to keep the animation set leaner
 
 ### Models (GLB)
 

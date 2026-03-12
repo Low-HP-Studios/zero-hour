@@ -47,7 +47,7 @@
 - Load Trooper FBX model with `SkeletonUtils.clone()` for correct skinned mesh handling
 - Manually apply textures (FBXLoader can't resolve the channel types in this FBX)
 - Scale model to `CHARACTER_TARGET_HEIGHT` (1.65m) and ground it
-- Drive `AnimationMixer` with 7 animation clips (idle, walk variants, rifle aim)
+- Drive `AnimationMixer` with the curated locomotion and rifle animation set
 - Switch animation state based on player movement: idle / walk / sprint
 
 ### Animation pipeline
