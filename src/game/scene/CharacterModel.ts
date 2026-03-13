@@ -525,6 +525,9 @@ export function useCharacterModel(): CharacterModelResult {
           if (!(child as THREE.Mesh).isMesh) return;
           child.castShadow = true;
           child.receiveShadow = true;
+          if ((child as THREE.SkinnedMesh).isSkinnedMesh) {
+            child.frustumCulled = false;
+          }
         });
 
         await applyCharacterTextures(clone);

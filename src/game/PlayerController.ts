@@ -64,6 +64,7 @@ export type PlayerControllerApi = {
   getPlanarSpeed: () => number;
   getMoveInput: () => THREE.Vector2;
   isFirstPerson: () => boolean;
+  getViewModeLerp: () => number;
   isADS: () => boolean;
   isSprinting: () => boolean;
   isSprintPressed: () => boolean;
@@ -109,8 +110,9 @@ const SHOULDER_OFFSET = 0.5;
 const SHOULDER_OFFSET_ADS = 0.0;
 const SHOULDER_OFFSET_SNIPER_ADS = 0.16;
 const AIM_LOOK_DISTANCE = 120;
-const FIRST_PERSON_CAMERA_HEIGHT = 1.55;
-const FIRST_PERSON_CAMERA_HEIGHT_CROUCH = 0.9;
+const FIRST_PERSON_CAMERA_HEIGHT = 1.40;
+// Keep crouched FPP above the upper torso so recoil does not drive the camera into the rig.
+const FIRST_PERSON_CAMERA_HEIGHT_CROUCH = 1.08;
 const TPP_CROUCH_LOOK_HEIGHT_OFFSET = -0.3;
 const FIRST_PERSON_CAMERA_FORWARD_OFFSET = 0.06;
 const RIFLE_ADS_FOV = 52;
@@ -1027,6 +1029,7 @@ export function usePlayerController({
       firstPersonRef.current
         ? viewModeLerpRef.current >= FPP_ENTER_VISUAL_THRESHOLD
         : viewModeLerpRef.current > FPP_EXIT_VISUAL_THRESHOLD,
+    getViewModeLerp: () => viewModeLerpRef.current,
     isADS: () => adsRef.current,
     isSprinting: () => sprintingRef.current,
     isSprintPressed: () => sprintPressedRef.current,

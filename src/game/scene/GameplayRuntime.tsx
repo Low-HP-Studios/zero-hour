@@ -147,10 +147,12 @@ const CROUCH_AIM_UPPER_TORSO_LIFT_ANGLE = THREE.MathUtils.degToRad(16);
 const AIM_PITCH_TORSO_FRACTION = 0.55;
 const AIM_PITCH_HEAD_FRACTION = 0.35;
 const AIM_YAW_TORSO_FRACTION = 0.6;
+const RIFLE_READY_PITCH_TORSO_FRACTION = 0.82;
+const RIFLE_READY_YAW_TORSO_FRACTION = 0.92;
 const AIM_PITCH_TORSO_QUAT = new THREE.Quaternion();
 const AIM_PITCH_HEAD_QUAT = new THREE.Quaternion();
 const AIM_YAW_TORSO_QUAT = new THREE.Quaternion();
-const RIFLE_READY_YAW_OFFSET = THREE.MathUtils.degToRad(-9); // shift arms/weapon right in ready pose
+const RIFLE_READY_YAW_OFFSET = THREE.MathUtils.degToRad(-3.5);
 const RIFLE_READY_YAW_QUAT = new THREE.Quaternion();
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
 
@@ -198,6 +200,13 @@ function resolveCrouchTransitionTargetPose(
 type RifleRunVisualState = "idle" | "start" | "running" | "stop";
 type UnarmedWalkVisualState = "idle" | "start" | "moving" | "stop";
 type CrouchTransitionState = "idle" | "enter" | "exit";
+type CharacterVisibilityCategory = "glove" | "shoe" | "hidden";
+type CharacterVisibilityMaterialEntry = {
+  material: THREE.Material;
+  category: CharacterVisibilityCategory;
+  baseOpacity: number;
+  baseTransparent: boolean;
+};
 
 type SlideIntentHookState = {
   eligible: boolean;
@@ -498,6 +507,93 @@ function shouldUseRifleRunInput(
 
 function normalizeAngle(angleRadians: number): number {
   return Math.atan2(Math.sin(angleRadians), Math.cos(angleRadians));
+}
+
+function resolveFirstPersonVisibilityCategory(
+  materialName: string,
+): CharacterVisibilityCategory {
+  const normalized = materialName.trim().toLowerCase();
+  if (normalized.includes("glove")) {
+    return "glove";
+  }
+  if (normalized.includes("shoe")) {
+    return "shoe";
+  }
+  return "hidden";
+}
+
+function collectCharacterVisibilityMaterials(
+  model: THREE.Group,
+): CharacterVisibilityMaterialEntry[] {
+  const seen = new Set<THREE.Material>();
+  const entries: CharacterVisibilityMaterialEntry[] = [];
+
+  model.traverse((child) => {
+    if (!(child as THREE.Mesh).isMesh) {
+      return;
+    }
+
+    const mesh = child as THREE.Mesh;
+    const materials = ([] as THREE.Material[]).concat(
+      mesh.material as THREE.Material | THREE.Material[],
+    );
+    for (const material of materials) {
+      if (!material || seen.has(material)) {
+        continue;
+      }
+      seen.add(material);
+      entries.push({
+        material,
+        category: resolveFirstPersonVisibilityCategory(material.name ?? ""),
+        baseOpacity: material.opacity,
+        baseTransparent: material.transparent,
+      });
+    }
+  });
+
+  return entries;
+}
+
+function applyCharacterFirstPersonMask(
+  entries: CharacterVisibilityMaterialEntry[],
+  maskBlend: number,
+  gloveVisibility: number,
+  shoeVisibility: number,
+): void {
+  const clampedMaskBlend = THREE.MathUtils.clamp(maskBlend, 0, 1);
+  if (clampedMaskBlend <= 0.001) {
+    for (const entry of entries) {
+      const nextTransparent = entry.baseTransparent;
+      if (entry.material.transparent !== nextTransparent) {
+        entry.material.transparent = nextTransparent;
+        entry.material.needsUpdate = true;
+      }
+      entry.material.visible = true;
+      entry.material.opacity = entry.baseOpacity;
+    }
+    return;
+  }
+
+  for (const entry of entries) {
+    const categoryVisibility = entry.category === "glove"
+      ? gloveVisibility
+      : entry.category === "shoe"
+      ? shoeVisibility
+      : 0;
+    const nextOpacity = entry.baseOpacity * THREE.MathUtils.clamp(
+      categoryVisibility,
+      0,
+      1,
+    );
+    const nextVisible = nextOpacity > 0.02;
+    const nextTransparent = entry.baseTransparent || nextOpacity < 0.999;
+    if (entry.material.transparent !== nextTransparent) {
+      entry.material.transparent = nextTransparent;
+      entry.material.needsUpdate = true;
+    }
+    entry.material.visible = nextVisible;
+    entry.material.opacity = nextOpacity;
+  }
 }
 
 function resolveMovementHeadingYaw(
@@ -888,6 +984,9 @@ export const GameplayRuntime = forwardRef<
       quaternion: THREE.Quaternion;
     } | null
   >(null);
+  const characterVisibilityMaterialsRef = useRef<
+    CharacterVisibilityMaterialEntry[]
+  >([]);
   const footstepPhaseRef = useRef<FootstepPhaseTracker>({
     cycle: 0,
     lastNormalizedTime: 0,
@@ -954,6 +1053,7 @@ export const GameplayRuntime = forwardRef<
       characterUpperTorsoBoneRef.current = null;
       characterHeadBaseQuatRef.current = null;
       characterUpperTorsoBaseQuatRef.current = null;
+      characterVisibilityMaterialsRef.current = [];
       return;
     }
 
@@ -1028,6 +1128,22 @@ export const GameplayRuntime = forwardRef<
         "[Character] Could not find right-hand bone for weapon attach",
       );
     }
+  }, [characterModel]);
+
+  useEffect(() => {
+    if (!characterModel) {
+      characterVisibilityMaterialsRef.current = [];
+      return;
+    }
+
+    const visibilityMaterials = collectCharacterVisibilityMaterials(characterModel);
+    characterVisibilityMaterialsRef.current = visibilityMaterials;
+    applyCharacterFirstPersonMask(visibilityMaterials, 0, 1, 1);
+
+    return () => {
+      applyCharacterFirstPersonMask(visibilityMaterials, 0, 1, 1);
+      characterVisibilityMaterialsRef.current = [];
+    };
   }, [characterModel]);
 
   useEffect(() => {
@@ -2035,6 +2151,27 @@ export const GameplayRuntime = forwardRef<
       });
     }
 
+    const viewLerp = controller.getViewModeLerp();
+    const firstPersonBodyMaskBlend = presentation.phase === "playing"
+      ? THREE.MathUtils.smoothstep(viewLerp, 0.68, 0.9)
+      : 0;
+    const downLookAmount = THREE.MathUtils.smoothstep(
+      -controller.getPitch(),
+      0.58,
+      1.04,
+    );
+    const shoeVisibility = firstPersonBodyMaskBlend *
+      downLookAmount *
+      (controller.isGrounded() ? 1 : 0);
+    const gloveVisibility = firstPersonBodyMaskBlend *
+      THREE.MathUtils.lerp(1, 0.88, downLookAmount);
+    applyCharacterFirstPersonMask(
+      characterVisibilityMaterialsRef.current,
+      firstPersonBodyMaskBlend,
+      gloveVisibility,
+      shoeVisibility,
+    );
+
     const playerChar = playerCharacterRef.current;
     if (playerChar) {
       const position = controller.getPosition();
@@ -2082,9 +2219,13 @@ export const GameplayRuntime = forwardRef<
 
     const headBone = characterHeadBoneRef.current;
     if (headBone) {
-      headBone.scale.setScalar(
-        presentation.phase === "playing" && firstPerson ? 0 : 1,
-      );
+      if (presentation.phase === "playing") {
+        const viewLerp = controller.getViewModeLerp();
+        const headScale = 1 - THREE.MathUtils.smoothstep(viewLerp, 0.2, 0.5);
+        headBone.scale.setScalar(headScale);
+      } else {
+        headBone.scale.setScalar(1);
+      }
       if (presentation.phase === "playing" && !firstPerson) {
         const headYawOffset = controller.getHeadYawOffset();
         if (Math.abs(headYawOffset) > 0.001) {
@@ -2119,15 +2260,19 @@ export const GameplayRuntime = forwardRef<
         );
         upperTorsoBone.quaternion.premultiply(UPPER_TORSO_PITCH_QUAT);
       }
-      // Shift torso slightly right during rifle ready-pose for better weapon alignment
+      // Keep the ready-pose from visually drifting the muzzle away from the crosshair.
       if (rifleReadyPoseActive && !firstPerson) {
         RIFLE_READY_YAW_QUAT.setFromAxisAngle(Y_AXIS, RIFLE_READY_YAW_OFFSET);
         upperTorsoBone.quaternion.premultiply(RIFLE_READY_YAW_QUAT);
       }
-      // Aim follow: rotate upper torso to follow camera pitch and yaw when weapon equipped
-      if (weaponEquipped && !sprinting && !firstPerson) {
+      // Aim follow: when the rifle ready-pose is code-driven, the upper torso needs
+      // stronger tracking or the weapon visually points off-crosshair until firing.
+      if (weaponEquipped && !sprinting && (!firstPerson || rifleReadyPoseActive)) {
         const aimPitch = controller.getPitch();
-        const torsoPitchContrib = -aimPitch * AIM_PITCH_TORSO_FRACTION;
+        const torsoPitchFraction = rifleReadyPoseActive
+          ? RIFLE_READY_PITCH_TORSO_FRACTION
+          : AIM_PITCH_TORSO_FRACTION;
+        const torsoPitchContrib = -aimPitch * torsoPitchFraction;
         if (Math.abs(torsoPitchContrib) > 0.001) {
           AIM_PITCH_TORSO_QUAT.setFromAxisAngle(X_AXIS, torsoPitchContrib);
           upperTorsoBone.quaternion.premultiply(AIM_PITCH_TORSO_QUAT);
@@ -2136,7 +2281,10 @@ export const GameplayRuntime = forwardRef<
         const aimBodyYawOffset = normalizeAngle(
           controller.getYaw() - controller.getBodyYaw(),
         );
-        const torsoYawContrib = aimBodyYawOffset * AIM_YAW_TORSO_FRACTION;
+        const torsoYawFraction = rifleReadyPoseActive
+          ? RIFLE_READY_YAW_TORSO_FRACTION
+          : AIM_YAW_TORSO_FRACTION;
+        const torsoYawContrib = aimBodyYawOffset * torsoYawFraction;
         if (Math.abs(torsoYawContrib) > 0.001) {
           AIM_YAW_TORSO_QUAT.setFromAxisAngle(Y_AXIS, torsoYawContrib);
           upperTorsoBone.quaternion.premultiply(AIM_YAW_TORSO_QUAT);

@@ -61,6 +61,7 @@ export function cloneWeaponModel(source: THREE.Group | null): THREE.Group | null
     const mesh = child as THREE.Mesh;
     mesh.castShadow = true;
     mesh.receiveShadow = true;
+    mesh.frustumCulled = false;
     const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     mesh.material = materials.map((material) => material.clone());
   });
