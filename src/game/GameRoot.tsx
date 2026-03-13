@@ -26,6 +26,7 @@ import {
   formatKeyCode,
   menuTitle,
 } from "./SettingsPanels";
+import { PubgHud } from "./hud/PubgHud";
 import type { SniperRechamberState, WeaponKind } from "./Weapon";
 import {
   DEFAULT_MOVEMENT_SETTINGS,
@@ -1010,39 +1011,12 @@ export function GameRoot({
   const sniperAmmoLine = sniperSlot.hasWeapon
     ? `Red: ${sniperPackCount}/${sniperSlot.maxPacks} packs | ${sniperSlot.magAmmo}/${sniperSlot.maxMagAmmo}`
     : "Red: slot empty";
-  const reloadStatusLabel = player.weaponReload.active
-    ? `${player.weaponReload.weaponKind === "sniper" ? "Sniper" : "Rifle"} reload ${
-      Math.ceil(player.weaponReload.remainingMs / 100) / 10
-    }s`
-    : "Ready";
   const interactPromptLabel = player.canInteract
     ? `Press ${formatKeyCode(settings.keybinds.pickup)} to loot ${
       player.interactWeaponKind === "sniper" ? "Sniper" : "Rifle"
     }`
     : "";
 
-  const controlsPreview = useMemo(() => {
-    const b = settings.keybinds;
-    return [
-      `${formatKeyCode(b.moveForward)}/${formatKeyCode(b.moveLeft)}/${
-        formatKeyCode(b.moveBackward)
-      }/${formatKeyCode(b.moveRight)} move`,
-      `${formatKeyCode(b.sprint)} run modifier`,
-      `${formatKeyCode(b.walkModifier)} walk modifier`,
-      `${formatKeyCode(b.crouch)} crouch (${settings.crouchMode})`,
-      `${formatKeyCode(b.jump)} jump`,
-      `${formatKeyCode(b.toggleView)} FPP/TPP`,
-      `${formatKeyCode(b.peekLeft)}/${formatKeyCode(b.peekRight)} lean`,
-      `${formatKeyCode(b.pickup)}/${formatKeyCode(b.drop)} loot/drop`,
-      `${formatKeyCode(b.equipRifle)}/${formatKeyCode(b.equipSniper)} slot swap`,
-      `${formatKeyCode(b.reload)} reload`,
-      `${formatKeyCode(b.tab)} inventory hold`,
-      `${formatKeyCode(b.reset)} reset targets`,
-      "Mouse look / fire / ADS",
-      "P perf panel",
-      "Esc pause",
-    ];
-  }, [settings.crouchMode, settings.keybinds]);
   const updaterPhaseLabel = formatUpdaterPhase(updaterStatus.phase);
   const updaterPhaseClass = updaterStatus.phase === "error"
     ? "error"
@@ -1066,8 +1040,6 @@ export function GameRoot({
   const uiOverlayClassName = gameplayHudVisible
     ? "ui-overlay ui-overlay--practice"
     : "ui-overlay";
-  const liveFps = Number.isFinite(perfMetrics.fps) ? Math.max(0, perfMetrics.fps) : 0;
-
   return (
     <div
       className={`app-shell ${isPaused ? "paused" : "playing"} phase-${phase}`}
@@ -3198,139 +3170,9 @@ export function GameRoot({
             : null}
         </div>
 
-        {gameplayHudVisible && hudPanels.controls
-          ? (
-            <div className="corner-bottom-left panel tactical-panel compact-panel">
-              <div className="panel-eyebrow">Controls</div>
-              <h2>Quick Reference</h2>
-              <ul className="control-list">
-                {controlsPreview.map((line) => <li key={line}>{line}</li>)}
-              </ul>
-            </div>
-          )
+        {gameplayHudVisible && !isPaused
+          ? <PubgHud player={player} visible={true} />
           : null}
-
-        <div className="corner-bottom-right-stack">
-          {gameplayHudVisible
-            ? (
-              <div className="panel tactical-panel compact-panel ammo-panel">
-                <div className="panel-eyebrow">Loadout</div>
-                <h2>{activeSlotLabel}</h2>
-                <ul className="ammo-list">
-                  <li>{rifleAmmoLine}</li>
-                  <li>{sniperAmmoLine}</li>
-                </ul>
-                <div className="reload-row">
-                  <span>Reload</span>
-                  <strong>{reloadStatusLabel}</strong>
-                </div>
-                {player.weaponReload.active
-                  ? (
-                    <div className="reload-progress-track" aria-hidden="true">
-                      <span
-                        className="reload-progress-fill"
-                        style={{
-                          width: `${Math.round(
-                            clamp01(player.weaponReload.progress) * 100,
-                          )}%`,
-                        }}
-                      />
-                    </div>
-                  )
-                  : null}
-              </div>
-            )
-            : null}
-          {gameplayHudVisible && hudPanels.settings
-          ? (
-            <div className="panel tactical-panel compact-panel">
-              <div className="panel-eyebrow">Settings Snapshot</div>
-              <h2>Tactical Console</h2>
-              <div className="quick-settings-stack">
-                <SwitchRow
-                  label="Shadows"
-                  hint="World shadows"
-                  checked={settings.shadows}
-                  onChange={(checked) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      shadows: checked,
-                    }))}
-                />
-                <SwitchRow
-                  label="Perf Panel"
-                  hint="Top-right perf HUD"
-                  checked={hudPanels.performance}
-                  onChange={(checked) =>
-                    setHudPanels((prev) => ({
-                      ...prev,
-                      performance: checked,
-                    }))}
-                />
-                <div className="field-row">
-                  <div>
-                    <div className="field-label">Pixel Ratio</div>
-                    <div className="field-hint">Render scale</div>
-                  </div>
-                  <div className="segmented-row compact">
-                    {PIXEL_RATIO_OPTIONS.map((option) => (
-                      <button
-                        key={option.value}
-                        type="button"
-                        className={`chip-btn ${
-                          settings.pixelRatioScale === option.value
-                            ? "active"
-                            : ""
-                        }`}
-                        onClick={() =>
-                          setSettings((prev) => ({
-                            ...prev,
-                            pixelRatioScale: option.value,
-                          }))}
-                      >
-                        {option.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="field-row">
-                  <div>
-                    <div className="field-label">Stress Mode</div>
-                    <div className="field-hint">Range clutter</div>
-                  </div>
-                  <button
-                    type="button"
-                    className="btn"
-                    onClick={() => {
-                      setStressCount((prev) => {
-                        const currentIndex = STRESS_STEPS.indexOf(prev);
-                        const nextIndex = (currentIndex + 1) %
-                          STRESS_STEPS.length;
-                        return STRESS_STEPS[nextIndex];
-                      });
-                    }}
-                  >
-                    {stressLabel}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )
-          : null}
-          <div className="fps-minimal" aria-label={`FPS ${liveFps.toFixed(0)}`}>
-            {liveFps.toFixed(0)} FPS
-          </div>
-          {gameplayHudVisible
-            ? (
-              <div
-                className="fps-minimal"
-                aria-label={`Version ${updaterStatus.currentVersion}`}
-              >
-                v{updaterStatus.currentVersion}
-              </div>
-            )
-            : null}
-        </div>
       </div>
       <div
         className="kill-pulse-overlay"

@@ -1,5 +1,5 @@
-import * as THREE from "three";
-import { type WeaponRecoilProfiles } from "./types";
+import * as THREE from 'three';
+import { type WeaponRecoilProfiles } from './types';
 
 export type WeaponShotEvent = {
   timestamp: number;
@@ -12,9 +12,9 @@ export type WeaponShotEvent = {
   recoilYawRadians: number;
 };
 
-export type WeaponKind = "rifle" | "sniper";
+export type WeaponKind = 'rifle' | 'sniper';
 
-export type WeaponSlotId = "slotA" | "slotB";
+export type WeaponSlotId = 'slotA' | 'slotB';
 
 export type WeaponSlotState = {
   weaponKind: WeaponKind | null;
@@ -94,7 +94,7 @@ const WEAPON_CONFIG: Record<WeaponKind, WeaponProfile> = {
     recoilYawDrift: 0.000005,
     moveSpreadBase: 0.1,
     moveSpreadSprint: 0.1,
-    reloadMs: 1600,
+    reloadMs: 3000,
   },
   sniper: {
     ammoPerPack: 30,
@@ -102,14 +102,14 @@ const WEAPON_CONFIG: Record<WeaponKind, WeaponProfile> = {
     fireIntervalMs: 700,
     damage: 60,
     muzzleFlashMs: 70,
-    rechamberMs: 980,
+    rechamberMs: 1100,
     recoilPitchBase: 0.05,
     recoilPitchRamp: 0,
     recoilYawRange: 0.05,
     recoilYawDrift: 0.0005,
     moveSpreadBase: 0.05,
     moveSpreadSprint: 0.05,
-    reloadMs: 2200,
+    reloadMs: 3000,
   },
 };
 
@@ -163,14 +163,16 @@ function resolveDefaultSlot(weaponKind: WeaponKind): WeaponSlotState {
     magAmmo: 0,
     reserveAmmo: 0,
     maxMagAmmo: MAX_MAG_AMMO,
-    maxReserveAmmo: WEAPON_CONFIG[weaponKind].ammoPerPack * WEAPON_CONFIG[weaponKind].maxPacks,
+    maxReserveAmmo:
+      WEAPON_CONFIG[weaponKind].ammoPerPack *
+      WEAPON_CONFIG[weaponKind].maxPacks,
     maxPacks: WEAPON_CONFIG[weaponKind].maxPacks,
     packAmmo: WEAPON_CONFIG[weaponKind].ammoPerPack,
   };
 }
 
-const DEFAULT_SLOT_A = resolveDefaultSlot("rifle");
-const DEFAULT_SLOT_B = resolveDefaultSlot("sniper");
+const DEFAULT_SLOT_A = resolveDefaultSlot('rifle');
+const DEFAULT_SLOT_B = resolveDefaultSlot('sniper');
 
 type WeaponDropState = {
   isPresentOnGround: boolean;
@@ -181,17 +183,10 @@ function clampProfileValue(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
 
-function countPacksFromAmmo(ammo: number, packAmmo: number) {
-  if (packAmmo <= 0) {
-    return 0;
-  }
-  return Math.ceil(Math.max(0, ammo) / packAmmo);
-}
-
 export class WeaponSystem {
   private slotA: WeaponSlotState = { ...DEFAULT_SLOT_A };
   private slotB: WeaponSlotState = { ...DEFAULT_SLOT_B };
-  private activeSlot: WeaponSlotId = "slotA";
+  private activeSlot: WeaponSlotId = 'slotA';
   private droppedRifle: WeaponDropState = {
     isPresentOnGround: true,
     position: DEFAULT_DROPPED_POSITION.rifle.clone(),
@@ -211,7 +206,7 @@ export class WeaponSystem {
   private sniperRechamberUntilMs = 0;
 
   private pendingSwitchToKind: WeaponKind | null = null;
-  private switchFromKind: WeaponKind = "rifle";
+  private switchFromKind: WeaponKind = 'rifle';
   private switchStartedAtMs = 0;
   private switchUntilMs = 0;
 
@@ -260,7 +255,11 @@ export class WeaponSystem {
       },
       sniper: {
         recoilPitchBase: clampProfileValue(next.sniper.recoilPitchBase, 0, 0.5),
-        recoilPitchRamp: clampProfileValue(next.sniper.recoilPitchRamp, 0, 0.04),
+        recoilPitchRamp: clampProfileValue(
+          next.sniper.recoilPitchRamp,
+          0,
+          0.04,
+        ),
         recoilYawRange: clampProfileValue(next.sniper.recoilYawRange, 0, 1),
         recoilYawDrift: clampProfileValue(next.sniper.recoilYawDrift, 0, 0.02),
         moveSpreadBase: clampProfileValue(next.sniper.moveSpreadBase, 0, 1),
@@ -270,11 +269,11 @@ export class WeaponSystem {
   }
 
   private getSlotById(slotId: WeaponSlotId): WeaponSlotState {
-    return slotId === "slotA" ? this.slotA : this.slotB;
+    return slotId === 'slotA' ? this.slotA : this.slotB;
   }
 
   private setSlotById(slotId: WeaponSlotId, next: WeaponSlotState) {
-    if (slotId === "slotA") {
+    if (slotId === 'slotA') {
       this.slotA = { ...next };
     } else {
       this.slotB = { ...next };
@@ -282,11 +281,11 @@ export class WeaponSystem {
   }
 
   private getOtherSlotId(slotId: WeaponSlotId): WeaponSlotId {
-    return slotId === "slotA" ? "slotB" : "slotA";
+    return slotId === 'slotA' ? 'slotB' : 'slotA';
   }
 
   private getDropState(kind: WeaponKind): WeaponDropState {
-    return kind === "rifle" ? this.droppedRifle : this.droppedSniper;
+    return kind === 'rifle' ? this.droppedRifle : this.droppedSniper;
   }
 
   private resolveActiveSlot(): WeaponSlotState {
@@ -314,13 +313,13 @@ export class WeaponSystem {
     const canSniper = sniper.isPresentOnGround && sniperDistSq <= limitSq;
 
     if (canRifle && canSniper) {
-      return rifleDistSq <= sniperDistSq ? "rifle" : "sniper";
+      return rifleDistSq <= sniperDistSq ? 'rifle' : 'sniper';
     }
     if (canRifle) {
-      return "rifle";
+      return 'rifle';
     }
     if (canSniper) {
-      return "sniper";
+      return 'sniper';
     }
     return null;
   }
@@ -358,47 +357,40 @@ export class WeaponSystem {
     });
   }
 
-  private getDropPositionForWeapon(playerPosition: THREE.Vector3) {
-    return {
-      x: playerPosition.x,
-      y: DROP_HEIGHT,
-      z: playerPosition.z,
-    };
-  }
-
   private isSwitching(nowMs: number) {
     return Boolean(
       this.pendingSwitchToKind !== null &&
-        nowMs >= this.switchStartedAtMs &&
-        nowMs < this.switchUntilMs,
+      nowMs >= this.switchStartedAtMs &&
+      nowMs < this.switchUntilMs,
     );
   }
 
   private applyPendingSwitch(nowMs: number) {
-    if (
-      this.pendingSwitchToKind === null ||
-      nowMs < this.switchUntilMs
-    ) {
+    if (this.pendingSwitchToKind === null || nowMs < this.switchUntilMs) {
       return;
     }
     this.activeSlot = this.getSlotIdForKind(this.pendingSwitchToKind);
     this.pendingSwitchToKind = null;
     this.switchStartedAtMs = 0;
     this.switchUntilMs = 0;
-    this.switchFromKind = this.resolveActiveWeaponKind() ?? "rifle";
+    this.switchFromKind = this.resolveActiveWeaponKind() ?? 'rifle';
     this.clearTracer();
     this.setTriggerHeld(false);
   }
 
   private getSlotIdForKind(kind: WeaponKind): WeaponSlotId {
-    if (kind === "rifle") {
-      return "slotA";
+    if (kind === 'rifle') {
+      return 'slotA';
     }
-    return "slotB";
+    return 'slotB';
   }
 
   private applyPendingReloadCompletion(nowMs: number) {
-    if (!this.reloadWeaponKind || !this.reloadSlot || nowMs < this.reloadUntilMs) {
+    if (
+      !this.reloadWeaponKind ||
+      !this.reloadSlot ||
+      nowMs < this.reloadUntilMs
+    ) {
       return;
     }
 
@@ -495,11 +487,15 @@ export class WeaponSystem {
       this.shotIndex += 1;
       activeSlot.magAmmo = Math.max(0, activeSlot.magAmmo - 1);
 
-      const recoilPitch = recoilProfile.recoilPitchBase +
+      const recoilPitch =
+        recoilProfile.recoilPitchBase +
         recoilProfile.recoilPitchRamp * shotIndex;
       let recoilYaw = (Math.random() - 0.5) * 2 * recoilProfile.recoilYawRange;
       recoilYaw += this.yawDriftDirection * recoilProfile.recoilYawDrift;
-      if (shotIndex > 0 && shotIndex % (5 + Math.floor(Math.random() * 4)) === 0) {
+      if (
+        shotIndex > 0 &&
+        shotIndex % (5 + Math.floor(Math.random() * 4)) === 0
+      ) {
         this.yawDriftDirection *= -1;
       }
 
@@ -515,7 +511,7 @@ export class WeaponSystem {
       });
 
       this.muzzleFlashUntil = nowMs + config.muzzleFlashMs;
-      if (activeKind === "sniper" && config.rechamberMs !== undefined) {
+      if (activeKind === 'sniper' && config.rechamberMs !== undefined) {
         this.sniperRechamberStartedAtMs = nowMs;
         this.sniperRechamberUntilMs = nowMs + config.rechamberMs;
       }
@@ -545,7 +541,7 @@ export class WeaponSystem {
   }
 
   getActiveWeapon(): WeaponKind {
-    return this.getActiveWeaponPayload() ?? "rifle";
+    return this.getActiveWeaponPayload() ?? 'rifle';
   }
 
   getSlotStateForLoadout(slotId: WeaponSlotId): WeaponSlotState {
@@ -628,7 +624,7 @@ export class WeaponSystem {
     this.sniperRechamberUntilMs = 0;
     this.sniperRechamberStartedAtMs = 0;
     this.pendingSwitchToKind = null;
-    this.switchFromKind = this.resolveActiveWeaponKind() ?? "rifle";
+    this.switchFromKind = this.resolveActiveWeaponKind() ?? 'rifle';
     this.switchStartedAtMs = 0;
     this.switchUntilMs = 0;
     this.clearTracer();
@@ -667,7 +663,7 @@ export class WeaponSystem {
     }
 
     this.pendingSwitchToKind = targetSlot.weaponKind;
-    this.switchFromKind = this.resolveActiveWeaponKind() ?? "rifle";
+    this.switchFromKind = this.resolveActiveWeaponKind() ?? 'rifle';
     this.switchStartedAtMs = nowMs;
     this.switchUntilMs = nowMs + WEAPON_SWITCH_DURATION_MS;
     this.setTriggerHeld(false);
@@ -775,7 +771,7 @@ export class WeaponSystem {
   getSwitchState(nowMs: number): WeaponSwitchState {
     this.applyPendingSwitch(nowMs);
     if (!this.pendingSwitchToKind) {
-      const active = this.resolveActiveWeaponKind() ?? "rifle";
+      const active = this.resolveActiveWeaponKind() ?? 'rifle';
       return {
         active: false,
         progress: 1,
@@ -838,11 +834,11 @@ export class WeaponSystem {
   }
 
   getSlotFromKey(code: string): WeaponSlotId | null {
-    if (code === "slotA") {
-      return "slotA";
+    if (code === 'slotA') {
+      return 'slotA';
     }
-    if (code === "slotB") {
-      return "slotB";
+    if (code === 'slotB') {
+      return 'slotB';
     }
     return null;
   }
@@ -850,7 +846,7 @@ export class WeaponSystem {
   reset() {
     this.slotA = { ...DEFAULT_SLOT_A };
     this.slotB = { ...DEFAULT_SLOT_B };
-    this.activeSlot = "slotA";
+    this.activeSlot = 'slotA';
 
     this.droppedRifle.isPresentOnGround = true;
     this.droppedRifle.position.copy(DEFAULT_DROPPED_POSITION.rifle);
@@ -865,7 +861,7 @@ export class WeaponSystem {
     this.sniperRechamberUntilMs = 0;
 
     this.pendingSwitchToKind = null;
-    this.switchFromKind = this.resolveActiveWeaponKind() ?? "rifle";
+    this.switchFromKind = this.resolveActiveWeaponKind() ?? 'rifle';
     this.switchStartedAtMs = 0;
     this.switchUntilMs = 0;
 
@@ -890,11 +886,11 @@ export const DEFAULT_WEAPON_WORLD_STATE: WeaponWorldState = {
     isPresentOnGround: true,
     droppedPosition: [1.9, DROP_HEIGHT, 3.5],
   },
-  activeSlot: "slotA",
+  activeSlot: 'slotA',
   loadout: {
-    activeSlot: "slotA",
-    slotA: resolveDefaultSlot("rifle"),
-    slotB: resolveDefaultSlot("sniper"),
+    activeSlot: 'slotA',
+    slotA: resolveDefaultSlot('rifle'),
+    slotB: resolveDefaultSlot('sniper'),
   },
   reload: {
     active: false,

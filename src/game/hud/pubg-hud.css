@@ -1,0 +1,197 @@
+/* PUBG-style HUD — isolated from App.css */
+
+.pubg-hud {
+  --pubg-bg: rgba(0, 0, 0, 0.55);
+  --pubg-bg-active: rgba(0, 0, 0, 0.72);
+  --pubg-text: rgba(255, 255, 255, 0.92);
+  --pubg-text-dim: rgba(255, 255, 255, 0.48);
+  --pubg-accent: #e8c252;
+  --pubg-accent-dim: rgba(232, 194, 82, 0.35);
+  --pubg-health: #ffffff;
+  --pubg-health-bg: rgba(255, 255, 255, 0.15);
+  --pubg-border: rgba(255, 255, 255, 0.12);
+  --pubg-border-active: rgba(255, 255, 255, 0.28);
+
+  position: fixed;
+  bottom: 20px;
+  left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-family: 'Rajdhani', sans-serif;
+  z-index: 10000;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* ── Weapon Slots Row ── */
+
+.pubg-weapon-slots {
+  display: flex;
+  gap: 4px;
+}
+
+.pubg-weapon-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 130px;
+  padding: 6px 8px;
+  background: var(--pubg-bg);
+  border: 1px solid var(--pubg-border);
+  border-radius: 2px;
+  opacity: 0.5;
+  transition: opacity 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.pubg-weapon-card.active {
+  opacity: 1;
+  background: var(--pubg-bg-active);
+  border-color: var(--pubg-border-active);
+  border-left: 3px solid var(--pubg-accent);
+}
+
+.pubg-weapon-card.empty {
+  opacity: 0.3;
+}
+
+.pubg-slot-number {
+  position: absolute;
+  top: 3px;
+  left: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--pubg-text-dim);
+  line-height: 1;
+}
+
+.pubg-weapon-card.active .pubg-slot-number {
+  color: var(--pubg-accent);
+}
+
+.pubg-weapon-thumbnail {
+  width: 90px;
+  height: 40px;
+  object-fit: contain;
+  filter: brightness(1.2) drop-shadow(0 0 2px rgba(255, 255, 255, 0.15));
+}
+
+.pubg-weapon-card:not(.active) .pubg-weapon-thumbnail {
+  filter: brightness(0.6) grayscale(0.4);
+}
+
+.pubg-thumbnail-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 90px;
+  height: 40px;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--pubg-text-dim);
+  letter-spacing: 2px;
+}
+
+.pubg-weapon-card.active .pubg-thumbnail-fallback {
+  color: var(--pubg-text);
+}
+
+.pubg-slot-ammo {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.pubg-slot-mag {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--pubg-text);
+}
+
+.pubg-slot-divider {
+  font-size: 11px;
+  color: var(--pubg-text-dim);
+}
+
+.pubg-slot-reserve {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--pubg-text-dim);
+}
+
+.pubg-weapon-card:not(.active) .pubg-slot-mag,
+.pubg-weapon-card:not(.active) .pubg-slot-divider,
+.pubg-weapon-card:not(.active) .pubg-slot-reserve {
+  color: var(--pubg-text-dim);
+}
+
+/* ── Ammo Display ── */
+
+.pubg-ammo-display {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 8px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.pubg-ammo-mag {
+  font-size: 32px;
+  font-weight: 700;
+  color: var(--pubg-text);
+}
+
+.pubg-ammo-separator {
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--pubg-text-dim);
+  margin: 0 2px;
+}
+
+.pubg-ammo-reserve {
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--pubg-text-dim);
+}
+
+.pubg-reload-bar {
+  width: 100%;
+  height: 3px;
+  margin-top: 4px;
+  background: var(--pubg-health-bg);
+  border-radius: 1px;
+  overflow: hidden;
+}
+
+.pubg-reload-fill {
+  height: 100%;
+  background: var(--pubg-accent);
+  transition: width 0.08s linear;
+  border-radius: 1px;
+}
+
+/* ── Health Bar ── */
+
+.pubg-health-bar {
+  display: flex;
+  gap: 2px;
+  width: 268px;
+  height: 6px;
+  padding: 0;
+}
+
+.pubg-health-segment {
+  flex: 1;
+  height: 100%;
+  background: var(--pubg-health);
+  border-radius: 1px;
+}
+
+.pubg-health-segment.empty {
+  background: var(--pubg-health-bg);
+}

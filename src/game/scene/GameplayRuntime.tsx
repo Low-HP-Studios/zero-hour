@@ -191,6 +191,11 @@ function clamp01(value: number) {
   return Math.max(0, Math.min(1, value));
 }
 
+function resolveStateDurationSeconds(progress: number, remainingMs: number) {
+  const remainingFraction = Math.max(0.001, 1 - clamp01(progress));
+  return Math.max(0.1, remainingMs / 1000 / remainingFraction);
+}
+
 function resolveCrouchTransitionTargetPose(
   state: Exclude<CrouchTransitionState, "idle">,
 ): number {
@@ -1004,6 +1009,8 @@ export const GameplayRuntime = forwardRef<
   const lastImpactCleanupAtRef = useRef(0);
   const lastSniperRechamberActiveRef = useRef<boolean | null>(null);
   const lastSniperRechamberProgressStepRef = useRef(-1);
+  const lastReloadActiveRef = useRef<boolean | null>(null);
+  const lastReloadWeaponKindRef = useRef<WeaponKind | null>(null);
   const characterWeaponAttachBoneRef = useRef<THREE.Bone | null>(null);
   const characterHeadBoneRef = useRef<THREE.Bone | null>(null);
   const characterUpperTorsoBoneRef = useRef<THREE.Bone | null>(null);
@@ -1347,11 +1354,13 @@ export const GameplayRuntime = forwardRef<
     (action: string) => {
       const weapon = weaponRef.current;
       if (action === "equipRifle") {
+        audioRef.current.cancelReload();
         audioRef.current.cancelSniperShelling();
         weapon.setActiveSlot("slotA");
         return;
       }
       if (action === "equipSniper") {
+        audioRef.current.cancelReload();
         audioRef.current.cancelSniperShelling();
         weapon.setActiveSlot("slotB");
         return;
@@ -1453,6 +1462,7 @@ export const GameplayRuntime = forwardRef<
   controllerRef.current = controller;
 
   const resetForMenu = useCallback(() => {
+    audioRef.current.cancelReload();
     audioRef.current.cancelSniperShelling();
     weaponRef.current.reset();
     controllerRef.current?.setPose(
@@ -1471,6 +1481,8 @@ export const GameplayRuntime = forwardRef<
     lastFirstPersonRef.current = false;
     lastSniperRechamberActiveRef.current = false;
     lastSniperRechamberProgressStepRef.current = 100;
+    lastReloadActiveRef.current = false;
+    lastReloadWeaponKindRef.current = null;
     rifleFireIntentRef.current = false;
     rifleRunStateRef.current = "idle";
     rifleRunStateUntilRef.current = 0;
@@ -1560,6 +1572,7 @@ export const GameplayRuntime = forwardRef<
     const nowMs = performance.now();
     const weapon = weaponRef.current;
     const audio = audioRef.current;
+    const activeWeaponKind = weapon.getActiveWeapon();
     const movementSettings = movementSettingsRef.current;
     const rifleWalkSpeedScale = Math.max(
       0.2,
@@ -1624,9 +1637,14 @@ export const GameplayRuntime = forwardRef<
       if (
         !previousSniperRechamberActive &&
         sniperRechamber.active &&
-        weapon.getActiveWeapon() === "sniper"
+        activeWeaponKind === "sniper"
       ) {
         audio.playSniperShelling();
+      } else if (
+        previousSniperRechamberActive &&
+        (!sniperRechamber.active || activeWeaponKind !== "sniper")
+      ) {
+        audio.cancelSniperShelling();
       }
     }
 
@@ -1637,6 +1655,30 @@ export const GameplayRuntime = forwardRef<
     const movementTier = controller.getMovementTier();
     const crouched = controller.isCrouched();
     const weaponEquipped = weapon.isEquipped();
+    const weaponReload = weapon.getReloadState(nowMs);
+    const reloadVisible = weaponReload.active &&
+      weaponReload.weaponKind !== null &&
+      weaponEquipped &&
+      activeWeaponKind === weaponReload.weaponKind;
+    const reloadDurationSeconds = reloadVisible
+      ? resolveStateDurationSeconds(
+        weaponReload.progress,
+        weaponReload.remainingMs,
+      )
+      : undefined;
+    const previousReloadActive = lastReloadActiveRef.current;
+    const previousReloadWeaponKind = lastReloadWeaponKindRef.current;
+    if (
+      reloadVisible &&
+      weaponReload.weaponKind &&
+      (!previousReloadActive || previousReloadWeaponKind !== weaponReload.weaponKind)
+    ) {
+      audio.playReload(weaponReload.weaponKind, reloadDurationSeconds);
+    } else if (previousReloadActive && !reloadVisible) {
+      audio.cancelReload();
+    }
+    lastReloadActiveRef.current = reloadVisible;
+    lastReloadWeaponKindRef.current = reloadVisible ? weaponReload.weaponKind : null;
     const adsActive = controller.isADS();
     const firstPerson = controller.isFirstPerson();
     const moveInput = controller.getMoveInput();
@@ -2053,6 +2095,15 @@ export const GameplayRuntime = forwardRef<
       }
     }
 
+    if (reloadVisible) {
+      if (lowerBodyOverlayState) {
+        nextAnimState = lowerBodyOverlayState;
+        lowerBodyOverlayState = null;
+      }
+      upperBodyOverlayState = "rifleReload";
+      rifleReadyPoseActive = false;
+    }
+
     weapon.setTriggerHeld(rifleFireIntentRef.current);
 
     const crouchPose = crouchTransitionState !== "idle"
@@ -2171,6 +2222,13 @@ export const GameplayRuntime = forwardRef<
         : 0.12,
       upperBodyState: upperBodyOverlayState,
       upperBodyLocomotionScale: characterLocomotionScale,
+      upperBodySeekNormalizedTime: reloadVisible
+        ? weaponReload.progress
+        : undefined,
+      upperBodyDesiredDurationSeconds: reloadVisible
+        ? reloadDurationSeconds
+        : undefined,
+      upperBodyFadeDurationSeconds: reloadVisible ? 0.08 : undefined,
     });
     lastCharacterAnimStateRef.current = nextAnimState;
     const footstepPlaybackRate = resolveFootstepPlaybackRate(

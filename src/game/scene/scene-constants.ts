@@ -284,6 +284,10 @@ export const ANIM_CLIPS: { name: string; url: string }[] = [
     name: 'rifleRunStop',
     url: '/assets/animations/rifle/ready/run-stop.fbx',
   },
+  {
+    name: 'rifleReload',
+    url: '/assets/animations/rifle/reload/reload-animation.fbx',
+  },
 ];
 
 export const WEAPON_MODEL_URLS: Record<WeaponKind, string> = {
@@ -413,6 +417,7 @@ export type CharacterAnimState =
   | 'rifleRun'
   | 'rifleRunStart'
   | 'rifleRunStop'
+  | 'rifleReload'
   | 'sprint';
 
 export type BulletImpactMark = {

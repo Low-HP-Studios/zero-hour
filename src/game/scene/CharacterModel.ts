@@ -318,7 +318,8 @@ function configureActionLooping(
     clipName === "rifleCrouchEnter" ||
     clipName === "rifleCrouchExit" ||
     clipName === "rifleRunStart" ||
-    clipName === "rifleRunStop"
+    clipName === "rifleRunStop" ||
+    clipName === "rifleReload"
   ) {
     action.setLoop(THREE.LoopOnce, 1);
     action.clampWhenFinished = true;
