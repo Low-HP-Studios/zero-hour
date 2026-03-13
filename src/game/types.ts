@@ -250,6 +250,8 @@ export const DEFAULT_MOVEMENT_SETTINGS: MovementProfileSettings = {
 export type EnemyOutlineColor = 'red' | 'yellow' | 'cyan' | 'magenta';
 export type CrouchMode = 'hold' | 'toggle';
 export const DEFAULT_CROUCH_MODE: CrouchMode = 'toggle';
+export type InventoryOpenMode = 'toggle' | 'hold';
+export const DEFAULT_INVENTORY_OPEN_MODE: InventoryOpenMode = 'toggle';
 
 export type EnemyOutlineSettings = {
   enabled: boolean;
@@ -272,6 +274,7 @@ export type GameSettings = {
   sensitivity: AimSensitivitySettings;
   keybinds: ControlBindings;
   crouchMode: CrouchMode;
+  inventoryOpenMode: InventoryOpenMode;
   fov: number;
   weaponAlignment: WeaponAlignmentOffset;
   crosshair: CrosshairSettings;
@@ -317,6 +320,85 @@ export type PlayerWeaponReloadSnapshot = {
   remainingMs: number;
 };
 
+export type InventoryCategory =
+  | 'weapon'
+  | 'ammo'
+  | 'attachment';
+
+export type InventoryAttachmentSlot = 'scope' | 'magazine' | 'grip' | 'muzzle';
+export type InventoryWeaponEquipSlot = 'primary' | 'secondary';
+export type InventoryEquipSlot = InventoryWeaponEquipSlot;
+
+export type InventoryItemStackSnapshot = {
+  uid: string;
+  itemId: string;
+  name: string;
+  icon: string;
+  category: InventoryCategory;
+  quantity: number;
+};
+
+export type InventoryNearbyItemSnapshot = {
+  id: string;
+  distance: number;
+  stack: InventoryItemStackSnapshot;
+};
+
+export type InventoryAttachmentSlotsSnapshot = Record<
+  InventoryAttachmentSlot,
+  InventoryItemStackSnapshot | null
+>;
+
+export type InventoryBackpackSnapshot = {
+  columns: number;
+  capacity: number;
+  slots: Array<InventoryItemStackSnapshot | null>;
+};
+
+export type InventoryEquippedSnapshot = {
+  primaryAttachments: InventoryAttachmentSlotsSnapshot;
+  secondaryAttachments: InventoryAttachmentSlotsSnapshot;
+  activeQuickSlot: 'primary' | 'secondary';
+};
+
+export type InventoryPanelSnapshot = {
+  revision: number;
+  open: boolean;
+  openMode: InventoryOpenMode;
+  nearby: InventoryNearbyItemSnapshot[];
+  backpack: InventoryBackpackSnapshot;
+  equipped: InventoryEquippedSnapshot;
+};
+
+export type InventoryMoveLocation =
+  | {
+      zone: 'nearby';
+      id: string;
+    }
+  | {
+      zone: 'backpack';
+      index: number;
+    }
+  | {
+      zone: 'equip';
+      slot: InventoryEquipSlot;
+    }
+  | {
+      zone: 'attachment';
+      weaponSlot: InventoryWeaponEquipSlot;
+      slot: InventoryAttachmentSlot;
+    };
+
+export type InventoryMoveRequest = {
+  from: InventoryMoveLocation;
+  to: InventoryMoveLocation;
+};
+
+export type InventoryMoveResult = {
+  ok: boolean;
+  message?: string;
+};
+
 export const DEFAULT_PERF_METRICS: PerfMetrics = {
   fps: 0,
   frameMs: 0,
@@ -324,6 +406,30 @@ export const DEFAULT_PERF_METRICS: PerfMetrics = {
   triangles: 0,
   geometries: 0,
   textures: 0,
+};
+
+const EMPTY_INVENTORY_ATTACHMENT_SLOTS: InventoryAttachmentSlotsSnapshot = {
+  scope: null,
+  magazine: null,
+  grip: null,
+  muzzle: null,
+};
+
+export const DEFAULT_INVENTORY_PANEL_SNAPSHOT: InventoryPanelSnapshot = {
+  revision: 0,
+  open: false,
+  openMode: DEFAULT_INVENTORY_OPEN_MODE,
+  nearby: [],
+  backpack: {
+    columns: 6,
+    capacity: 24,
+    slots: Array.from({ length: 36 }, () => null),
+  },
+  equipped: {
+    primaryAttachments: { ...EMPTY_INVENTORY_ATTACHMENT_SLOTS },
+    secondaryAttachments: { ...EMPTY_INVENTORY_ATTACHMENT_SLOTS },
+    activeQuickSlot: 'primary',
+  },
 };
 
 export type PlayerSnapshot = {
@@ -340,6 +446,8 @@ export type PlayerSnapshot = {
   canInteract: boolean;
   interactWeaponKind: WeaponSnapshotKind | null;
   inventoryPanelOpen: boolean;
+  inventoryPanelMode: InventoryOpenMode;
+  inventory: InventoryPanelSnapshot;
   weaponLoadout: PlayerWeaponLoadoutSnapshot;
   weaponReload: PlayerWeaponReloadSnapshot;
 };
@@ -358,6 +466,8 @@ export const DEFAULT_PLAYER_SNAPSHOT: PlayerSnapshot = {
   canInteract: false,
   interactWeaponKind: null,
   inventoryPanelOpen: false,
+  inventoryPanelMode: DEFAULT_INVENTORY_OPEN_MODE,
+  inventory: DEFAULT_INVENTORY_PANEL_SNAPSHOT,
   weaponLoadout: {
     activeSlot: 'slotA',
     slotA: {

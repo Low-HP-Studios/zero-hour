@@ -19,14 +19,19 @@ import {
 import { raycastTargets, type TargetRaycastHit } from "../Targets";
 import {
   type SniperRechamberState,
+  type WeaponSlotId,
   type WeaponKind,
   type WeaponShotEvent,
   type WeaponSwitchState,
   WeaponSystem,
 } from "../Weapon";
+import { InventorySystem } from "../inventory";
 import type {
   CollisionRect,
   GameSettings,
+  InventoryMoveLocation,
+  InventoryMoveRequest,
+  InventoryMoveResult,
   MovementProfileSettings,
   PerfMetrics,
   PlayerSnapshot,
@@ -91,6 +96,8 @@ export type GameplayRuntimeHandle = {
   requestPointerLock: () => void;
   releasePointerLock: () => void;
   dropWeaponForReturn: () => void;
+  moveInventoryItem: (request: InventoryMoveRequest) => InventoryMoveResult;
+  quickMoveInventoryItem: (location: InventoryMoveLocation) => InventoryMoveResult;
   resetForMenu: () => void;
 };
 
@@ -102,6 +109,7 @@ type GameplayRuntimeProps = {
   sensitivity: GameSettings["sensitivity"];
   keybinds: GameSettings["keybinds"];
   crouchMode: GameSettings["crouchMode"];
+  inventoryOpenMode: GameSettings["inventoryOpenMode"];
   fov: number;
   weaponAlignment: WeaponAlignmentOffset;
   movement: MovementProfileSettings;
@@ -239,6 +247,7 @@ const CROUCH_SPRINT_RELEASE_POSE = 0.35;
 const RIFLE_RUN_INPUT_GRACE_MS = 120;
 const RIFLE_LOCOMOTION_SCALE_MIN = 0.9;
 const RIFLE_LOCOMOTION_SCALE_MAX = 1.2;
+const INVENTORY_DROP_ZONE_NEARBY = "__drop_to_ground__";
 // Keep these in sync with PlayerController movement constants.
 const PLAYER_WALK_SPEED = 5.3;
 const PLAYER_SPRINT_SPEED = 8.2;
@@ -876,6 +885,7 @@ export const GameplayRuntime = forwardRef<
   sensitivity,
   keybinds,
   crouchMode,
+  inventoryOpenMode,
   fov,
   weaponAlignment,
   movement,
@@ -923,6 +933,7 @@ export const GameplayRuntime = forwardRef<
   }, [weaponModels]);
 
   const weaponRef = useRef<WeaponSystem>(new WeaponSystem());
+  const inventoryRef = useRef<InventorySystem>(new InventorySystem());
   const audioRef = useRef(sharedAudioManager);
   const controllerRef = useRef<PlayerControllerApi | null>(null);
   const targetsRef = useRef(targets);
@@ -1350,6 +1361,68 @@ export const GameplayRuntime = forwardRef<
     [],
   );
 
+  const resolveWeaponSlotId = useCallback((slot: "primary" | "secondary"): WeaponSlotId => {
+    return slot === "primary" ? "slotA" : "slotB";
+  }, []);
+
+  const resolveWeaponItemId = useCallback((kind: WeaponKind) => {
+    return kind === "rifle" ? "weapon_rifle" : "weapon_sniper";
+  }, []);
+
+  const equipGroundWeaponToSlot = useCallback((
+    groundId: string,
+    slot: "primary" | "secondary",
+    fallbackDropPosition?: [number, number, number],
+  ): InventoryMoveResult => {
+    const weaponId = inventoryRef.current.consumeGroundWeaponItem(groundId);
+    if (!weaponId) {
+      return { ok: false, message: "No weapon item in that ground slot." };
+    }
+
+    const slotId = resolveWeaponSlotId(slot);
+    const weaponKind: WeaponKind = weaponId === "weapon_rifle" ? "rifle" : "sniper";
+    const expectedSlot = weaponKind === "rifle" ? "slotA" : "slotB";
+    if (slotId !== expectedSlot) {
+      inventoryRef.current.dropWeaponItemToGround(weaponId, [
+        fallbackDropPosition?.[0] ?? PLAYER_SPAWN_POSITION.x,
+        0,
+        fallbackDropPosition?.[2] ?? PLAYER_SPAWN_POSITION.z,
+      ]);
+      return {
+        ok: false,
+        message: `That weapon only fits ${weaponKind === "rifle" ? "Primary" : "Secondary"} slot.`,
+      };
+    }
+
+    if (weaponRef.current.hasWeaponInSlot(slotId)) {
+      inventoryRef.current.dropWeaponItemToGround(weaponId, [
+        fallbackDropPosition?.[0] ?? PLAYER_SPAWN_POSITION.x,
+        0,
+        fallbackDropPosition?.[2] ?? PLAYER_SPAWN_POSITION.z,
+      ]);
+      return { ok: false, message: "Weapon slot already occupied." };
+    }
+
+    weaponRef.current.equipSlotWithWeapon(slotId, weaponKind);
+    return { ok: true };
+  }, [resolveWeaponSlotId]);
+
+  const dropWeaponFromSlot = useCallback((
+    slot: "primary" | "secondary",
+    position: [number, number, number],
+  ): InventoryMoveResult => {
+    const slotId = resolveWeaponSlotId(slot);
+    const removed = weaponRef.current.clearWeaponFromSlot(slotId);
+    if (!removed?.weaponKind) {
+      return { ok: false, message: "Weapon slot is already empty." };
+    }
+    inventoryRef.current.dropWeaponItemToGround(
+      resolveWeaponItemId(removed.weaponKind),
+      position,
+    );
+    return { ok: true };
+  }, [resolveWeaponItemId, resolveWeaponSlotId]);
+
   const handleAction = useCallback(
     (action: string) => {
       const weapon = weaponRef.current;
@@ -1357,12 +1430,14 @@ export const GameplayRuntime = forwardRef<
         audioRef.current.cancelReload();
         audioRef.current.cancelSniperShelling();
         weapon.setActiveSlot("slotA");
+        inventoryRef.current.setActiveQuickSlot("primary");
         return;
       }
       if (action === "equipSniper") {
         audioRef.current.cancelReload();
         audioRef.current.cancelSniperShelling();
         weapon.setActiveSlot("slotB");
+        inventoryRef.current.setActiveQuickSlot("secondary");
         return;
       }
       if (action === "reload") {
@@ -1380,32 +1455,69 @@ export const GameplayRuntime = forwardRef<
       }
 
       if (action === "pickup") {
-        weapon.pickSlotNearest(playerPosition);
+        const playerPosTuple: [number, number, number] = [
+          playerPosition.x,
+          playerPosition.y,
+          playerPosition.z,
+        ];
+        const nearest = inventoryRef.current.getNearbyGroundIds(playerPosTuple)[0];
+        if (nearest) {
+          const nearestItemId = inventoryRef.current.getGroundItemId(nearest.id);
+          if (nearestItemId === "weapon_rifle") {
+            equipGroundWeaponToSlot(nearest.id, "primary", playerPosTuple);
+            return;
+          }
+          if (nearestItemId === "weapon_sniper") {
+            equipGroundWeaponToSlot(nearest.id, "secondary", playerPosTuple);
+            return;
+          }
+        }
+        inventoryRef.current.quickPickupClosestNearby(
+          playerPosTuple,
+          weapon.getLoadoutState(),
+        );
         return;
       }
 
       if (action === "drop") {
-        camera.getWorldDirection(tempLookDirRef.current);
-        weapon.drop(playerPosition, tempLookDirRef.current);
+        const slotId = weapon.getActiveSlotId();
+        const activeSlot = slotId === "slotA" ? "primary" : "secondary";
+        dropWeaponFromSlot(activeSlot, [
+          playerPosition.x,
+          playerPosition.y,
+          playerPosition.z,
+        ]);
       }
     },
-    [camera],
+    [dropWeaponFromSlot, equipGroundWeaponToSlot],
   );
 
   const handlePlayerSnapshot = useCallback((snapshot: PlayerSnapshot) => {
     const playerPosition = controllerRef.current?.getPosition();
-    const pickupState = playerPosition && presentation.inputEnabled
-      ? weaponRef.current.getPickupState(playerPosition)
-      : { canPickup: false, weaponKind: null };
+    const playerPositionTuple: [number, number, number] = playerPosition
+      ? [playerPosition.x, playerPosition.y, playerPosition.z]
+      : [PLAYER_SPAWN_POSITION.x, PLAYER_SPAWN_POSITION.y, PLAYER_SPAWN_POSITION.z];
+    const inventorySnapshot = inventoryRef.current.getSnapshot(
+      playerPositionTuple,
+      snapshot.inventoryPanelOpen,
+      snapshot.inventoryPanelMode,
+    );
+    const nearestItem = inventorySnapshot.nearby[0] ?? null;
+    const nearestWeaponKind = nearestItem?.stack.itemId === "weapon_sniper"
+      ? "sniper"
+      : nearestItem?.stack.itemId === "weapon_rifle"
+      ? "rifle"
+      : null;
     const nowMs = performance.now();
     playerSnapshotCallbackRef.current({
       ...snapshot,
-      canInteract: pickupState.canPickup,
-      interactWeaponKind: pickupState.weaponKind,
+      canInteract: nearestWeaponKind !== null,
+      interactWeaponKind: nearestWeaponKind,
+      inventory: inventorySnapshot,
       weaponLoadout: weaponRef.current.getLoadoutState(),
       weaponReload: weaponRef.current.getReloadState(nowMs),
     });
-  }, [presentation.inputEnabled]);
+  }, []);
 
   const handleTriggerChange = useCallback((firing: boolean) => {
     rifleFireIntentRef.current = firing;
@@ -1448,6 +1560,7 @@ export const GameplayRuntime = forwardRef<
     sensitivity,
     keybinds,
     crouchMode,
+    inventoryOpenMode,
     fov,
     inputEnabled: presentation.inputEnabled,
     cameraEnabled: presentation.phase === "playing",
@@ -1533,7 +1646,94 @@ export const GameplayRuntime = forwardRef<
       ads: false,
       firstPerson: false,
     });
+    inventoryRef.current.reset();
   }, []);
+
+  const handleMoveInventoryItem = useCallback((
+    request: InventoryMoveRequest,
+  ): InventoryMoveResult => {
+    const playerPosition = controllerRef.current?.getPosition();
+    const playerTuple: [number, number, number] = playerPosition
+      ? [playerPosition.x, playerPosition.y, playerPosition.z]
+      : [PLAYER_SPAWN_POSITION.x, PLAYER_SPAWN_POSITION.y, PLAYER_SPAWN_POSITION.z];
+
+    if (request.to.zone === "equip" && request.to.slot === "primary") {
+      if (request.from.zone !== "nearby") {
+        return { ok: false, message: "Only nearby rifle items can fill Primary." };
+      }
+      return equipGroundWeaponToSlot(request.from.id, "primary", playerTuple);
+    }
+    if (request.to.zone === "equip" && request.to.slot === "secondary") {
+      if (request.from.zone !== "nearby") {
+        return { ok: false, message: "Only nearby sniper items can fill Secondary." };
+      }
+      return equipGroundWeaponToSlot(request.from.id, "secondary", playerTuple);
+    }
+
+    if (request.from.zone === "equip" && request.from.slot === "primary") {
+      if (request.to.zone === "nearby") {
+        return dropWeaponFromSlot("primary", playerTuple);
+      }
+      return { ok: false, message: "Primary can only be dropped to ground in this build." };
+    }
+    if (request.from.zone === "equip" && request.from.slot === "secondary") {
+      if (request.to.zone === "nearby") {
+        return dropWeaponFromSlot("secondary", playerTuple);
+      }
+      return { ok: false, message: "Secondary can only be dropped to ground in this build." };
+    }
+
+    const normalizedRequest = request.to.zone === "nearby" &&
+        request.to.id !== INVENTORY_DROP_ZONE_NEARBY &&
+        request.from.zone !== "nearby"
+      ? {
+        ...request,
+        to: {
+          zone: "nearby",
+          id: INVENTORY_DROP_ZONE_NEARBY,
+        } as const,
+      }
+      : request;
+
+    const result = inventoryRef.current.moveItem(
+      normalizedRequest,
+      playerTuple,
+      weaponRef.current.getLoadoutState(),
+    );
+    return result;
+  }, [dropWeaponFromSlot, equipGroundWeaponToSlot]);
+
+  const handleQuickMoveInventoryItem = useCallback((
+    location: InventoryMoveLocation,
+  ): InventoryMoveResult => {
+    const playerPosition = controllerRef.current?.getPosition();
+    const playerTuple: [number, number, number] = playerPosition
+      ? [playerPosition.x, playerPosition.y, playerPosition.z]
+      : [PLAYER_SPAWN_POSITION.x, PLAYER_SPAWN_POSITION.y, PLAYER_SPAWN_POSITION.z];
+
+    if (location.zone === "equip" && location.slot === "primary") {
+      return dropWeaponFromSlot("primary", playerTuple);
+    }
+    if (location.zone === "equip" && location.slot === "secondary") {
+      return dropWeaponFromSlot("secondary", playerTuple);
+    }
+
+    if (location.zone === "nearby") {
+      const itemId = inventoryRef.current.getGroundItemId(location.id);
+      if (itemId === "weapon_rifle") {
+        return equipGroundWeaponToSlot(location.id, "primary", playerTuple);
+      }
+      if (itemId === "weapon_sniper") {
+        return equipGroundWeaponToSlot(location.id, "secondary", playerTuple);
+      }
+    }
+
+    return inventoryRef.current.quickMove(
+      location,
+      playerTuple,
+      weaponRef.current.getLoadoutState(),
+    );
+  }, [dropWeaponFromSlot, equipGroundWeaponToSlot]);
 
   useImperativeHandle(ref, () => ({
     requestPointerLock: () => {
@@ -1547,11 +1747,28 @@ export const GameplayRuntime = forwardRef<
       if (!playerPosition) {
         return;
       }
-      camera.getWorldDirection(tempLookDirRef.current);
-      weaponRef.current.drop(playerPosition, tempLookDirRef.current);
+      const activeSlot = weaponRef.current.getActiveSlotId() === "slotA"
+        ? "primary"
+        : "secondary";
+      dropWeaponFromSlot(activeSlot, [
+        playerPosition.x,
+        playerPosition.y,
+        playerPosition.z,
+      ]);
+    },
+    moveInventoryItem: (request) => {
+      return handleMoveInventoryItem(request);
+    },
+    quickMoveInventoryItem: (location) => {
+      return handleQuickMoveInventoryItem(location);
     },
     resetForMenu,
-  }), [camera, resetForMenu]);
+  }), [
+    dropWeaponFromSlot,
+    handleMoveInventoryItem,
+    handleQuickMoveInventoryItem,
+    resetForMenu,
+  ]);
 
   useEffect(() => {
     if (lastPhaseRef.current === presentation.phase) {
@@ -1571,6 +1788,9 @@ export const GameplayRuntime = forwardRef<
     const clampedDelta = Math.min(delta, 1 / 20);
     const nowMs = performance.now();
     const weapon = weaponRef.current;
+    weapon.setAttachmentRuntimeModifiers(
+      inventoryRef.current.getAttachmentModifiers(),
+    );
     const audio = audioRef.current;
     const activeWeaponKind = weapon.getActiveWeapon();
     const movementSettings = movementSettingsRef.current;
@@ -1813,12 +2033,17 @@ export const GameplayRuntime = forwardRef<
     crouchTransitionUseRifleRef.current = crouchTransitionUseRifle;
     crouchTransitionPoseFromRef.current = crouchTransitionPoseFrom;
 
+    const activeQuickSlot = inventoryRef.current.getActiveQuickSlot();
+    const weaponControlEnabled = activeQuickSlot === "primary" ||
+      activeQuickSlot === "secondary";
     const firePrepIntent = isWeaponHoldEquipped &&
       !adsActive &&
       !crouched &&
+      weaponControlEnabled &&
       rifleFireIntentRef.current;
     const firePrepVisual = firePrepIntent && !movementActive;
     const crouchAimCompositeActive = isWeaponHoldEquipped &&
+      weaponControlEnabled &&
       rifleFireIntentRef.current &&
       !adsActive &&
       (crouched || crouchTransitionState !== "idle");
@@ -2104,7 +2329,7 @@ export const GameplayRuntime = forwardRef<
       rifleReadyPoseActive = false;
     }
 
-    weapon.setTriggerHeld(rifleFireIntentRef.current);
+    weapon.setTriggerHeld(weaponControlEnabled && rifleFireIntentRef.current);
 
     const crouchPose = crouchTransitionState !== "idle"
       ? currentCrouchPose
@@ -2646,6 +2871,7 @@ export const GameplayRuntime = forwardRef<
     }
 
     const worldState = weapon.getWorldState();
+    const groundWeaponState = inventoryRef.current.getGroundWeaponVisualState();
     const displayedWeapon = resolveDisplayedWeapon(weapon, switchState);
     const showBackSlots = presentation.phase === "playing" && !firstPerson;
     const upperTorsoBoneForBack = characterUpperTorsoBoneRef.current;
@@ -2689,15 +2915,15 @@ export const GameplayRuntime = forwardRef<
 
     updateWorldWeaponMesh(
       worldRiflePickupRef.current,
-      worldState.rifle.isPresentOnGround,
-      worldState.rifle.droppedPosition,
+      groundWeaponState.rifle.isPresentOnGround,
+      groundWeaponState.rifle.droppedPosition,
       presentation.pickupReveal,
       -Math.PI / 2,
     );
     updateWorldWeaponMesh(
       worldSniperPickupRef.current,
-      worldState.sniper.isPresentOnGround,
-      worldState.sniper.droppedPosition,
+      groundWeaponState.sniper.isPresentOnGround,
+      groundWeaponState.sniper.droppedPosition,
       presentation.pickupReveal,
       -Math.PI / 2,
     );

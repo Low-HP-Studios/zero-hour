@@ -6,12 +6,14 @@ import {
   DEFAULT_CROSSHAIR_SETTINGS,
   DEFAULT_ENEMY_OUTLINE_SETTINGS,
   DEFAULT_HUD_OVERLAY_TOGGLES,
+  DEFAULT_INVENTORY_OPEN_MODE,
   DEFAULT_WEAPON_ALIGNMENT,
   DEFAULT_MOVEMENT_SETTINGS,
   DEFAULT_WEAPON_RECOIL_PROFILES,
   type CrouchMode,
   type CrosshairColor,
   type EnemyOutlineColor,
+  type InventoryOpenMode,
   type WeaponRecoilProfiles,
   type GameSettings,
   type HudOverlayToggles,
@@ -61,6 +63,7 @@ const ENEMY_OUTLINE_COLORS: EnemyOutlineColor[] = [
 ];
 
 const CROUCH_MODES: CrouchMode[] = ["hold", "toggle"];
+const INVENTORY_OPEN_MODES: InventoryOpenMode[] = ["toggle", "hold"];
 
 export const DEFAULT_GAME_SETTINGS: GameSettings = {
   shadows: false,
@@ -69,6 +72,7 @@ export const DEFAULT_GAME_SETTINGS: GameSettings = {
   sensitivity: { ...DEFAULT_AIM_SENSITIVITY_SETTINGS },
   keybinds: { ...DEFAULT_CONTROL_BINDINGS },
   crouchMode: DEFAULT_CROUCH_MODE,
+  inventoryOpenMode: DEFAULT_INVENTORY_OPEN_MODE,
   fov: 50,
   weaponAlignment: { ...DEFAULT_WEAPON_ALIGNMENT },
   crosshair: cloneDefaultCrosshairSettings(),
@@ -187,6 +191,15 @@ function readCrouchMode(
     : fallback;
 }
 
+function readInventoryOpenMode(
+  value: unknown,
+  fallback: InventoryOpenMode,
+): InventoryOpenMode {
+  return INVENTORY_OPEN_MODES.includes(value as InventoryOpenMode)
+    ? (value as InventoryOpenMode)
+    : fallback;
+}
+
 export function parsePersistedSettings(value: unknown): PersistedSettings {
   const defaults = createDefaultPersistedSettings();
   if (!isRecord(value)) {
@@ -261,6 +274,10 @@ export function parsePersistedSettings(value: unknown): PersistedSettings {
       crouchMode: readCrouchMode(
         settings.crouchMode,
         defaults.settings.crouchMode,
+      ),
+      inventoryOpenMode: readInventoryOpenMode(
+        settings.inventoryOpenMode,
+        defaults.settings.inventoryOpenMode,
       ),
       sensitivity: {
         look: readClampedNumber(

@@ -59,7 +59,7 @@ export const BINDING_ROWS: BindingDefinition[] = [
   { key: "equipRifle", label: "Equip Rifle", hint: "Weapon slot" },
   { key: "equipSniper", label: "Equip Sniper", hint: "Weapon slot" },
   { key: "reload", label: "Reload", hint: "Manual reload" },
-  { key: "tab", label: "Inventory Panel", hint: "Hold to inspect loadout" },
+  { key: "tab", label: "Inventory Panel", hint: "Open tactical inventory" },
   { key: "reset", label: "Reset Targets", hint: "Practice reset" },
   { key: "pickup", label: "Pickup", hint: "Pickup weapon" },
   { key: "drop", label: "Drop", hint: "Drop weapon" },

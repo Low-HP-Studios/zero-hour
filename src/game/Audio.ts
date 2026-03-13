@@ -41,8 +41,7 @@ const AUDIO_DEBUG = import.meta.env.DEV;
 const TARGET_FOOTSTEP_PEAK = 0.12;
 const MAX_FOOTSTEP_FILE_GAIN = 12;
 const RIFLE_SHOT_MAX_SECONDS = 0.45;
-const SNIPER_SHOT_MAX_SECONDS = 1;
-const SNIPER_SHOT_FADE_SECONDS = 0.94;
+const SNIPER_SHOT_FADE_TAIL_SECONDS = 0.18;
 const AUDIO_BUFFER_KEYS: AudioBufferKey[] = [
   "rifleShot",
   "sniperShot",
@@ -261,16 +260,18 @@ export class AudioManager {
           ? 1
           : 0.96 + Math.random() * 0.1;
       source.connect(voice);
-      const maxShotSeconds = kind === "sniper"
-        ? SNIPER_SHOT_MAX_SECONDS
-        : RIFLE_SHOT_MAX_SECONDS;
-      const playbackSeconds = Math.min(maxShotSeconds, source.buffer.duration);
+      const playbackSeconds = kind === "sniper"
+        ? source.buffer.duration
+        : Math.min(RIFLE_SHOT_MAX_SECONDS, source.buffer.duration);
       voice.gain.setValueAtTime(1, now);
       if (kind === "sniper") {
-        voice.gain.setValueAtTime(1, now + Math.max(0, playbackSeconds - 0.12));
+        voice.gain.setValueAtTime(
+          1,
+          now + Math.max(0, playbackSeconds - SNIPER_SHOT_FADE_TAIL_SECONDS),
+        );
         voice.gain.exponentialRampToValueAtTime(
           0.0001,
-          now + Math.min(playbackSeconds, SNIPER_SHOT_FADE_SECONDS),
+          now + playbackSeconds,
         );
       } else {
         voice.gain.exponentialRampToValueAtTime(0.0001, now + 0.2);

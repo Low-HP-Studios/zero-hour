@@ -9,6 +9,7 @@ import {
   type ControlBindings,
   type CrouchMode,
   DEFAULT_PLAYER_SNAPSHOT,
+  type InventoryOpenMode,
   type MovementTier,
   type PlayerSnapshot,
   type WorldBounds,
@@ -45,6 +46,7 @@ type UsePlayerControllerOptions = {
   sensitivity: AimSensitivitySettings;
   keybinds: ControlBindings;
   crouchMode: CrouchMode;
+  inventoryOpenMode: InventoryOpenMode;
   fov: number;
   inputEnabled: boolean;
   cameraEnabled: boolean;
@@ -152,6 +154,7 @@ export function usePlayerController({
   sensitivity,
   keybinds,
   crouchMode,
+  inventoryOpenMode,
   fov,
   inputEnabled,
   cameraEnabled,
@@ -213,6 +216,7 @@ export function usePlayerController({
   const crouchModeRef = useRef<CrouchMode>(crouchMode);
   const crouchHoldLatchRef = useRef(false);
   const inventoryPanelOpenRef = useRef(false);
+  const inventoryOpenModeRef = useRef<InventoryOpenMode>(inventoryOpenMode);
   const leanTargetRef = useRef(0);
   const leanLerpRef = useRef(0);
   const tempLookAtRef = useRef(new THREE.Vector3());
@@ -232,6 +236,7 @@ export function usePlayerController({
   const sensitivityRef = useRef(sensitivity);
   const keybindsRef = useRef(keybinds);
   const crouchModeSettingRef = useRef(crouchMode);
+  const inventoryOpenModeSettingRef = useRef(inventoryOpenMode);
   const fovRef = useRef(fov);
   const inputEnabledRef = useRef(inputEnabled);
   const cameraEnabledRef = useRef(cameraEnabled);
@@ -281,6 +286,11 @@ export function usePlayerController({
   }, [crouchMode]);
 
   useEffect(() => {
+    inventoryOpenModeSettingRef.current = inventoryOpenMode;
+    inventoryOpenModeRef.current = inventoryOpenMode;
+  }, [inventoryOpenMode]);
+
+  useEffect(() => {
     fovRef.current = fov;
   }, [fov]);
 
@@ -324,6 +334,32 @@ export function usePlayerController({
       el.requestPointerLock();
     };
 
+    const closeInventoryPanel = () => {
+      if (!inventoryPanelOpenRef.current) {
+        return;
+      }
+      inventoryPanelOpenRef.current = false;
+      if (
+        inputEnabledRef.current &&
+        document.pointerLockElement === null &&
+        document.visibilityState === 'visible'
+      ) {
+        requestLock(element);
+      }
+    };
+
+    const openInventoryPanel = () => {
+      inventoryPanelOpenRef.current = true;
+      adsRef.current = false;
+      if (triggerHeldRef.current) {
+        triggerHeldRef.current = false;
+        triggerCallbackRef.current(false);
+      }
+      if (document.pointerLockElement === element) {
+        document.exitPointerLock();
+      }
+    };
+
     const onKeyDown = (event: KeyboardEvent) => {
       if (!inputEnabledRef.current) {
         return;
@@ -359,10 +395,24 @@ export function usePlayerController({
         firstPersonRef.current = !firstPersonRef.current;
       }
       if (event.code === bindings.tab) {
-        inventoryPanelOpenRef.current = true;
+        event.preventDefault();
+        if (inventoryOpenModeSettingRef.current === 'toggle') {
+          if (!event.repeat) {
+            if (inventoryPanelOpenRef.current) {
+              closeInventoryPanel();
+            } else {
+              openInventoryPanel();
+            }
+          }
+        } else {
+          openInventoryPanel();
+        }
       }
 
-      if (event.code === crouchBinding && pointerLockedRef.current) {
+      if (
+        event.code === crouchBinding &&
+        (pointerLockedRef.current || inventoryPanelOpenRef.current)
+      ) {
         if (crouchModeSettingRef.current === 'toggle') {
           if (!event.repeat) {
             crouchedRef.current = !crouchedRef.current;
@@ -375,7 +425,7 @@ export function usePlayerController({
       if (
         event.code === bindings.jump &&
         !event.repeat &&
-        pointerLockedRef.current &&
+        (pointerLockedRef.current || inventoryPanelOpenRef.current) &&
         groundedRef.current
       ) {
         if (crouchedRef.current) {
@@ -402,12 +452,17 @@ export function usePlayerController({
         }
       }
       if (event.code === keybindsRef.current.tab) {
-        inventoryPanelOpenRef.current = false;
+        if (inventoryOpenModeSettingRef.current === 'hold') {
+          closeInventoryPanel();
+        }
       }
     };
 
     const onMouseDown = (event: MouseEvent) => {
       if (!inputEnabledRef.current) {
+        return;
+      }
+      if (inventoryPanelOpenRef.current) {
         return;
       }
       if (event.button === 2) {
@@ -473,20 +528,21 @@ export function usePlayerController({
         triggerCallbackRef.current(false);
       }
       if (!locked) {
-        keyStateRef.current = {};
-        jumpQueuedRef.current = false;
-        crouchedRef.current = false;
-        crouchHoldLatchRef.current = false;
-        inventoryPanelOpenRef.current = false;
-        sprintPressedRef.current = false;
-        walkPressedRef.current = false;
-        movementTierRef.current = 'jog';
-        shootAlignUntilRef.current = 0;
-        runFacingPhaseRef.current = 'off';
-        runFacingYawRef.current = bodyYawRef.current;
-        headYawOffsetRef.current = 0;
-        leanTargetRef.current = 0;
-        leanLerpRef.current = 0;
+        if (!inventoryPanelOpenRef.current) {
+          keyStateRef.current = {};
+          jumpQueuedRef.current = false;
+          crouchedRef.current = false;
+          crouchHoldLatchRef.current = false;
+          sprintPressedRef.current = false;
+          walkPressedRef.current = false;
+          movementTierRef.current = 'jog';
+          shootAlignUntilRef.current = 0;
+          runFacingPhaseRef.current = 'off';
+          runFacingYawRef.current = bodyYawRef.current;
+          headYawOffsetRef.current = 0;
+          leanTargetRef.current = 0;
+          leanLerpRef.current = 0;
+        }
       }
     };
 
@@ -513,7 +569,11 @@ export function usePlayerController({
     const delta = Math.min(rawDelta, 1 / 20);
     const nowMs = performance.now();
     const keys = keyStateRef.current;
-    const controlsEnabled = pointerLockedRef.current && inputEnabledRef.current;
+    const inventoryOpen = inventoryPanelOpenRef.current;
+    const movementEnabled =
+      inputEnabledRef.current && (pointerLockedRef.current || inventoryOpen);
+    const lookEnabled =
+      inputEnabledRef.current && pointerLockedRef.current && !inventoryOpen;
     const weaponEquipped = weaponEquippedGetterRef.current();
     const activeWeapon = activeWeaponGetterRef.current();
     if (!weaponEquipped && adsRef.current) {
@@ -526,7 +586,7 @@ export function usePlayerController({
     );
 
     const mouse = pendingMouseRef.current;
-    if (controlsEnabled && (mouse.x !== 0 || mouse.y !== 0)) {
+    if (lookEnabled && (mouse.x !== 0 || mouse.y !== 0)) {
       targetYawRef.current -= mouse.x * lookSensitivity.horizontal;
       targetPitchRef.current = THREE.MathUtils.clamp(
         targetPitchRef.current - mouse.y * lookSensitivity.vertical,
@@ -540,11 +600,11 @@ export function usePlayerController({
     pitchRef.current = targetPitchRef.current;
 
     const bindings = keybindsRef.current;
-    const forward = controlsEnabled
+    const forward = movementEnabled
       ? (isBindingDown(keys, bindings.moveForward) ? 1 : 0) +
         (isBindingDown(keys, bindings.moveBackward) ? -1 : 0)
       : 0;
-    const strafe = controlsEnabled
+    const strafe = movementEnabled
       ? (isBindingDown(keys, bindings.moveRight) ? 1 : 0) +
         (isBindingDown(keys, bindings.moveLeft) ? -1 : 0)
       : 0;
@@ -554,9 +614,9 @@ export function usePlayerController({
     }
 
     const crouchBinding = bindings.crouch;
-    const crouchHeld = controlsEnabled && isBindingDown(keys, crouchBinding);
+    const crouchHeld = movementEnabled && isBindingDown(keys, crouchBinding);
     if (crouchModeRef.current === 'hold') {
-      if (!controlsEnabled) {
+      if (!movementEnabled) {
         crouchedRef.current = false;
       } else if (!crouchHeld) {
         crouchedRef.current = false;
@@ -572,12 +632,12 @@ export function usePlayerController({
       crouchedRef.current ||
       crouchLerpRef.current >= CROUCH_SPRINT_LOCK_THRESHOLD;
     const sprintPressed =
-      controlsEnabled &&
+      movementEnabled &&
       isBindingDown(keys, bindings.sprint) &&
       !crouchSprintLocked &&
       !adsRef.current;
     const walkPressed =
-      controlsEnabled &&
+      movementEnabled &&
       isBindingDown(keys, bindings.walkModifier) &&
       !crouchSprintLocked &&
       !sprintPressed;
@@ -588,7 +648,7 @@ export function usePlayerController({
       hasDirectionalInput &&
       isSprintInputEligible(moveInputRef.current.x, moveInputRef.current.y);
     const sprinting =
-      controlsEnabled &&
+      movementEnabled &&
       movementProfile.allowSprint &&
       sprintPressed &&
       groundedRef.current &&
@@ -616,13 +676,13 @@ export function usePlayerController({
     const desiredZ = -localX * sinYaw - localZ * cosYaw;
 
     if (groundedRef.current) {
-      if (controlsEnabled) {
+      if (movementEnabled) {
         velocityRef.current.x = desiredX * moveSpeed;
         velocityRef.current.y = desiredZ * moveSpeed;
       } else {
         velocityRef.current.set(0, 0);
       }
-    } else if (!controlsEnabled) {
+    } else if (!movementEnabled) {
       velocityRef.current.set(0, 0);
       airborneMomentumSpeedRef.current = 0;
     } else if (hasDirectionalInput) {
@@ -660,7 +720,7 @@ export function usePlayerController({
     } else {
       const runFacingPhase = runFacingPhaseRef.current;
       const runFacingActive = runFacingPhase !== 'off';
-      const movingWithInput = controlsEnabled && hasDirectionalInput;
+      const movingWithInput = movementEnabled && hasDirectionalInput;
       const forwardDiagonalMove =
         movingWithInput &&
         localZ > FORWARD_DIAGONAL_BODY_YAW_THRESHOLD &&
@@ -752,7 +812,7 @@ export function usePlayerController({
       resolvedXZRef.current.y,
     );
 
-    if (controlsEnabled && jumpQueuedRef.current && groundedRef.current) {
+    if (movementEnabled && jumpQueuedRef.current && groundedRef.current) {
       jumpQueuedRef.current = false;
       airborneMomentumSpeedRef.current = planarSpeedRef.current;
       groundedRef.current = false;
@@ -827,9 +887,9 @@ export function usePlayerController({
     const crouchLookHeightOffset =
       TPP_CROUCH_LOOK_HEIGHT_OFFSET * crouchCameraLerpRef.current;
     const peekLeftHeld =
-      controlsEnabled && isBindingDown(keys, bindings.peekLeft);
+      movementEnabled && isBindingDown(keys, bindings.peekLeft);
     const peekRightHeld =
-      controlsEnabled && isBindingDown(keys, bindings.peekRight);
+      movementEnabled && isBindingDown(keys, bindings.peekRight);
     leanTargetRef.current =
       !sprinting && peekLeftHeld && !peekRightHeld
         ? -1
@@ -1007,8 +1067,8 @@ export function usePlayerController({
       snap.pointerLocked = pointerLockedRef.current;
       snap.canInteract = false;
       snap.interactWeaponKind = null;
-      snap.inventoryPanelOpen =
-        pointerLockedRef.current && inventoryPanelOpenRef.current;
+      snap.inventoryPanelOpen = inventoryOpen;
+      snap.inventoryPanelMode = inventoryOpenModeRef.current;
       snapshotCallbackRef.current(snap);
     }
   });
@@ -1150,6 +1210,7 @@ export function usePlayerController({
       snapshot.canInteract = false;
       snapshot.interactWeaponKind = null;
       snapshot.inventoryPanelOpen = false;
+      snapshot.inventoryPanelMode = inventoryOpenModeRef.current;
       snapshotCallbackRef.current(snapshot);
       movementProfileRef.current = {
         walkScale: 1,

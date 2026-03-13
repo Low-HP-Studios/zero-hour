@@ -146,6 +146,13 @@ export type WeaponSwitchState = {
   remainingMs: number;
 };
 
+export type WeaponAttachmentRuntimeModifiers = {
+  rifleMagBonus: number;
+  sniperMagBonus: number;
+  rifleRecoilScale: number;
+  sniperRecoilScale: number;
+};
+
 const PICKUP_RANGE = 2.5;
 const DROP_FORWARD_DISTANCE = 1.8;
 const DROP_HEIGHT = 0.05;
@@ -188,11 +195,11 @@ export class WeaponSystem {
   private slotB: WeaponSlotState = { ...DEFAULT_SLOT_B };
   private activeSlot: WeaponSlotId = 'slotA';
   private droppedRifle: WeaponDropState = {
-    isPresentOnGround: true,
+    isPresentOnGround: false,
     position: DEFAULT_DROPPED_POSITION.rifle.clone(),
   };
   private droppedSniper: WeaponDropState = {
-    isPresentOnGround: true,
+    isPresentOnGround: false,
     position: DEFAULT_DROPPED_POSITION.sniper.clone(),
   };
 
@@ -218,6 +225,10 @@ export class WeaponSystem {
 
   private moving = false;
   private sprinting = false;
+  private rifleMagBonus = 0;
+  private sniperMagBonus = 0;
+  private rifleRecoilScale = 1;
+  private sniperRecoilScale = 1;
   private recoilProfiles: WeaponRecoilProfiles = {
     rifle: { ...WEAPON_RECOIL_PROFILE.rifle },
     sniper: { ...WEAPON_RECOIL_PROFILE.sniper },
@@ -268,6 +279,76 @@ export class WeaponSystem {
     };
   }
 
+  setAttachmentRuntimeModifiers(next: WeaponAttachmentRuntimeModifiers) {
+    this.rifleMagBonus = Math.round(
+      clampProfileValue(next.rifleMagBonus, 0, 30),
+    );
+    this.sniperMagBonus = Math.round(
+      clampProfileValue(next.sniperMagBonus, 0, 30),
+    );
+    this.rifleRecoilScale = clampProfileValue(next.rifleRecoilScale, 0.45, 1.25);
+    this.sniperRecoilScale = clampProfileValue(
+      next.sniperRecoilScale,
+      0.45,
+      1.25,
+    );
+    this.refreshSlotMagCapacity('slotA');
+    this.refreshSlotMagCapacity('slotB');
+  }
+
+  getActiveSlotId(): WeaponSlotId {
+    return this.activeSlot;
+  }
+
+  hasWeaponInSlot(slotId: WeaponSlotId) {
+    return this.getSlotById(slotId).hasWeapon;
+  }
+
+  equipSlotWithWeapon(
+    slotId: WeaponSlotId,
+    kind: WeaponKind,
+    options?: {
+      magAmmo?: number;
+      reserveAmmo?: number;
+    },
+  ) {
+    const config = WEAPON_CONFIG[kind];
+    const slot = this.getSlotById(slotId);
+    this.applySlotDefaultsForWeapon(slot, kind);
+    slot.hasWeapon = true;
+    slot.magAmmo = Math.min(
+      slot.maxMagAmmo,
+      Math.max(0, options?.magAmmo ?? slot.maxMagAmmo),
+    );
+    slot.reserveAmmo = Math.min(
+      slot.maxReserveAmmo,
+      Math.max(0, options?.reserveAmmo ?? config.ammoPerPack * config.maxPacks),
+    );
+    this.setSlotById(slotId, slot);
+
+    if (!this.getSlotById(this.activeSlot).hasWeapon) {
+      this.activeSlot = slotId;
+    }
+    this.activeWeaponChanged();
+  }
+
+  clearWeaponFromSlot(slotId: WeaponSlotId) {
+    const slot = this.getSlotById(slotId);
+    if (!slot.hasWeapon || !slot.weaponKind) {
+      return null;
+    }
+    const previous = { ...slot };
+    this.clearSlot(slotId);
+    if (this.activeSlot === slotId) {
+      const otherSlotId = this.getOtherSlotId(slotId);
+      if (this.getSlotById(otherSlotId).hasWeapon) {
+        this.activeSlot = otherSlotId;
+      }
+    }
+    this.activeWeaponChanged();
+    return previous;
+  }
+
   private getSlotById(slotId: WeaponSlotId): WeaponSlotState {
     return slotId === 'slotA' ? this.slotA : this.slotB;
   }
@@ -295,6 +376,28 @@ export class WeaponSystem {
   private resolveActiveWeaponKind(): WeaponKind | null {
     const active = this.resolveActiveSlot();
     return active.hasWeapon ? active.weaponKind : null;
+  }
+
+  private getMagBonus(kind: WeaponKind) {
+    return kind === 'rifle' ? this.rifleMagBonus : this.sniperMagBonus;
+  }
+
+  private getRecoilScale(kind: WeaponKind) {
+    return kind === 'rifle' ? this.rifleRecoilScale : this.sniperRecoilScale;
+  }
+
+  private resolveMaxMagAmmo(kind: WeaponKind) {
+    return Math.max(1, MAX_MAG_AMMO + this.getMagBonus(kind));
+  }
+
+  private refreshSlotMagCapacity(slotId: WeaponSlotId) {
+    const slot = this.getSlotById(slotId);
+    if (!slot.hasWeapon || !slot.weaponKind) {
+      return;
+    }
+    slot.maxMagAmmo = this.resolveMaxMagAmmo(slot.weaponKind);
+    slot.magAmmo = Math.min(slot.magAmmo, slot.maxMagAmmo);
+    this.setSlotById(slotId, slot);
   }
 
   private nearestDrop(playerPosition: THREE.Vector3): WeaponKind | null {
@@ -327,7 +430,7 @@ export class WeaponSystem {
   private applySlotDefaultsForWeapon(slot: WeaponSlotState, kind: WeaponKind) {
     const config = WEAPON_CONFIG[kind];
     slot.weaponKind = kind;
-    slot.maxMagAmmo = MAX_MAG_AMMO;
+    slot.maxMagAmmo = this.resolveMaxMagAmmo(kind);
     slot.maxReserveAmmo = config.ammoPerPack * config.maxPacks;
     slot.maxPacks = config.maxPacks;
     slot.packAmmo = config.ammoPerPack;
@@ -338,7 +441,7 @@ export class WeaponSystem {
     const config = WEAPON_CONFIG[kind];
     this.applySlotDefaultsForWeapon(slot, kind);
     slot.hasWeapon = true;
-    slot.magAmmo = MAX_MAG_AMMO;
+    slot.magAmmo = slot.maxMagAmmo;
     slot.reserveAmmo = config.ammoPerPack * config.maxPacks;
     this.setSlotById(slotId, slot);
   }
@@ -440,6 +543,7 @@ export class WeaponSystem {
 
     const config = WEAPON_CONFIG[activeKind];
     const recoilProfile = this.recoilProfiles[activeKind];
+    const recoilScale = this.getRecoilScale(activeKind);
 
     if (this.sniperRechamberUntilMs > nowMs) {
       this.nextShotInMs = Math.max(
@@ -461,9 +565,9 @@ export class WeaponSystem {
 
       let spreadAngle = 0;
       if (this.sprinting) {
-        spreadAngle = recoilProfile.moveSpreadSprint;
+        spreadAngle = recoilProfile.moveSpreadSprint * recoilScale;
       } else if (this.moving) {
-        spreadAngle = recoilProfile.moveSpreadBase;
+        spreadAngle = recoilProfile.moveSpreadBase * recoilScale;
       }
 
       if (spreadAngle > 0) {
@@ -488,10 +592,13 @@ export class WeaponSystem {
       activeSlot.magAmmo = Math.max(0, activeSlot.magAmmo - 1);
 
       const recoilPitch =
-        recoilProfile.recoilPitchBase +
-        recoilProfile.recoilPitchRamp * shotIndex;
-      let recoilYaw = (Math.random() - 0.5) * 2 * recoilProfile.recoilYawRange;
-      recoilYaw += this.yawDriftDirection * recoilProfile.recoilYawDrift;
+        (recoilProfile.recoilPitchBase +
+          recoilProfile.recoilPitchRamp * shotIndex) * recoilScale;
+      let recoilYaw = (Math.random() - 0.5) *
+        2 *
+        (recoilProfile.recoilYawRange * recoilScale);
+      recoilYaw += this.yawDriftDirection *
+        (recoilProfile.recoilYawDrift * recoilScale);
       if (
         shotIndex > 0 &&
         shotIndex % (5 + Math.floor(Math.random() * 4)) === 0
@@ -848,9 +955,9 @@ export class WeaponSystem {
     this.slotB = { ...DEFAULT_SLOT_B };
     this.activeSlot = 'slotA';
 
-    this.droppedRifle.isPresentOnGround = true;
+    this.droppedRifle.isPresentOnGround = false;
     this.droppedRifle.position.copy(DEFAULT_DROPPED_POSITION.rifle);
-    this.droppedSniper.isPresentOnGround = true;
+    this.droppedSniper.isPresentOnGround = false;
     this.droppedSniper.position.copy(DEFAULT_DROPPED_POSITION.sniper);
 
     this.triggerHeld = false;
@@ -871,6 +978,10 @@ export class WeaponSystem {
     this.reloadUntilMs = 0;
     this.reloadAmmoToLoad = 0;
 
+    this.rifleMagBonus = 0;
+    this.sniperMagBonus = 0;
+    this.rifleRecoilScale = 1;
+    this.sniperRecoilScale = 1;
     this.moving = false;
     this.sprinting = false;
     this.clearTracer();
@@ -879,12 +990,12 @@ export class WeaponSystem {
 
 export const DEFAULT_WEAPON_WORLD_STATE: WeaponWorldState = {
   rifle: {
-    isPresentOnGround: true,
-    droppedPosition: [1.5, DROP_HEIGHT, 3.5],
+    isPresentOnGround: false,
+    droppedPosition: null,
   },
   sniper: {
-    isPresentOnGround: true,
-    droppedPosition: [1.9, DROP_HEIGHT, 3.5],
+    isPresentOnGround: false,
+    droppedPosition: null,
   },
   activeSlot: 'slotA',
   loadout: {
