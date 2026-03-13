@@ -28,7 +28,9 @@ export type ControlBindings = {
   jump: string;
   pickup: string;
   drop: string;
+  reload: string;
   reset: string;
+  tab: string;
   equipRifle: string;
   equipSniper: string;
   toggleView: string;
@@ -47,7 +49,9 @@ export const DEFAULT_CONTROL_BINDINGS: ControlBindings = {
   jump: 'Space',
   pickup: 'KeyF',
   drop: 'KeyG',
-  reset: 'KeyR',
+  reload: 'KeyR',
+  reset: 'KeyT',
+  tab: 'Tab',
   equipRifle: 'Digit1',
   equipSniper: 'Digit2',
   toggleView: 'KeyV',
@@ -287,6 +291,32 @@ export type PerfMetrics = {
 
 export type MovementTier = 'walk' | 'jog' | 'run';
 
+export type WeaponSnapshotKind = 'rifle' | 'sniper';
+
+export type PlayerWeaponSlotSnapshot = {
+  weaponKind: WeaponSnapshotKind | null;
+  hasWeapon: boolean;
+  magAmmo: number;
+  reserveAmmo: number;
+  maxMagAmmo: number;
+  maxReserveAmmo: number;
+  maxPacks: number;
+  packAmmo: number;
+};
+
+export type PlayerWeaponLoadoutSnapshot = {
+  activeSlot: 'slotA' | 'slotB';
+  slotA: PlayerWeaponSlotSnapshot;
+  slotB: PlayerWeaponSlotSnapshot;
+};
+
+export type PlayerWeaponReloadSnapshot = {
+  active: boolean;
+  weaponKind: WeaponSnapshotKind | null;
+  progress: number;
+  remainingMs: number;
+};
+
 export const DEFAULT_PERF_METRICS: PerfMetrics = {
   fps: 0,
   frameMs: 0,
@@ -308,6 +338,10 @@ export type PlayerSnapshot = {
   grounded: boolean;
   pointerLocked: boolean;
   canInteract: boolean;
+  interactWeaponKind: WeaponSnapshotKind | null;
+  inventoryPanelOpen: boolean;
+  weaponLoadout: PlayerWeaponLoadoutSnapshot;
+  weaponReload: PlayerWeaponReloadSnapshot;
 };
 
 export const DEFAULT_PLAYER_SNAPSHOT: PlayerSnapshot = {
@@ -322,6 +356,37 @@ export const DEFAULT_PLAYER_SNAPSHOT: PlayerSnapshot = {
   grounded: true,
   pointerLocked: false,
   canInteract: false,
+  interactWeaponKind: null,
+  inventoryPanelOpen: false,
+  weaponLoadout: {
+    activeSlot: 'slotA',
+    slotA: {
+      weaponKind: 'rifle',
+      hasWeapon: false,
+      magAmmo: 0,
+      reserveAmmo: 0,
+      maxMagAmmo: 30,
+      maxReserveAmmo: 120,
+      maxPacks: 4,
+      packAmmo: 30,
+    },
+    slotB: {
+      weaponKind: 'sniper',
+      hasWeapon: false,
+      magAmmo: 0,
+      reserveAmmo: 0,
+      maxMagAmmo: 30,
+      maxReserveAmmo: 30,
+      maxPacks: 1,
+      packAmmo: 30,
+    },
+  },
+  weaponReload: {
+    active: false,
+    weaponKind: null,
+    progress: 1,
+    remainingMs: 0,
+  },
 };
 
 export type CollisionRect = {

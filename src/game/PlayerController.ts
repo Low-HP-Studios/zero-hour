@@ -2,15 +2,16 @@ import { useEffect, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { WeaponKind } from './Weapon';
-import type {
-  AimSensitivitySettings,
-  CollisionCircle,
-  CollisionRect,
-  ControlBindings,
-  CrouchMode,
-  MovementTier,
-  PlayerSnapshot,
-  WorldBounds,
+import {
+  type AimSensitivitySettings,
+  type CollisionCircle,
+  type CollisionRect,
+  type ControlBindings,
+  type CrouchMode,
+  DEFAULT_PLAYER_SNAPSHOT,
+  type MovementTier,
+  type PlayerSnapshot,
+  type WorldBounds,
 } from './types';
 import {
   AIR_STEER_TURN_RATE,
@@ -22,7 +23,13 @@ import {
   PLAYER_SPAWN_POSITION,
 } from './scene/scene-constants';
 
-type PlayerAction = 'pickup' | 'drop' | 'reset' | 'equipRifle' | 'equipSniper';
+type PlayerAction =
+  | 'pickup'
+  | 'drop'
+  | 'reload'
+  | 'reset'
+  | 'equipRifle'
+  | 'equipSniper';
 
 type MovementProfile = {
   walkScale: number;
@@ -92,7 +99,7 @@ const WALK_SPEED = 5.3;
 const SPRINT_SPEED = 8.2;
 const LOOK_SENSITIVITY = 0.0022;
 const MAX_PITCH = 0.85;
-const MIN_PITCH = -1.22;
+const MIN_PITCH = -1.5;
 const GRAVITY_UP = -28;
 const GRAVITY_PEAK = -16;
 const GRAVITY_DOWN = -48;
@@ -106,11 +113,11 @@ const CAMERA_DEFAULT_ELEVATION = 0.23;
 const CAMERA_MIN_ELEVATION = 0.05;
 const CAMERA_MAX_ELEVATION = 1.2;
 const LOOK_AT_HEIGHT = 1.2;
-const SHOULDER_OFFSET = 0.5;
-const SHOULDER_OFFSET_ADS = 0.0;
+const SHOULDER_OFFSET = 0.2;
+const SHOULDER_OFFSET_ADS = 0.2;
 const SHOULDER_OFFSET_SNIPER_ADS = 0.16;
 const AIM_LOOK_DISTANCE = 120;
-const FIRST_PERSON_CAMERA_HEIGHT = 1.40;
+const FIRST_PERSON_CAMERA_HEIGHT = 1.4;
 // Keep crouched FPP above the upper torso so recoil does not drive the camera into the rig.
 const FIRST_PERSON_CAMERA_HEIGHT_CROUCH = 1.08;
 const TPP_CROUCH_LOOK_HEIGHT_OFFSET = -0.3;
@@ -205,6 +212,7 @@ export function usePlayerController({
   const viewModeLerpRef = useRef(0);
   const crouchModeRef = useRef<CrouchMode>(crouchMode);
   const crouchHoldLatchRef = useRef(false);
+  const inventoryPanelOpenRef = useRef(false);
   const leanTargetRef = useRef(0);
   const leanLerpRef = useRef(0);
   const tempLookAtRef = useRef(new THREE.Vector3());
@@ -213,17 +221,7 @@ export function usePlayerController({
   const tempThirdPersonCameraPosRef = useRef(new THREE.Vector3());
   const snapshotAccumulatorRef = useRef(0);
   const snapshotObjectRef = useRef<PlayerSnapshot>({
-    x: 0,
-    y: 0,
-    z: 0,
-    speed: 0,
-    sprinting: false,
-    movementTier: 'jog',
-    crouched: false,
-    moving: false,
-    grounded: true,
-    pointerLocked: false,
-    canInteract: false,
+    ...DEFAULT_PLAYER_SNAPSHOT,
   });
   const actionCallbackRef = useRef(onAction);
   const triggerCallbackRef = useRef(onTriggerChange);
@@ -294,6 +292,7 @@ export function usePlayerController({
       adsRef.current = false;
       crouchedRef.current = false;
       crouchHoldLatchRef.current = false;
+      inventoryPanelOpenRef.current = false;
       sprintPressedRef.current = false;
       walkPressedRef.current = false;
       movementTierRef.current = 'jog';
@@ -340,7 +339,14 @@ export function usePlayerController({
       if (event.code === bindings.drop && !event.repeat) {
         actionCallbackRef.current('drop');
       }
-      if (event.code === bindings.reset && !event.repeat) {
+      if (event.code === bindings.reload && !event.repeat) {
+        actionCallbackRef.current('reload');
+      }
+      if (
+        event.code === bindings.reset &&
+        !event.repeat &&
+        event.code !== bindings.reload
+      ) {
         actionCallbackRef.current('reset');
       }
       if (event.code === bindings.equipRifle && !event.repeat) {
@@ -351,6 +357,9 @@ export function usePlayerController({
       }
       if (event.code === bindings.toggleView && !event.repeat) {
         firstPersonRef.current = !firstPersonRef.current;
+      }
+      if (event.code === bindings.tab) {
+        inventoryPanelOpenRef.current = true;
       }
 
       if (event.code === crouchBinding && pointerLockedRef.current) {
@@ -392,6 +401,9 @@ export function usePlayerController({
           crouchedRef.current = false;
         }
       }
+      if (event.code === keybindsRef.current.tab) {
+        inventoryPanelOpenRef.current = false;
+      }
     };
 
     const onMouseDown = (event: MouseEvent) => {
@@ -399,8 +411,8 @@ export function usePlayerController({
         return;
       }
       if (event.button === 2) {
-        adsRef.current = pointerLockedRef.current &&
-          weaponEquippedGetterRef.current();
+        adsRef.current =
+          pointerLockedRef.current && weaponEquippedGetterRef.current();
         return;
       }
 
@@ -465,6 +477,7 @@ export function usePlayerController({
         jumpQueuedRef.current = false;
         crouchedRef.current = false;
         crouchHoldLatchRef.current = false;
+        inventoryPanelOpenRef.current = false;
         sprintPressedRef.current = false;
         walkPressedRef.current = false;
         movementTierRef.current = 'jog';
@@ -993,6 +1006,9 @@ export function usePlayerController({
       snap.grounded = groundedRef.current;
       snap.pointerLocked = pointerLockedRef.current;
       snap.canInteract = false;
+      snap.interactWeaponKind = null;
+      snap.inventoryPanelOpen =
+        pointerLockedRef.current && inventoryPanelOpenRef.current;
       snapshotCallbackRef.current(snap);
     }
   });
@@ -1102,6 +1118,7 @@ export function usePlayerController({
       crouchLerpRef.current = 0;
       crouchCameraLerpRef.current = 0;
       crouchHoldLatchRef.current = false;
+      inventoryPanelOpenRef.current = false;
       firstPersonRef.current = false;
       viewModeLerpRef.current = 0;
       headYawOffsetRef.current = 0;
@@ -1131,6 +1148,8 @@ export function usePlayerController({
       snapshot.grounded = true;
       snapshot.pointerLocked = pointerLockedRef.current;
       snapshot.canInteract = false;
+      snapshot.interactWeaponKind = null;
+      snapshot.inventoryPanelOpen = false;
       snapshotCallbackRef.current(snapshot);
       movementProfileRef.current = {
         walkScale: 1,

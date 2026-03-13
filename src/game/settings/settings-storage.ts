@@ -226,6 +226,25 @@ export function parsePersistedSettings(value: unknown): PersistedSettings {
     : {};
   const hudPanels = isRecord(value.hudPanels) ? value.hudPanels : {};
   const audioVolumes = isRecord(value.audioVolumes) ? value.audioVolumes : {};
+  const hasExplicitReloadBinding = typeof keybinds.reload === "string" &&
+    keybinds.reload.length > 0;
+  const parsedReloadBinding = readString(
+    keybinds.reload,
+    defaults.settings.keybinds.reload,
+  );
+  const parsedResetBinding = readString(
+    keybinds.reset,
+    defaults.settings.keybinds.reset,
+  );
+  const parsedTabBinding = readString(
+    keybinds.tab,
+    defaults.settings.keybinds.tab,
+  );
+  // v1 used KeyR for reset and had no reload binding; migrate reset off R.
+  const migratedResetBinding = !hasExplicitReloadBinding &&
+      parsedResetBinding === "KeyR"
+    ? defaults.settings.keybinds.reset
+    : parsedResetBinding;
 
   return {
     settings: {
@@ -295,7 +314,9 @@ export function parsePersistedSettings(value: unknown): PersistedSettings {
         jump: readString(keybinds.jump, defaults.settings.keybinds.jump),
         pickup: readString(keybinds.pickup, defaults.settings.keybinds.pickup),
         drop: readString(keybinds.drop, defaults.settings.keybinds.drop),
-        reset: readString(keybinds.reset, defaults.settings.keybinds.reset),
+        reload: parsedReloadBinding,
+        reset: migratedResetBinding,
+        tab: parsedTabBinding,
         equipRifle: readString(
           keybinds.equipRifle,
           defaults.settings.keybinds.equipRifle,

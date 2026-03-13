@@ -127,6 +127,43 @@ function resolveKillPulseAmount(progress: number) {
   return 1 - easeInOutCubic((progress - 0.35) / 0.65);
 }
 
+function isLoadoutSlotEqual(
+  previous: PlayerSnapshot["weaponLoadout"]["slotA"],
+  next: PlayerSnapshot["weaponLoadout"]["slotA"],
+) {
+  return previous.weaponKind === next.weaponKind &&
+    previous.hasWeapon === next.hasWeapon &&
+    previous.magAmmo === next.magAmmo &&
+    previous.reserveAmmo === next.reserveAmmo &&
+    previous.maxMagAmmo === next.maxMagAmmo &&
+    previous.maxReserveAmmo === next.maxReserveAmmo &&
+    previous.maxPacks === next.maxPacks &&
+    previous.packAmmo === next.packAmmo;
+}
+
+function isPlayerSnapshotEqual(previous: PlayerSnapshot, next: PlayerSnapshot) {
+  return previous.x === next.x &&
+    previous.y === next.y &&
+    previous.z === next.z &&
+    previous.speed === next.speed &&
+    previous.grounded === next.grounded &&
+    previous.moving === next.moving &&
+    previous.sprinting === next.sprinting &&
+    previous.movementTier === next.movementTier &&
+    previous.crouched === next.crouched &&
+    previous.pointerLocked === next.pointerLocked &&
+    previous.canInteract === next.canInteract &&
+    previous.interactWeaponKind === next.interactWeaponKind &&
+    previous.inventoryPanelOpen === next.inventoryPanelOpen &&
+    previous.weaponLoadout.activeSlot === next.weaponLoadout.activeSlot &&
+    isLoadoutSlotEqual(previous.weaponLoadout.slotA, next.weaponLoadout.slotA) &&
+    isLoadoutSlotEqual(previous.weaponLoadout.slotB, next.weaponLoadout.slotB) &&
+    previous.weaponReload.active === next.weaponReload.active &&
+    previous.weaponReload.weaponKind === next.weaponReload.weaponKind &&
+    previous.weaponReload.progress === next.weaponReload.progress &&
+    previous.weaponReload.remainingMs === next.weaponReload.remainingMs;
+}
+
 const BOOT_PRESENTATION: ScenePresentation = {
   phase: "playing",
   phaseProgress: 1,
@@ -173,19 +210,7 @@ export function GameRoot({
   const playerRef = useRef(player);
   const setPlayer = useCallback((snapshot: PlayerSnapshot) => {
     const prev = playerRef.current;
-    if (
-      prev.x === snapshot.x &&
-      prev.y === snapshot.y &&
-      prev.z === snapshot.z &&
-      prev.speed === snapshot.speed &&
-      prev.grounded === snapshot.grounded &&
-      prev.moving === snapshot.moving &&
-      prev.sprinting === snapshot.sprinting &&
-      prev.movementTier === snapshot.movementTier &&
-      prev.crouched === snapshot.crouched &&
-      prev.pointerLocked === snapshot.pointerLocked &&
-      prev.canInteract === snapshot.canInteract
-    ) {
+    if (isPlayerSnapshotEqual(prev, snapshot)) {
       return;
     }
     playerRef.current = snapshot;
@@ -206,6 +231,7 @@ export function GameRoot({
   const [phaseProgress, setPhaseProgress] = useState(0);
   const [menuSettingsOpen, setMenuSettingsOpen] = useState(false);
   const [menuUpdatesOpen, setMenuUpdatesOpen] = useState(false);
+  const [pauseMenuOpen, setPauseMenuOpen] = useState(false);
   const [killPulseToken, setKillPulseToken] = useState(0);
   const [killPulseAmount, setKillPulseAmount] = useState(0);
   const [hitMarker, setHitMarker] = useState<
@@ -346,6 +372,7 @@ export function GameRoot({
   }, [killPulseToken]);
 
   const showPauseMenu = phase === "playing" && hasBeenLocked && isPaused &&
+    pauseMenuOpen &&
     (performance.now() - enteredPlayingAtRef.current > 600);
   const inLobbyPhase = phase === "menu" || phase === "entering" ||
     phase === "returning";
@@ -354,6 +381,7 @@ export function GameRoot({
 
   const handleCloseMenuAndResume = useCallback(() => {
     setBindingCapture(null);
+    setPauseMenuOpen(false);
     sceneRef.current?.requestPointerLock();
   }, []);
 
@@ -381,6 +409,7 @@ export function GameRoot({
   const handleEnterPractice = useCallback(() => {
     setMenuSettingsOpen(false);
     setMenuUpdatesOpen(false);
+    setPauseMenuOpen(false);
     setBindingCapture(null);
     setHitMarker({ until: 0, kind: "body" });
     setPhaseProgress(0);
@@ -391,6 +420,7 @@ export function GameRoot({
     setBindingCapture(null);
     setMenuSettingsOpen(false);
     setMenuUpdatesOpen(false);
+    setPauseMenuOpen(false);
     sceneRef.current?.releasePointerLock();
     sceneRef.current?.dropWeaponForReturn();
     setPhaseProgress(0);
@@ -719,27 +749,43 @@ export function GameRoot({
   }, [bindingCapture, isPaused]);
 
   useEffect(() => {
-    if (phase !== "playing" || !isPaused || !hasBeenLocked) return;
+    if (phase !== "playing" && pauseMenuOpen) {
+      setPauseMenuOpen(false);
+    }
+  }, [phase, pauseMenuOpen]);
+
+  useEffect(() => {
+    if (phase !== "playing" || !hasBeenLocked) return;
     if (bindingCapture) return;
 
     let pendingTimer: number | null = null;
 
-    const onEscResume = (event: KeyboardEvent) => {
+    const onEscTogglePause = (event: KeyboardEvent) => {
       if (event.code !== "Escape") return;
       event.preventDefault();
       if (pendingTimer !== null) window.clearTimeout(pendingTimer);
       pendingTimer = window.setTimeout(() => {
         pendingTimer = null;
-        sceneRef.current?.requestPointerLock();
+        if (pauseMenuOpen) {
+          setPauseMenuOpen(false);
+          sceneRef.current?.requestPointerLock();
+          return;
+        }
+
+        setBindingCapture(null);
+        setMenuSettingsOpen(false);
+        setMenuUpdatesOpen(false);
+        setPauseMenuOpen(true);
+        sceneRef.current?.releasePointerLock();
       }, 120);
     };
 
-    window.addEventListener("keydown", onEscResume);
+    window.addEventListener("keydown", onEscTogglePause);
     return () => {
-      window.removeEventListener("keydown", onEscResume);
+      window.removeEventListener("keydown", onEscTogglePause);
       if (pendingTimer !== null) window.clearTimeout(pendingTimer);
     };
-  }, [phase, isPaused, hasBeenLocked, bindingCapture]);
+  }, [phase, hasBeenLocked, bindingCapture, pauseMenuOpen]);
 
   useEffect(() => {
     if (phase !== "playing") {
@@ -946,6 +992,34 @@ export function GameRoot({
     : player.movementTier === "walk"
     ? "Walk"
     : "Jog";
+  const rifleSlot = player.weaponLoadout.slotA;
+  const sniperSlot = player.weaponLoadout.slotB;
+  const activeSlotLabel = player.weaponLoadout.activeSlot === "slotA"
+    ? "Slot 1 (Rifle)"
+    : "Slot 2 (Sniper)";
+  const anyWeaponEquipped = rifleSlot.hasWeapon || sniperSlot.hasWeapon;
+  const riflePackCount = rifleSlot.packAmmo > 0
+    ? Math.ceil(Math.max(0, rifleSlot.reserveAmmo) / rifleSlot.packAmmo)
+    : 0;
+  const sniperPackCount = sniperSlot.packAmmo > 0
+    ? Math.ceil(Math.max(0, sniperSlot.reserveAmmo) / sniperSlot.packAmmo)
+    : 0;
+  const rifleAmmoLine = rifleSlot.hasWeapon
+    ? `Blue: ${riflePackCount}/${rifleSlot.maxPacks} packs | ${rifleSlot.magAmmo}/${rifleSlot.maxMagAmmo}`
+    : "Blue: slot empty";
+  const sniperAmmoLine = sniperSlot.hasWeapon
+    ? `Red: ${sniperPackCount}/${sniperSlot.maxPacks} packs | ${sniperSlot.magAmmo}/${sniperSlot.maxMagAmmo}`
+    : "Red: slot empty";
+  const reloadStatusLabel = player.weaponReload.active
+    ? `${player.weaponReload.weaponKind === "sniper" ? "Sniper" : "Rifle"} reload ${
+      Math.ceil(player.weaponReload.remainingMs / 100) / 10
+    }s`
+    : "Ready";
+  const interactPromptLabel = player.canInteract
+    ? `Press ${formatKeyCode(settings.keybinds.pickup)} to loot ${
+      player.interactWeaponKind === "sniper" ? "Sniper" : "Rifle"
+    }`
+    : "";
 
   const controlsPreview = useMemo(() => {
     const b = settings.keybinds;
@@ -959,6 +1033,10 @@ export function GameRoot({
       `${formatKeyCode(b.jump)} jump`,
       `${formatKeyCode(b.toggleView)} FPP/TPP`,
       `${formatKeyCode(b.peekLeft)}/${formatKeyCode(b.peekRight)} lean`,
+      `${formatKeyCode(b.pickup)}/${formatKeyCode(b.drop)} loot/drop`,
+      `${formatKeyCode(b.equipRifle)}/${formatKeyCode(b.equipSniper)} slot swap`,
+      `${formatKeyCode(b.reload)} reload`,
+      `${formatKeyCode(b.tab)} inventory hold`,
       `${formatKeyCode(b.reset)} reset targets`,
       "Mouse look / fire / ADS",
       "P perf panel",
@@ -981,6 +1059,10 @@ export function GameRoot({
     : null;
   const installUpdateInProgress = updaterBusyAction === "install";
   const gameplayHudVisible = phase === "playing";
+  const showInventoryPanel = gameplayHudVisible && !isPaused &&
+    player.inventoryPanelOpen;
+  const showInteractPrompt = gameplayHudVisible && !isPaused &&
+    player.canInteract;
   const uiOverlayClassName = gameplayHudVisible
     ? "ui-overlay ui-overlay--practice"
     : "ui-overlay";
@@ -1060,11 +1142,17 @@ export function GameRoot({
                     : "Jump / Air"}
                 </dd>
                 <dt>Interact</dt>
-                <dd>{player.canInteract ? "Pickup ready" : "-"}</dd>
+                <dd>
+                  {player.canInteract
+                    ? player.interactWeaponKind === "sniper"
+                      ? "Sniper nearby"
+                      : "Rifle nearby"
+                    : "-"}
+                </dd>
                 <dt>Weapon</dt>
                 <dd>
-                  {weaponEquipped
-                    ? (activeWeapon === "sniper" ? "Sniper" : "Rifle")
+                  {anyWeaponEquipped
+                    ? activeSlotLabel
                     : "None"}
                 </dd>
                 <dt>Range Load</dt>
@@ -1176,6 +1264,49 @@ export function GameRoot({
                   hitMarkerVisible ? "visible" : ""
                 } ${hitMarker.kind}`}
               />
+            )
+            : null}
+          {showInteractPrompt
+            ? (
+              <div className="interact-prompt" role="status">
+                {interactPromptLabel}
+              </div>
+            )
+            : null}
+          {showInventoryPanel
+            ? (
+              <div className="inventory-panel panel tactical-panel compact-panel">
+                <div className="panel-eyebrow">Inventory</div>
+                <h2>Quick Swap</h2>
+                <div className="inventory-slot-list">
+                  <div
+                    className={`inventory-slot ${
+                      player.weaponLoadout.activeSlot === "slotA"
+                        ? "active"
+                        : ""
+                    }`}
+                  >
+                    <span className="slot-key">
+                      {formatKeyCode(settings.keybinds.equipRifle)}
+                    </span>
+                    <span className="slot-name">Slot 1 / Rifle</span>
+                    <span className="slot-ammo">{rifleAmmoLine}</span>
+                  </div>
+                  <div
+                    className={`inventory-slot ${
+                      player.weaponLoadout.activeSlot === "slotB"
+                        ? "active"
+                        : ""
+                    }`}
+                  >
+                    <span className="slot-key">
+                      {formatKeyCode(settings.keybinds.equipSniper)}
+                    </span>
+                    <span className="slot-name">Slot 2 / Sniper</span>
+                    <span className="slot-ammo">{sniperAmmoLine}</span>
+                  </div>
+                </div>
+              </div>
             )
             : null}
 
@@ -3080,6 +3211,36 @@ export function GameRoot({
           : null}
 
         <div className="corner-bottom-right-stack">
+          {gameplayHudVisible
+            ? (
+              <div className="panel tactical-panel compact-panel ammo-panel">
+                <div className="panel-eyebrow">Loadout</div>
+                <h2>{activeSlotLabel}</h2>
+                <ul className="ammo-list">
+                  <li>{rifleAmmoLine}</li>
+                  <li>{sniperAmmoLine}</li>
+                </ul>
+                <div className="reload-row">
+                  <span>Reload</span>
+                  <strong>{reloadStatusLabel}</strong>
+                </div>
+                {player.weaponReload.active
+                  ? (
+                    <div className="reload-progress-track" aria-hidden="true">
+                      <span
+                        className="reload-progress-fill"
+                        style={{
+                          width: `${Math.round(
+                            clamp01(player.weaponReload.progress) * 100,
+                          )}%`,
+                        }}
+                      />
+                    </div>
+                  )
+                  : null}
+              </div>
+            )
+            : null}
           {gameplayHudVisible && hudPanels.settings
           ? (
             <div className="panel tactical-panel compact-panel">

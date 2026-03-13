@@ -277,7 +277,11 @@ function consumeFootstepTrigger(
     return false;
   }
 
-  const normalizedTime = THREE.MathUtils.clamp(sample.normalizedTime, 0, 0.9999);
+  const normalizedTime = THREE.MathUtils.clamp(
+    sample.normalizedTime,
+    0,
+    0.9999,
+  );
   if (tracker.state !== sample.state) {
     tracker.state = sample.state;
     tracker.cycle = 0;
@@ -621,47 +625,61 @@ function easeInOutCubic(value: number) {
     : 1 - Math.pow(-2 * value + 2, 3) / 2;
 }
 
-function updateWorldGunMesh(
+function updateWorldWeaponMesh(
   mesh: THREE.Group | null,
-  rifleModel: THREE.Group | null,
-  sniperModel: THREE.Group | null,
-  weapon: WeaponSystem,
-  nowMs: number,
-  switchState: WeaponSwitchState,
+  isPresentOnGround: boolean,
+  droppedPosition: [number, number, number] | null,
   reveal: number,
+  rotationY: number,
 ) {
   if (!mesh) {
     return;
   }
 
-  const visible = !weapon.isEquipped() && reveal > 0.02;
+  const visible = isPresentOnGround && droppedPosition !== null &&
+    reveal > 0.02;
   mesh.visible = visible;
   if (!visible) {
-    if (rifleModel) {
-      rifleModel.visible = false;
-    }
-    if (sniperModel) {
-      sniperModel.visible = false;
-    }
     return;
   }
 
-  const displayedWeapon = resolveDisplayedWeapon(weapon, switchState);
-  if (rifleModel) {
-    rifleModel.visible = displayedWeapon === "rifle";
-  }
-  if (sniperModel) {
-    sniperModel.visible = displayedWeapon === "sniper";
-  }
-
-  const droppedPosition = weapon.getDroppedPosition();
   mesh.scale.setScalar(0.82 + reveal * 0.18);
   mesh.position.set(
-    droppedPosition.x,
-    droppedPosition.y + Math.sin(nowMs * 0.006) * 0.04 + (1 - reveal) * 0.18,
-    droppedPosition.z,
+    droppedPosition[0],
+    droppedPosition[1],
+    droppedPosition[2],
   );
-  mesh.rotation.set(0.2, nowMs * 0.0016, 0);
+  mesh.rotation.set(0.2, rotationY, 0);
+}
+
+function updateBackWeaponMesh(
+  mesh: THREE.Group | null,
+  visible: boolean,
+  switchState: WeaponSwitchState,
+  holsterDirection: number,
+  anchor: { position: THREE.Vector3; quaternion: THREE.Quaternion } | null,
+) {
+  if (!mesh) {
+    return;
+  }
+
+  const shouldShow = visible && Boolean(anchor);
+  mesh.visible = shouldShow;
+  if (!shouldShow || !anchor) {
+    return;
+  }
+
+  mesh.position.copy(anchor.position);
+  mesh.quaternion.copy(anchor.quaternion);
+
+  const switchBlend = switchState.active
+    ? Math.sin(Math.PI * switchState.progress)
+    : 0;
+  mesh.translateX(holsterDirection * switchBlend * 0.016);
+  mesh.translateY(switchBlend * 0.025);
+  mesh.translateZ(-switchBlend * 0.03);
+  mesh.rotateY(holsterDirection * switchBlend * 0.08);
+  mesh.rotateZ(holsterDirection * switchBlend * 0.08);
 }
 
 function updateCharacterWeaponMesh(
@@ -676,6 +694,9 @@ function updateCharacterWeaponMesh(
   alignment: WeaponAlignmentOffset,
   rifleMuzzleOffset: THREE.Vector3,
   sniperMuzzleOffset: THREE.Vector3,
+  firstPerson: boolean,
+  adsActive: boolean,
+  leanValue: number,
 ) {
   if (!weaponGroup) {
     return;
@@ -712,6 +733,17 @@ function updateCharacterWeaponMesh(
     if (switchBlend > 0) {
       weaponGroup.translateY(-switchBlend * 0.06);
       weaponGroup.rotateX(-switchBlend * 0.35);
+    }
+    if (firstPerson && Math.abs(leanValue) > 0.001) {
+      const leanShift = leanValue * (adsActive ? 0.085 : 0.12);
+      const leanRoll = -leanValue * (adsActive ? 0.11 : 0.16);
+      const leanYaw = leanValue * (adsActive ? 0.04 : 0.07);
+      weaponGroup.translateX(leanShift);
+      weaponGroup.translateY(
+        -(Math.abs(leanValue) * (adsActive ? 0.008 : 0.012)),
+      );
+      weaponGroup.rotateZ(leanRoll);
+      weaponGroup.rotateY(leanYaw);
     }
   } else {
     weaponGroup.position.set(
@@ -938,12 +970,13 @@ export const GameplayRuntime = forwardRef<
     new THREE.Vector2(PLAYER_SPAWN_POSITION.x, PLAYER_SPAWN_POSITION.z),
   );
 
-  const worldGunRef = useRef<THREE.Group>(null);
-  const worldRifleModelRef = useRef<THREE.Group>(null);
-  const worldSniperModelRef = useRef<THREE.Group>(null);
+  const worldRiflePickupRef = useRef<THREE.Group>(null);
+  const worldSniperPickupRef = useRef<THREE.Group>(null);
   const menuCharacterKeyLightRef = useRef<THREE.PointLight>(null);
   const menuCharacterRimLightRef = useRef<THREE.PointLight>(null);
   const playerCharacterRef = useRef<THREE.Group>(null);
+  const backRifleSlotRef = useRef<THREE.Group>(null);
+  const backSniperSlotRef = useRef<THREE.Group>(null);
   const characterWeaponRef = useRef<THREE.Group>(null);
   const characterRifleModelRef = useRef<THREE.Group>(null);
   const characterSniperModelRef = useRef<THREE.Group>(null);
@@ -978,7 +1011,15 @@ export const GameplayRuntime = forwardRef<
   const characterUpperTorsoBaseQuatRef = useRef<THREE.Quaternion | null>(null);
   const tempCharacterWeaponAnchorWorldRef = useRef(new THREE.Vector3());
   const tempBoneWorldQuatRef = useRef(new THREE.Quaternion());
+  const tempBackWeaponAnchorWorldRef = useRef(new THREE.Vector3());
+  const tempBackWeaponAnchorQuatRef = useRef(new THREE.Quaternion());
   const characterWeaponAnchorRef = useRef<
+    {
+      position: THREE.Vector3;
+      quaternion: THREE.Quaternion;
+    } | null
+  >(null);
+  const backWeaponAnchorRef = useRef<
     {
       position: THREE.Vector3;
       quaternion: THREE.Quaternion;
@@ -1053,6 +1094,8 @@ export const GameplayRuntime = forwardRef<
       characterUpperTorsoBoneRef.current = null;
       characterHeadBaseQuatRef.current = null;
       characterUpperTorsoBaseQuatRef.current = null;
+      characterWeaponAnchorRef.current = null;
+      backWeaponAnchorRef.current = null;
       characterVisibilityMaterialsRef.current = [];
       return;
     }
@@ -1118,8 +1161,8 @@ export const GameplayRuntime = forwardRef<
       characterHeadBaseQuatRef.current = null;
     }
     if (resolvedUpperTorsoBone) {
-      characterUpperTorsoBaseQuatRef.current =
-        resolvedUpperTorsoBone.quaternion.clone();
+      characterUpperTorsoBaseQuatRef.current = resolvedUpperTorsoBone.quaternion
+        .clone();
     } else {
       characterUpperTorsoBaseQuatRef.current = null;
     }
@@ -1136,7 +1179,9 @@ export const GameplayRuntime = forwardRef<
       return;
     }
 
-    const visibilityMaterials = collectCharacterVisibilityMaterials(characterModel);
+    const visibilityMaterials = collectCharacterVisibilityMaterials(
+      characterModel,
+    );
     characterVisibilityMaterialsRef.current = visibilityMaterials;
     applyCharacterFirstPersonMask(visibilityMaterials, 0, 1, 1);
 
@@ -1303,12 +1348,16 @@ export const GameplayRuntime = forwardRef<
       const weapon = weaponRef.current;
       if (action === "equipRifle") {
         audioRef.current.cancelSniperShelling();
-        weapon.switchWeapon("rifle", performance.now());
+        weapon.setActiveSlot("slotA");
         return;
       }
       if (action === "equipSniper") {
         audioRef.current.cancelSniperShelling();
-        weapon.switchWeapon("sniper", performance.now());
+        weapon.setActiveSlot("slotB");
+        return;
+      }
+      if (action === "reload") {
+        weapon.beginReload(performance.now());
         return;
       }
       if (action === "reset") {
@@ -1322,17 +1371,13 @@ export const GameplayRuntime = forwardRef<
       }
 
       if (action === "pickup") {
-        if (weapon.tryPickup(playerPosition)) {
-          weaponEquippedCallbackRef.current(true);
-        }
+        weapon.pickSlotNearest(playerPosition);
         return;
       }
 
       if (action === "drop") {
         camera.getWorldDirection(tempLookDirRef.current);
-        if (weapon.drop(playerPosition, tempLookDirRef.current)) {
-          weaponEquippedCallbackRef.current(false);
-        }
+        weapon.drop(playerPosition, tempLookDirRef.current);
       }
     },
     [camera],
@@ -1340,12 +1385,16 @@ export const GameplayRuntime = forwardRef<
 
   const handlePlayerSnapshot = useCallback((snapshot: PlayerSnapshot) => {
     const playerPosition = controllerRef.current?.getPosition();
-    const canInteract = playerPosition && presentation.inputEnabled
-      ? weaponRef.current.canPickup(playerPosition)
-      : false;
+    const pickupState = playerPosition && presentation.inputEnabled
+      ? weaponRef.current.getPickupState(playerPosition)
+      : { canPickup: false, weaponKind: null };
+    const nowMs = performance.now();
     playerSnapshotCallbackRef.current({
       ...snapshot,
-      canInteract,
+      canInteract: pickupState.canPickup,
+      interactWeaponKind: pickupState.weaponKind,
+      weaponLoadout: weaponRef.current.getLoadoutState(),
+      weaponReload: weaponRef.current.getReloadState(nowMs),
     });
   }, [presentation.inputEnabled]);
 
@@ -1487,9 +1536,7 @@ export const GameplayRuntime = forwardRef<
         return;
       }
       camera.getWorldDirection(tempLookDirRef.current);
-      if (weaponRef.current.drop(playerPosition, tempLookDirRef.current)) {
-        weaponEquippedCallbackRef.current(false);
-      }
+      weaponRef.current.drop(playerPosition, tempLookDirRef.current);
     },
     resetForMenu,
   }), [camera, resetForMenu]);
@@ -1590,7 +1637,6 @@ export const GameplayRuntime = forwardRef<
     const movementTier = controller.getMovementTier();
     const crouched = controller.isCrouched();
     const weaponEquipped = weapon.isEquipped();
-    const activeWeapon = weapon.getActiveWeapon();
     const adsActive = controller.isADS();
     const firstPerson = controller.isFirstPerson();
     const moveInput = controller.getMoveInput();
@@ -1616,14 +1662,14 @@ export const GameplayRuntime = forwardRef<
     );
     const animMoveX = visualLocomotionInput.x;
     const animMoveY = visualLocomotionInput.y;
-    const isRifleEquipped = weaponEquipped && activeWeapon === "rifle";
+    const isWeaponHoldEquipped = weaponEquipped;
     const previousRunState = rifleRunStateRef.current;
     const previousCrouched = wasCrouchedRef.current;
     const crouchEntered = crouched && !previousCrouched;
     const crouchExited = !crouched && previousCrouched;
     wasCrouchedRef.current = crouched;
     const slideIntent = slideIntentHookRef.current;
-    slideIntent.eligible = isRifleEquipped &&
+    slideIntent.eligible = isWeaponHoldEquipped &&
       !adsActive &&
       movementActive &&
       controller.isGrounded() &&
@@ -1725,12 +1771,12 @@ export const GameplayRuntime = forwardRef<
     crouchTransitionUseRifleRef.current = crouchTransitionUseRifle;
     crouchTransitionPoseFromRef.current = crouchTransitionPoseFrom;
 
-    const firePrepIntent = isRifleEquipped &&
+    const firePrepIntent = isWeaponHoldEquipped &&
       !adsActive &&
       !crouched &&
       rifleFireIntentRef.current;
     const firePrepVisual = firePrepIntent && !movementActive;
-    const crouchAimCompositeActive = isRifleEquipped &&
+    const crouchAimCompositeActive = isWeaponHoldEquipped &&
       rifleFireIntentRef.current &&
       !adsActive &&
       (crouched || crouchTransitionState !== "idle");
@@ -1745,13 +1791,13 @@ export const GameplayRuntime = forwardRef<
     let unarmedWalkState = unarmedWalkStateRef.current;
     let unarmedWalkUntil = unarmedWalkStateUntilRef.current;
 
-    if (!isRifleEquipped || adsActive || crouched) {
+    if (!isWeaponHoldEquipped || adsActive || crouched) {
       runState = "idle";
       rifleRunStateRef.current = "idle";
       rifleRunStateUntilRef.current = 0;
       rifleRunInputGraceUntilRef.current = 0;
       rifleRunHeadingYawRef.current = controller.getBodyYaw();
-      if (!isRifleEquipped && !crouched) {
+      if (!isWeaponHoldEquipped && !crouched) {
         if (!movementActive) {
           if (
             unarmedWalkState === "start" ||
@@ -1937,9 +1983,9 @@ export const GameplayRuntime = forwardRef<
             "walkRight",
           );
         }
-      } else if (isRifleEquipped && firePrepIntent) {
+      } else if (isWeaponHoldEquipped && firePrepIntent) {
         nextAnimState = resolveRifleAimWalkState(animMoveX, animMoveY);
-      } else if (isRifleEquipped && !adsActive) {
+      } else if (isWeaponHoldEquipped && !adsActive) {
         if (runState === "start") {
           nextAnimState = "rifleRunStart";
         } else if (runState === "running") {
@@ -1990,18 +2036,16 @@ export const GameplayRuntime = forwardRef<
     // Excludes: running (weapon lowered), fire prep (already aiming),
     //           crouch (has own overlay), aim-walk (already raised).
     if (
-      isRifleEquipped &&
+      isWeaponHoldEquipped &&
       !firePrepVisual &&
       !crouched &&
       crouchTransitionState === "idle" &&
       upperBodyOverlayState === null
     ) {
-      const isRunState =
-        nextAnimState === "rifleRun" ||
+      const isRunState = nextAnimState === "rifleRun" ||
         nextAnimState === "rifleRunStart" ||
         nextAnimState === "rifleRunStop";
-      const isAimState =
-        nextAnimState === "rifleAimHold" ||
+      const isAimState = nextAnimState === "rifleAimHold" ||
         (nextAnimState as string).startsWith("rifleAimWalk");
       if (!isRunState && !isAimState) {
         upperBodyOverlayState = "rifleAimHold";
@@ -2084,12 +2128,13 @@ export const GameplayRuntime = forwardRef<
       );
     const characterLocomotionScale =
       rifleLocomotionState || unarmedSharedLocomotionState
-      ? THREE.MathUtils.clamp(
-        controller.getPlanarSpeed() / Math.max(0.01, locomotionReferenceSpeed),
-        RIFLE_LOCOMOTION_SCALE_MIN,
-        RIFLE_LOCOMOTION_SCALE_MAX,
-      )
-      : 1;
+        ? THREE.MathUtils.clamp(
+          controller.getPlanarSpeed() /
+            Math.max(0.01, locomotionReferenceSpeed),
+          RIFLE_LOCOMOTION_SCALE_MIN,
+          RIFLE_LOCOMOTION_SCALE_MAX,
+        )
+        : 1;
     const lowerBodyOverlayLocomotionScale = lowerBodyOverlayState &&
         (
           lowerBodyOverlayState.startsWith("crouch") ||
@@ -2118,14 +2163,12 @@ export const GameplayRuntime = forwardRef<
       lowerBodyState: lowerBodyOverlayState,
       lowerBodyLocomotionScale: lowerBodyOverlayLocomotionScale,
       lowerBodySeekNormalizedTime: crouchTransitionSeekNormalized,
-      lowerBodyDesiredDurationSeconds:
-        lowerBodyOverlayState === "crouchEnter"
-          ? CROUCH_ENTER_TRANSITION_MS / 1000
-          : undefined,
-      lowerBodyFadeDurationSeconds:
-        lowerBodyOverlayState === "crouchEnter"
-          ? CROUCH_ENTER_BLEND_SECONDS
-          : 0.12,
+      lowerBodyDesiredDurationSeconds: lowerBodyOverlayState === "crouchEnter"
+        ? CROUCH_ENTER_TRANSITION_MS / 1000
+        : undefined,
+      lowerBodyFadeDurationSeconds: lowerBodyOverlayState === "crouchEnter"
+        ? CROUCH_ENTER_BLEND_SECONDS
+        : 0.12,
       upperBodyState: upperBodyOverlayState,
       upperBodyLocomotionScale: characterLocomotionScale,
     });
@@ -2198,7 +2241,9 @@ export const GameplayRuntime = forwardRef<
       if (mixer) {
         mixer.update(clampedDelta);
       }
-      if (consumeFootstepTrigger(footstepPhaseRef.current, getFootstepSample())) {
+      if (
+        consumeFootstepTrigger(footstepPhaseRef.current, getFootstepSample())
+      ) {
         audio.playFootstep(footstepPlaybackRate);
       }
       if (headBone) {
@@ -2210,9 +2255,12 @@ export const GameplayRuntime = forwardRef<
       }
       if (upperTorsoBone) {
         if (!characterUpperTorsoBaseQuatRef.current) {
-          characterUpperTorsoBaseQuatRef.current = upperTorsoBone.quaternion.clone();
+          characterUpperTorsoBaseQuatRef.current = upperTorsoBone.quaternion
+            .clone();
         } else {
-          characterUpperTorsoBaseQuatRef.current.copy(upperTorsoBone.quaternion);
+          characterUpperTorsoBaseQuatRef.current.copy(
+            upperTorsoBone.quaternion,
+          );
         }
       }
     }
@@ -2251,6 +2299,7 @@ export const GameplayRuntime = forwardRef<
       }
     }
 
+    const leanValue = controller.getLeanValue();
     const upperTorsoBone = characterUpperTorsoBoneRef.current;
     if (upperTorsoBone && presentation.phase === "playing") {
       if (crouchAimCompositePose > 0.001) {
@@ -2267,7 +2316,9 @@ export const GameplayRuntime = forwardRef<
       }
       // Aim follow: when the rifle ready-pose is code-driven, the upper torso needs
       // stronger tracking or the weapon visually points off-crosshair until firing.
-      if (weaponEquipped && !sprinting && (!firstPerson || rifleReadyPoseActive)) {
+      if (
+        weaponEquipped && !sprinting && (!firstPerson || rifleReadyPoseActive)
+      ) {
         const aimPitch = controller.getPitch();
         const torsoPitchFraction = rifleReadyPoseActive
           ? RIFLE_READY_PITCH_TORSO_FRACTION
@@ -2290,7 +2341,6 @@ export const GameplayRuntime = forwardRef<
           upperTorsoBone.quaternion.premultiply(AIM_YAW_TORSO_QUAT);
         }
       }
-      const leanValue = controller.getLeanValue();
       if (Math.abs(leanValue) > 0.001) {
         UPPER_TORSO_LEAN_QUAT.setFromAxisAngle(
           Z_AXIS,
@@ -2328,15 +2378,16 @@ export const GameplayRuntime = forwardRef<
       weaponAlignment,
       rifleMuzzleOffsetRef.current,
       sniperMuzzleOffsetRef.current,
+      firstPerson,
+      adsActive,
+      leanValue,
     );
 
     const weaponSprinting = !weaponEquipped
       ? sprinting
-      : activeWeapon === "rifle"
-      ? nextAnimState === "rifleRun" ||
+      : nextAnimState === "rifleRun" ||
         nextAnimState === "rifleRunStart" ||
-        nextAnimState === "rifleRunStop"
-      : sprinting;
+        nextAnimState === "rifleRunStop";
     weapon.setMovementState(movementActive, weaponSprinting);
     const shots = weapon.update(clampedDelta, nowMs, camera);
     if (shots.length > 0) {
@@ -2536,14 +2587,61 @@ export const GameplayRuntime = forwardRef<
       weapon.setTracer(tracerOrigin, tempEndRef.current, nowMs);
     }
 
-    updateWorldGunMesh(
-      worldGunRef.current,
-      worldRifleModelRef.current,
-      worldSniperModelRef.current,
-      weapon,
-      nowMs,
+    const worldState = weapon.getWorldState();
+    const displayedWeapon = resolveDisplayedWeapon(weapon, switchState);
+    const showBackSlots = presentation.phase === "playing" && !firstPerson;
+    const upperTorsoBoneForBack = characterUpperTorsoBoneRef.current;
+    let backWeaponAnchor = backWeaponAnchorRef.current;
+    if (upperTorsoBoneForBack) {
+      upperTorsoBoneForBack.getWorldPosition(
+        tempBackWeaponAnchorWorldRef.current,
+      );
+      upperTorsoBoneForBack.getWorldQuaternion(
+        tempBackWeaponAnchorQuatRef.current,
+      );
+      if (!backWeaponAnchor) {
+        backWeaponAnchor = {
+          position: tempBackWeaponAnchorWorldRef.current,
+          quaternion: tempBackWeaponAnchorQuatRef.current,
+        };
+        backWeaponAnchorRef.current = backWeaponAnchor;
+      }
+    } else {
+      backWeaponAnchor = null;
+    }
+
+    updateBackWeaponMesh(
+      backRifleSlotRef.current,
+      showBackSlots &&
+        worldState.loadout.slotA.hasWeapon &&
+        displayedWeapon !== "rifle",
       switchState,
+      -1,
+      backWeaponAnchor,
+    );
+    updateBackWeaponMesh(
+      backSniperSlotRef.current,
+      showBackSlots &&
+        worldState.loadout.slotB.hasWeapon &&
+        displayedWeapon !== "sniper",
+      switchState,
+      1,
+      backWeaponAnchor,
+    );
+
+    updateWorldWeaponMesh(
+      worldRiflePickupRef.current,
+      worldState.rifle.isPresentOnGround,
+      worldState.rifle.droppedPosition,
       presentation.pickupReveal,
+      -Math.PI / 2,
+    );
+    updateWorldWeaponMesh(
+      worldSniperPickupRef.current,
+      worldState.sniper.isPresentOnGround,
+      worldState.sniper.droppedPosition,
+      presentation.pickupReveal,
+      -Math.PI / 2,
     );
     updateTracerMesh(
       tracerRef.current,
@@ -2770,6 +2868,45 @@ export const GameplayRuntime = forwardRef<
         )}
       </group>
 
+      <group ref={backRifleSlotRef} visible={false}>
+        {weaponModels.rifle
+          ? (
+            <WeaponModelInstance
+              source={weaponModels.rifle}
+              transform={WEAPON_MODEL_TRANSFORMS.back.rifle}
+            />
+          )
+          : (
+            <mesh castShadow receiveShadow>
+              <boxGeometry args={[0.58, 0.08, 0.12]} />
+              <meshStandardMaterial
+                color="#2f363c"
+                roughness={0.58}
+                metalness={0.42}
+              />
+            </mesh>
+          )}
+      </group>
+      <group ref={backSniperSlotRef} visible={false}>
+        {weaponModels.sniper
+          ? (
+            <WeaponModelInstance
+              source={weaponModels.sniper}
+              transform={WEAPON_MODEL_TRANSFORMS.back.sniper}
+            />
+          )
+          : (
+            <mesh castShadow receiveShadow>
+              <boxGeometry args={[0.74, 0.08, 0.11]} />
+              <meshStandardMaterial
+                color="#242a30"
+                roughness={0.52}
+                metalness={0.44}
+              />
+            </mesh>
+          )}
+      </group>
+
       <group ref={characterWeaponRef} visible={false}>
         <group ref={characterRifleModelRef}>
           {weaponModels.rifle
@@ -2871,59 +3008,82 @@ export const GameplayRuntime = forwardRef<
         </mesh>
       </group>
 
-      <group ref={worldGunRef} visible>
-        <group ref={worldRifleModelRef}>
-          {weaponModels.rifle
-            ? (
-              <WeaponModelInstance
-                source={weaponModels.rifle}
-                transform={WEAPON_MODEL_TRANSFORMS.world.rifle}
-              />
-            )
-            : (
-              <>
-                <mesh castShadow receiveShadow>
-                  <boxGeometry args={[0.7, 0.12, 0.18]} />
-                  <meshStandardMaterial
-                    color="#30363c"
-                    roughness={0.6}
-                    metalness={0.35}
-                  />
-                </mesh>
-                <mesh position={[0.22, -0.08, 0]} castShadow receiveShadow>
-                  <boxGeometry args={[0.22, 0.18, 0.06]} />
-                  <meshStandardMaterial
-                    color="#514942"
-                    roughness={0.85}
-                    metalness={0.1}
-                  />
-                </mesh>
-                <mesh
-                  position={[-0.22, 0, 0]}
-                  rotation={[0, 0, Math.PI / 2]}
-                  castShadow
-                  receiveShadow
-                >
-                  <cylinderGeometry args={[0.02, 0.02, 0.55, 10]} />
-                  <meshStandardMaterial
-                    color="#1e2328"
-                    roughness={0.5}
-                    metalness={0.55}
-                  />
-                </mesh>
-              </>
-            )}
-        </group>
-        <group ref={worldSniperModelRef}>
-          {weaponModels.sniper
-            ? (
-              <WeaponModelInstance
-                source={weaponModels.sniper}
-                transform={WEAPON_MODEL_TRANSFORMS.world.sniper}
-              />
-            )
-            : null}
-        </group>
+      <group ref={worldRiflePickupRef} visible>
+        {weaponModels.rifle
+          ? (
+            <WeaponModelInstance
+              source={weaponModels.rifle}
+              transform={WEAPON_MODEL_TRANSFORMS.world.rifle}
+            />
+          )
+          : (
+            <>
+              <mesh castShadow receiveShadow>
+                <boxGeometry args={[0.7, 0.12, 0.18]} />
+                <meshStandardMaterial
+                  color="#30363c"
+                  roughness={0.6}
+                  metalness={0.35}
+                />
+              </mesh>
+              <mesh position={[0.22, -0.08, 0]} castShadow receiveShadow>
+                <boxGeometry args={[0.22, 0.18, 0.06]} />
+                <meshStandardMaterial
+                  color="#514942"
+                  roughness={0.85}
+                  metalness={0.1}
+                />
+              </mesh>
+              <mesh
+                position={[-0.22, 0, 0]}
+                rotation={[0, 0, Math.PI / 2]}
+                castShadow
+                receiveShadow
+              >
+                <cylinderGeometry args={[0.02, 0.02, 0.55, 10]} />
+                <meshStandardMaterial
+                  color="#1e2328"
+                  roughness={0.5}
+                  metalness={0.55}
+                />
+              </mesh>
+            </>
+          )}
+      </group>
+
+      <group ref={worldSniperPickupRef} visible>
+        {weaponModels.sniper
+          ? (
+            <WeaponModelInstance
+              source={weaponModels.sniper}
+              transform={WEAPON_MODEL_TRANSFORMS.world.sniper}
+            />
+          )
+          : (
+            <>
+              <mesh castShadow receiveShadow>
+                <boxGeometry args={[0.78, 0.08, 0.11]} />
+                <meshStandardMaterial
+                  color="#2a3036"
+                  roughness={0.52}
+                  metalness={0.4}
+                />
+              </mesh>
+              <mesh
+                position={[-0.36, 0.01, 0]}
+                rotation={[0, 0, Math.PI / 2]}
+                castShadow
+                receiveShadow
+              >
+                <cylinderGeometry args={[0.014, 0.014, 0.72, 10]} />
+                <meshStandardMaterial
+                  color="#1b2025"
+                  roughness={0.45}
+                  metalness={0.62}
+                />
+              </mesh>
+            </>
+          )}
       </group>
 
       <mesh
