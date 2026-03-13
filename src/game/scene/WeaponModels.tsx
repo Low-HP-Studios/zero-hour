@@ -52,6 +52,52 @@ export function useWeaponModels(): WeaponModelResult {
   return models;
 }
 
+function normalizeWeaponMaterial(material: THREE.Material): THREE.Material {
+  if (!(material as THREE.MeshStandardMaterial).isMeshStandardMaterial &&
+    !(material as THREE.MeshPhongMaterial).isMeshPhongMaterial &&
+    !(material as THREE.MeshLambertMaterial).isMeshLambertMaterial &&
+    !(material as THREE.MeshBasicMaterial).isMeshBasicMaterial) {
+    return material.clone();
+  }
+
+  const source = material as THREE.MeshStandardMaterial &
+    THREE.MeshPhongMaterial & THREE.MeshLambertMaterial & THREE.MeshBasicMaterial;
+  const normalized = new THREE.MeshStandardMaterial({
+    name: material.name,
+    color: source.color ? source.color.clone() : new THREE.Color(0x8a9098),
+    roughness: (source as THREE.MeshStandardMaterial).roughness ?? 0.64,
+    metalness: (source as THREE.MeshStandardMaterial).metalness ?? 0.16,
+    transparent: source.transparent,
+    opacity: source.opacity,
+    side: source.side,
+  });
+  normalized.map = source.map ?? null;
+  normalized.normalMap = source.normalMap ?? null;
+  normalized.alphaMap = source.alphaMap ?? null;
+  normalized.aoMap = source.aoMap ?? null;
+  normalized.emissiveMap = source.emissiveMap ?? null;
+  normalized.roughnessMap = source.roughnessMap ?? null;
+  normalized.metalnessMap = source.metalnessMap ?? null;
+
+  if (normalized.map) {
+    normalized.map.colorSpace = THREE.SRGBColorSpace;
+  }
+
+  // Some pack materials are near-black by default; lift them so details are visible.
+  const maxChannel = Math.max(
+    normalized.color.r,
+    normalized.color.g,
+    normalized.color.b,
+  );
+  if (!normalized.map && maxChannel < 0.18) {
+    const scale = 0.22 / Math.max(maxChannel, 0.01);
+    normalized.color.multiplyScalar(scale);
+  }
+
+  normalized.needsUpdate = true;
+  return normalized;
+}
+
 export function cloneWeaponModel(source: THREE.Group | null): THREE.Group | null {
   if (!source) return null;
 
@@ -61,8 +107,9 @@ export function cloneWeaponModel(source: THREE.Group | null): THREE.Group | null
     const mesh = child as THREE.Mesh;
     mesh.castShadow = true;
     mesh.receiveShadow = true;
+    mesh.frustumCulled = false;
     const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-    mesh.material = materials.map((material) => material.clone());
+    mesh.material = materials.map((material) => normalizeWeaponMaterial(material));
   });
   return clone;
 }

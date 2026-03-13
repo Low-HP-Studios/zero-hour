@@ -20,6 +20,9 @@ import {
 } from "../Targets";
 import type {
   GameSettings,
+  InventoryMoveLocation,
+  InventoryMoveRequest,
+  InventoryMoveResult,
   PerfMetrics,
   PlayerSnapshot,
   ScenePresentation,
@@ -69,6 +72,8 @@ export type SceneHandle = {
   requestPointerLock: () => void;
   releasePointerLock: () => void;
   dropWeaponForReturn: () => void;
+  moveInventoryItem: (request: InventoryMoveRequest) => InventoryMoveResult;
+  quickMoveInventoryItem: (location: InventoryMoveLocation) => InventoryMoveResult;
   resetForMenu: () => void;
 };
 
@@ -305,6 +310,18 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
     dropWeaponForReturn: () => {
       runtimeRef.current?.dropWeaponForReturn();
     },
+    moveInventoryItem: (request) => {
+      return runtimeRef.current?.moveInventoryItem(request) ?? {
+        ok: false,
+        message: "Runtime unavailable.",
+      };
+    },
+    quickMoveInventoryItem: (location) => {
+      return runtimeRef.current?.quickMoveInventoryItem(location) ?? {
+        ok: false,
+        message: "Runtime unavailable.",
+      };
+    },
     resetForMenu: () => {
       handleResetTargets();
       runtimeRef.current?.resetForMenu();
@@ -382,10 +399,11 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
         worldBounds={WORLD_BOUNDS}
         audioVolumes={audioVolumes}
         presentation={presentation}
-        sensitivity={settings.sensitivity}
-        keybinds={settings.keybinds}
-        crouchMode={settings.crouchMode}
-        fov={settings.fov}
+                sensitivity={settings.sensitivity}
+                keybinds={settings.keybinds}
+                crouchMode={settings.crouchMode}
+                inventoryOpenMode={settings.inventoryOpenMode}
+                fov={settings.fov}
         weaponAlignment={settings.weaponAlignment}
         movement={settings.movement}
         weaponRecoilProfiles={settings.weaponRecoilProfiles}

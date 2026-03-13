@@ -318,7 +318,8 @@ function configureActionLooping(
     clipName === "rifleCrouchEnter" ||
     clipName === "rifleCrouchExit" ||
     clipName === "rifleRunStart" ||
-    clipName === "rifleRunStop"
+    clipName === "rifleRunStop" ||
+    clipName === "rifleReload"
   ) {
     action.setLoop(THREE.LoopOnce, 1);
     action.clampWhenFinished = true;
@@ -525,6 +526,9 @@ export function useCharacterModel(): CharacterModelResult {
           if (!(child as THREE.Mesh).isMesh) return;
           child.castShadow = true;
           child.receiveShadow = true;
+          if ((child as THREE.SkinnedMesh).isSkinnedMesh) {
+            child.frustumCulled = false;
+          }
         });
 
         await applyCharacterTextures(clone);

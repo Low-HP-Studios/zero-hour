@@ -26,6 +26,8 @@ import {
   formatKeyCode,
   menuTitle,
 } from "./SettingsPanels";
+import { PubgHud } from "./hud/PubgHud";
+import { PubgInventoryOverlay } from "./inventory/PubgInventoryOverlay";
 import type { SniperRechamberState, WeaponKind } from "./Weapon";
 import {
   DEFAULT_MOVEMENT_SETTINGS,
@@ -38,6 +40,9 @@ import {
   type ExperiencePhase,
   type GameSettings,
   type HudOverlayToggles,
+  type InventoryMoveLocation,
+  type InventoryMoveRequest,
+  type InventoryMoveResult,
   type PerfMetrics,
   type PlayerSnapshot,
   type ScenePresentation,
@@ -127,6 +132,45 @@ function resolveKillPulseAmount(progress: number) {
   return 1 - easeInOutCubic((progress - 0.35) / 0.65);
 }
 
+function isLoadoutSlotEqual(
+  previous: PlayerSnapshot["weaponLoadout"]["slotA"],
+  next: PlayerSnapshot["weaponLoadout"]["slotA"],
+) {
+  return previous.weaponKind === next.weaponKind &&
+    previous.hasWeapon === next.hasWeapon &&
+    previous.magAmmo === next.magAmmo &&
+    previous.reserveAmmo === next.reserveAmmo &&
+    previous.maxMagAmmo === next.maxMagAmmo &&
+    previous.maxReserveAmmo === next.maxReserveAmmo &&
+    previous.maxPacks === next.maxPacks &&
+    previous.packAmmo === next.packAmmo;
+}
+
+function isPlayerSnapshotEqual(previous: PlayerSnapshot, next: PlayerSnapshot) {
+  return previous.x === next.x &&
+    previous.y === next.y &&
+    previous.z === next.z &&
+    previous.speed === next.speed &&
+    previous.grounded === next.grounded &&
+    previous.moving === next.moving &&
+    previous.sprinting === next.sprinting &&
+    previous.movementTier === next.movementTier &&
+    previous.crouched === next.crouched &&
+    previous.pointerLocked === next.pointerLocked &&
+    previous.canInteract === next.canInteract &&
+    previous.interactWeaponKind === next.interactWeaponKind &&
+    previous.inventoryPanelOpen === next.inventoryPanelOpen &&
+    previous.inventoryPanelMode === next.inventoryPanelMode &&
+    previous.inventory.revision === next.inventory.revision &&
+    previous.weaponLoadout.activeSlot === next.weaponLoadout.activeSlot &&
+    isLoadoutSlotEqual(previous.weaponLoadout.slotA, next.weaponLoadout.slotA) &&
+    isLoadoutSlotEqual(previous.weaponLoadout.slotB, next.weaponLoadout.slotB) &&
+    previous.weaponReload.active === next.weaponReload.active &&
+    previous.weaponReload.weaponKind === next.weaponReload.weaponKind &&
+    previous.weaponReload.progress === next.weaponReload.progress &&
+    previous.weaponReload.remainingMs === next.weaponReload.remainingMs;
+}
+
 const BOOT_PRESENTATION: ScenePresentation = {
   phase: "playing",
   phaseProgress: 1,
@@ -173,19 +217,7 @@ export function GameRoot({
   const playerRef = useRef(player);
   const setPlayer = useCallback((snapshot: PlayerSnapshot) => {
     const prev = playerRef.current;
-    if (
-      prev.x === snapshot.x &&
-      prev.y === snapshot.y &&
-      prev.z === snapshot.z &&
-      prev.speed === snapshot.speed &&
-      prev.grounded === snapshot.grounded &&
-      prev.moving === snapshot.moving &&
-      prev.sprinting === snapshot.sprinting &&
-      prev.movementTier === snapshot.movementTier &&
-      prev.crouched === snapshot.crouched &&
-      prev.pointerLocked === snapshot.pointerLocked &&
-      prev.canInteract === snapshot.canInteract
-    ) {
+    if (isPlayerSnapshotEqual(prev, snapshot)) {
       return;
     }
     playerRef.current = snapshot;
@@ -206,6 +238,7 @@ export function GameRoot({
   const [phaseProgress, setPhaseProgress] = useState(0);
   const [menuSettingsOpen, setMenuSettingsOpen] = useState(false);
   const [menuUpdatesOpen, setMenuUpdatesOpen] = useState(false);
+  const [pauseMenuOpen, setPauseMenuOpen] = useState(false);
   const [killPulseToken, setKillPulseToken] = useState(0);
   const [killPulseAmount, setKillPulseAmount] = useState(0);
   const [hitMarker, setHitMarker] = useState<
@@ -227,7 +260,9 @@ export function GameRoot({
   >(null);
   const updaterApi = window.electronAPI?.updater;
   const updaterAvailable = Boolean(updaterApi);
-  const isPaused = booting || phase !== "playing" || !player.pointerLocked;
+  const inventoryOpen = phase === "playing" && player.inventoryPanelOpen;
+  const isPaused = booting || phase !== "playing" ||
+    (!player.pointerLocked && !inventoryOpen);
   const [hasBeenLocked, setHasBeenLocked] = useState(false);
   const returnResetDoneRef = useRef(false);
   const enteredPlayingAtRef = useRef(0);
@@ -346,6 +381,7 @@ export function GameRoot({
   }, [killPulseToken]);
 
   const showPauseMenu = phase === "playing" && hasBeenLocked && isPaused &&
+    pauseMenuOpen &&
     (performance.now() - enteredPlayingAtRef.current > 600);
   const inLobbyPhase = phase === "menu" || phase === "entering" ||
     phase === "returning";
@@ -354,6 +390,7 @@ export function GameRoot({
 
   const handleCloseMenuAndResume = useCallback(() => {
     setBindingCapture(null);
+    setPauseMenuOpen(false);
     sceneRef.current?.requestPointerLock();
   }, []);
 
@@ -381,6 +418,7 @@ export function GameRoot({
   const handleEnterPractice = useCallback(() => {
     setMenuSettingsOpen(false);
     setMenuUpdatesOpen(false);
+    setPauseMenuOpen(false);
     setBindingCapture(null);
     setHitMarker({ until: 0, kind: "body" });
     setPhaseProgress(0);
@@ -391,11 +429,39 @@ export function GameRoot({
     setBindingCapture(null);
     setMenuSettingsOpen(false);
     setMenuUpdatesOpen(false);
+    setPauseMenuOpen(false);
     sceneRef.current?.releasePointerLock();
     sceneRef.current?.dropWeaponForReturn();
     setPhaseProgress(0);
     setPhase("returning");
   }, []);
+
+  const reportInventoryResult = useCallback((result: InventoryMoveResult) => {
+    if (result.ok) {
+      return;
+    }
+    if (result.message) {
+      toast.warning(result.message);
+    }
+  }, []);
+
+  const handleMoveInventoryItem = useCallback((request: InventoryMoveRequest) => {
+    const result = sceneRef.current?.moveInventoryItem(request) ?? {
+      ok: false,
+      message: "Inventory runtime unavailable.",
+    };
+    reportInventoryResult(result);
+    return result;
+  }, [reportInventoryResult]);
+
+  const handleQuickMoveInventoryItem = useCallback((location: InventoryMoveLocation) => {
+    const result = sceneRef.current?.quickMoveInventoryItem(location) ?? {
+      ok: false,
+      message: "Inventory runtime unavailable.",
+    };
+    reportInventoryResult(result);
+    return result;
+  }, [reportInventoryResult]);
 
   const handleHitMarker = useCallback((kind: HitMarkerKind) => {
     setHitMarker({
@@ -719,27 +785,43 @@ export function GameRoot({
   }, [bindingCapture, isPaused]);
 
   useEffect(() => {
-    if (phase !== "playing" || !isPaused || !hasBeenLocked) return;
+    if (phase !== "playing" && pauseMenuOpen) {
+      setPauseMenuOpen(false);
+    }
+  }, [phase, pauseMenuOpen]);
+
+  useEffect(() => {
+    if (phase !== "playing" || !hasBeenLocked) return;
     if (bindingCapture) return;
 
     let pendingTimer: number | null = null;
 
-    const onEscResume = (event: KeyboardEvent) => {
+    const onEscTogglePause = (event: KeyboardEvent) => {
       if (event.code !== "Escape") return;
       event.preventDefault();
       if (pendingTimer !== null) window.clearTimeout(pendingTimer);
       pendingTimer = window.setTimeout(() => {
         pendingTimer = null;
-        sceneRef.current?.requestPointerLock();
+        if (pauseMenuOpen) {
+          setPauseMenuOpen(false);
+          sceneRef.current?.requestPointerLock();
+          return;
+        }
+
+        setBindingCapture(null);
+        setMenuSettingsOpen(false);
+        setMenuUpdatesOpen(false);
+        setPauseMenuOpen(true);
+        sceneRef.current?.releasePointerLock();
       }, 120);
     };
 
-    window.addEventListener("keydown", onEscResume);
+    window.addEventListener("keydown", onEscTogglePause);
     return () => {
-      window.removeEventListener("keydown", onEscResume);
+      window.removeEventListener("keydown", onEscTogglePause);
       if (pendingTimer !== null) window.clearTimeout(pendingTimer);
     };
-  }, [phase, isPaused, hasBeenLocked, bindingCapture]);
+  }, [phase, hasBeenLocked, bindingCapture, pauseMenuOpen]);
 
   useEffect(() => {
     if (phase !== "playing") {
@@ -862,6 +944,8 @@ export function GameRoot({
   const stressLabel = stressCount === 0 ? "Off" : `${stressCount} boxes`;
   const lockLabel = player.pointerLocked
     ? "Live look mode"
+    : inventoryOpen
+    ? "Inventory cursor mode"
     : "Paused / cursor shown";
   const movementSpread = !settings.crosshair.dynamic.enabled
     ? 0
@@ -946,25 +1030,18 @@ export function GameRoot({
     : player.movementTier === "walk"
     ? "Walk"
     : "Jog";
+  const rifleSlot = player.weaponLoadout.slotA;
+  const sniperSlot = player.weaponLoadout.slotB;
+  const activeSlotLabel = player.weaponLoadout.activeSlot === "slotA"
+    ? "Slot 1 (Rifle)"
+    : "Slot 2 (Sniper)";
+  const anyWeaponEquipped = rifleSlot.hasWeapon || sniperSlot.hasWeapon;
+  const interactPromptLabel = player.canInteract
+    ? `Press ${formatKeyCode(settings.keybinds.pickup)} to loot ${
+      player.interactWeaponKind === "sniper" ? "Sniper" : "Rifle"
+    }`
+    : "";
 
-  const controlsPreview = useMemo(() => {
-    const b = settings.keybinds;
-    return [
-      `${formatKeyCode(b.moveForward)}/${formatKeyCode(b.moveLeft)}/${
-        formatKeyCode(b.moveBackward)
-      }/${formatKeyCode(b.moveRight)} move`,
-      `${formatKeyCode(b.sprint)} run modifier`,
-      `${formatKeyCode(b.walkModifier)} walk modifier`,
-      `${formatKeyCode(b.crouch)} crouch (${settings.crouchMode})`,
-      `${formatKeyCode(b.jump)} jump`,
-      `${formatKeyCode(b.toggleView)} FPP/TPP`,
-      `${formatKeyCode(b.peekLeft)}/${formatKeyCode(b.peekRight)} lean`,
-      `${formatKeyCode(b.reset)} reset targets`,
-      "Mouse look / fire / ADS",
-      "P perf panel",
-      "Esc pause",
-    ];
-  }, [settings.crouchMode, settings.keybinds]);
   const updaterPhaseLabel = formatUpdaterPhase(updaterStatus.phase);
   const updaterPhaseClass = updaterStatus.phase === "error"
     ? "error"
@@ -981,14 +1058,19 @@ export function GameRoot({
     : null;
   const installUpdateInProgress = updaterBusyAction === "install";
   const gameplayHudVisible = phase === "playing";
+  const showInventoryOverlay = gameplayHudVisible && player.inventoryPanelOpen;
+  const showInteractPrompt = gameplayHudVisible && !isPaused &&
+    !showInventoryOverlay &&
+    player.canInteract;
+  const combatHudVisible = gameplayHudVisible && !showInventoryOverlay;
   const uiOverlayClassName = gameplayHudVisible
     ? "ui-overlay ui-overlay--practice"
     : "ui-overlay";
-  const liveFps = Number.isFinite(perfMetrics.fps) ? Math.max(0, perfMetrics.fps) : 0;
-
   return (
     <div
-      className={`app-shell ${isPaused ? "paused" : "playing"} phase-${phase}`}
+      className={`app-shell ${
+        showInventoryOverlay ? "inventory-open" : isPaused ? "paused" : "playing"
+      } phase-${phase}`}
     >
       <Scene
         ref={sceneRef}
@@ -1027,7 +1109,7 @@ export function GameRoot({
         : null}
 
       <div className={uiOverlayClassName}>
-        {gameplayHudVisible && hudPanels.practice
+        {combatHudVisible && hudPanels.practice
           ? (
             <div className="corner-top-left panel tactical-panel practice-panel">
               <div className="panel-eyebrow">GreyTrace / Practice Range</div>
@@ -1060,11 +1142,17 @@ export function GameRoot({
                     : "Jump / Air"}
                 </dd>
                 <dt>Interact</dt>
-                <dd>{player.canInteract ? "Pickup ready" : "-"}</dd>
+                <dd>
+                  {player.canInteract
+                    ? player.interactWeaponKind === "sniper"
+                      ? "Sniper nearby"
+                      : "Rifle nearby"
+                    : "-"}
+                </dd>
                 <dt>Weapon</dt>
                 <dd>
-                  {weaponEquipped
-                    ? (activeWeapon === "sniper" ? "Sniper" : "Rifle")
+                  {anyWeaponEquipped
+                    ? activeSlotLabel
                     : "None"}
                 </dd>
                 <dt>Range Load</dt>
@@ -1074,7 +1162,7 @@ export function GameRoot({
           )
           : null}
 
-        {gameplayHudVisible && hudPanels.performance
+        {combatHudVisible && hudPanels.performance
           ? (
             <div className="corner-top-right">
               <PerfHUD metrics={perfMetrics} visible />
@@ -1083,7 +1171,7 @@ export function GameRoot({
           : null}
 
         <div className="center-stack">
-          {gameplayHudVisible && !isPaused && !sniperScopeActive &&
+          {combatHudVisible && !isPaused && !sniperScopeActive &&
               !rifleScopeActive
             ? (
               <div
@@ -1134,7 +1222,7 @@ export function GameRoot({
               </div>
             )
             : null}
-          {gameplayHudVisible && rifleScopeActive
+          {combatHudVisible && rifleScopeActive
             ? (
               <div
                 className="rifle-ads-overlay"
@@ -1149,7 +1237,7 @@ export function GameRoot({
               </div>
             )
             : null}
-          {gameplayHudVisible && sniperScopeActive
+          {combatHudVisible && sniperScopeActive
             ? (
               <div className="sniper-scope-overlay" style={sniperScopeStyle}>
                 <div className="scope-outside" />
@@ -1169,12 +1257,30 @@ export function GameRoot({
               </div>
             )
             : null}
-          {gameplayHudVisible && !isPaused
+          {combatHudVisible && !isPaused
             ? (
               <div
                 className={`hit-marker ${
                   hitMarkerVisible ? "visible" : ""
                 } ${hitMarker.kind}`}
+              />
+            )
+            : null}
+          {showInteractPrompt
+            ? (
+              <div className="interact-prompt" role="status">
+                {interactPromptLabel}
+              </div>
+            )
+            : null}
+          {showInventoryOverlay
+            ? (
+              <PubgInventoryOverlay
+                inventory={player.inventory}
+                player={player}
+                keybinds={settings.keybinds}
+                onMoveItem={handleMoveInventoryItem}
+                onQuickMove={handleQuickMoveInventoryItem}
               />
             )
             : null}
@@ -2246,6 +2352,42 @@ export function GameRoot({
                                 </button>
                               </div>
                             </div>
+                            <div className="field-row">
+                              <div>
+                                <div className="field-label">Inventory Open Mode</div>
+                                <div className="field-hint">
+                                  Toggle keeps TAB inventory open until pressed again. Hold closes on key release.
+                                </div>
+                              </div>
+                              <div className="segmented-row compact">
+                                <button
+                                  type="button"
+                                  className={`chip-btn ${
+                                    settings.inventoryOpenMode === "toggle" ? "active" : ""
+                                  }`}
+                                  onClick={() =>
+                                    setSettings((prev) => ({
+                                      ...prev,
+                                      inventoryOpenMode: "toggle",
+                                    }))}
+                                >
+                                  Toggle
+                                </button>
+                                <button
+                                  type="button"
+                                  className={`chip-btn ${
+                                    settings.inventoryOpenMode === "hold" ? "active" : ""
+                                  }`}
+                                  onClick={() =>
+                                    setSettings((prev) => ({
+                                      ...prev,
+                                      inventoryOpenMode: "hold",
+                                    }))}
+                                >
+                                  Hold
+                                </button>
+                              </div>
+                            </div>
                             <div className="keybind-grid">
                               {BINDING_ROWS.map((row) => {
                                 const code = settings.keybinds[row.key];
@@ -3067,109 +3209,9 @@ export function GameRoot({
             : null}
         </div>
 
-        {gameplayHudVisible && hudPanels.controls
-          ? (
-            <div className="corner-bottom-left panel tactical-panel compact-panel">
-              <div className="panel-eyebrow">Controls</div>
-              <h2>Quick Reference</h2>
-              <ul className="control-list">
-                {controlsPreview.map((line) => <li key={line}>{line}</li>)}
-              </ul>
-            </div>
-          )
+        {combatHudVisible && !isPaused
+          ? <PubgHud player={player} visible={true} />
           : null}
-
-        <div className="corner-bottom-right-stack">
-          {gameplayHudVisible && hudPanels.settings
-          ? (
-            <div className="panel tactical-panel compact-panel">
-              <div className="panel-eyebrow">Settings Snapshot</div>
-              <h2>Tactical Console</h2>
-              <div className="quick-settings-stack">
-                <SwitchRow
-                  label="Shadows"
-                  hint="World shadows"
-                  checked={settings.shadows}
-                  onChange={(checked) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      shadows: checked,
-                    }))}
-                />
-                <SwitchRow
-                  label="Perf Panel"
-                  hint="Top-right perf HUD"
-                  checked={hudPanels.performance}
-                  onChange={(checked) =>
-                    setHudPanels((prev) => ({
-                      ...prev,
-                      performance: checked,
-                    }))}
-                />
-                <div className="field-row">
-                  <div>
-                    <div className="field-label">Pixel Ratio</div>
-                    <div className="field-hint">Render scale</div>
-                  </div>
-                  <div className="segmented-row compact">
-                    {PIXEL_RATIO_OPTIONS.map((option) => (
-                      <button
-                        key={option.value}
-                        type="button"
-                        className={`chip-btn ${
-                          settings.pixelRatioScale === option.value
-                            ? "active"
-                            : ""
-                        }`}
-                        onClick={() =>
-                          setSettings((prev) => ({
-                            ...prev,
-                            pixelRatioScale: option.value,
-                          }))}
-                      >
-                        {option.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="field-row">
-                  <div>
-                    <div className="field-label">Stress Mode</div>
-                    <div className="field-hint">Range clutter</div>
-                  </div>
-                  <button
-                    type="button"
-                    className="btn"
-                    onClick={() => {
-                      setStressCount((prev) => {
-                        const currentIndex = STRESS_STEPS.indexOf(prev);
-                        const nextIndex = (currentIndex + 1) %
-                          STRESS_STEPS.length;
-                        return STRESS_STEPS[nextIndex];
-                      });
-                    }}
-                  >
-                    {stressLabel}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )
-          : null}
-          <div className="fps-minimal" aria-label={`FPS ${liveFps.toFixed(0)}`}>
-            {liveFps.toFixed(0)} FPS
-          </div>
-          {gameplayHudVisible
-            ? (
-              <div
-                className="fps-minimal"
-                aria-label={`Version ${updaterStatus.currentVersion}`}
-              >
-                v{updaterStatus.currentVersion}
-              </div>
-            )
-            : null}
-        </div>
       </div>
       <div
         className="kill-pulse-overlay"

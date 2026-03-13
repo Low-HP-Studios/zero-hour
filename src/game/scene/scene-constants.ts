@@ -105,19 +105,34 @@ export const CHARACTER_TEXTURE_MAP: Record<
 
 export const ANIM_CLIPS: { name: string; url: string }[] = [
   { name: 'idle', url: '/assets/animations/movement/standing/idle.fbx' },
-  { name: 'walk', url: '/assets/animations/movement/standing/walk-forward.fbx' },
+  {
+    name: 'walk',
+    url: '/assets/animations/movement/standing/walk-forward.fbx',
+  },
   {
     name: 'walkBack',
     url: '/assets/animations/movement/standing/walk-backward.fbx',
   },
-  { name: 'walkLeft', url: '/assets/animations/movement/standing/walk-left.fbx' },
+  {
+    name: 'walkLeft',
+    url: '/assets/animations/movement/standing/walk-left.fbx',
+  },
   {
     name: 'walkRight',
     url: '/assets/animations/movement/standing/walk-right.fbx',
   },
-  { name: 'walkStart', url: '/assets/animations/movement/standing/walk-start.fbx' },
-  { name: 'walkStop', url: '/assets/animations/movement/standing/walk-stop.fbx' },
-  { name: 'sprint', url: '/assets/animations/movement/standing/sprint-forward.fbx' },
+  {
+    name: 'walkStart',
+    url: '/assets/animations/movement/standing/walk-start.fbx',
+  },
+  {
+    name: 'walkStop',
+    url: '/assets/animations/movement/standing/walk-stop.fbx',
+  },
+  {
+    name: 'sprint',
+    url: '/assets/animations/movement/standing/sprint-forward.fbx',
+  },
   {
     name: 'walkForwardLeft',
     url: '/assets/animations/movement/standing/walk-forward-left.fbx',
@@ -269,6 +284,10 @@ export const ANIM_CLIPS: { name: string; url: string }[] = [
     name: 'rifleRunStop',
     url: '/assets/animations/rifle/ready/run-stop.fbx',
   },
+  {
+    name: 'rifleReload',
+    url: '/assets/animations/rifle/reload/reload-animation.fbx',
+  },
 ];
 
 export const WEAPON_MODEL_URLS: Record<WeaponKind, string> = {
@@ -284,30 +303,43 @@ export type WeaponModelTransform = {
 
 export const WEAPON_MODEL_TRANSFORMS: {
   character: Record<WeaponKind, WeaponModelTransform>;
+  back: Record<WeaponKind, WeaponModelTransform>;
   world: Record<WeaponKind, WeaponModelTransform>;
 } = {
   character: {
     rifle: {
       position: [0.02, -0.03, 0],
       rotation: [0, -Math.PI / 2, 0],
-      scale: 0.00145,
+      scale: 0.0013,
     },
     sniper: {
       position: [0.02, -0.04, 0],
       rotation: [0, -Math.PI / 2, 0],
-      scale: 0.0016,
+      scale: 0.0018,
+    },
+  },
+  back: {
+    rifle: {
+      position: [-0.0, -0.1, -0.2],
+      rotation: [-1.5, -Math.PI * -0.08, 1],
+      scale: 0.0013,
+    },
+    sniper: {
+      position: [-0.18, -0.1, -0.2],
+      rotation: [-1.5, -Math.PI * -0.08, -0.18],
+      scale: 0.0018,
     },
   },
   world: {
     rifle: {
       position: [0, 0.02, 0],
       rotation: [0, -Math.PI / 2, 0],
-      scale: 0.00145,
+      scale: 0.0013,
     },
     sniper: {
       position: [0, 0.02, 0],
       rotation: [0, -Math.PI / 2, 0],
-      scale: 0.0016,
+      scale: 0.0018,
     },
   },
 };
@@ -385,6 +417,7 @@ export type CharacterAnimState =
   | 'rifleRun'
   | 'rifleRunStart'
   | 'rifleRunStop'
+  | 'rifleReload'
   | 'sprint';
 
 export type BulletImpactMark = {

@@ -12,6 +12,8 @@ type LoadedBuffers = {
   rifleShot: AudioBuffer | null;
   sniperShot: AudioBuffer | null;
   sniperShell: AudioBuffer | null;
+  rifleReload: AudioBuffer | null;
+  sniperReload: AudioBuffer | null;
   footstep: AudioBuffer | null;
   kill: AudioBuffer | null;
   hit: AudioBuffer | null;
@@ -21,6 +23,8 @@ type BufferSourceUrls = {
   rifleShot: string | null;
   sniperShot: string | null;
   sniperShell: string | null;
+  rifleReload: string | null;
+  sniperReload: string | null;
   footstep: string | null;
   kill: string | null;
   hit: string | null;
@@ -36,10 +40,14 @@ export type AudioBufferKey = keyof LoadedBuffers;
 const AUDIO_DEBUG = import.meta.env.DEV;
 const TARGET_FOOTSTEP_PEAK = 0.12;
 const MAX_FOOTSTEP_FILE_GAIN = 12;
+const RIFLE_SHOT_MAX_SECONDS = 0.45;
+const SNIPER_SHOT_FADE_TAIL_SECONDS = 0.18;
 const AUDIO_BUFFER_KEYS: AudioBufferKey[] = [
   "rifleShot",
   "sniperShot",
   "sniperShell",
+  "rifleReload",
+  "sniperReload",
   "footstep",
   "kill",
   "hit",
@@ -50,23 +58,25 @@ const AUDIO_URL_CANDIDATES = {
     "/assets/audio/improved/gun-sound.wav",
   ],
   sniperShot: [
+    "/assets/audio/improved/sniper/sniper-shot.mp3",
     "/assets/audio/sniper-shooting.mp3",
     "/assets/audio/sniper-shooting.ogg",
     "/assets/audio/sniper-shooting.wav",
     "/assets/audio/sniper-shoot.mp3",
     "/assets/audio/sniper-shoot.ogg",
     "/assets/audio/sniper-shoot.wav",
-    "/audio/sniper-shooting.mp3",
-    "/audio/sniper-shooting.ogg",
-    "/audio/sniper-shooting.wav",
   ],
   sniperShell: [
+    "/assets/audio/improved/sniper/sniper-shelling.mp3",
     "/assets/audio/sniper-shelling.mp3",
     "/assets/audio/sniper-shelling.ogg",
     "/assets/audio/sniper-shelling.wav",
-    "/audio/sniper-shelling.mp3",
-    "/audio/sniper-shelling.ogg",
-    "/audio/sniper-shelling.wav",
+  ],
+  rifleReload: [
+    "/assets/audio/improved/rifle/rifle-reloading.mp3",
+  ],
+  sniperReload: [
+    "/assets/audio/improved/sniper/sniper-reloading.mp3",
   ],
   footstep: [
     "/assets/audio/footstep.wav",
@@ -103,6 +113,8 @@ export class AudioManager {
     rifleShot: null,
     sniperShot: null,
     sniperShell: null,
+    rifleReload: null,
+    sniperReload: null,
     footstep: null,
     kill: null,
     hit: null,
@@ -111,6 +123,8 @@ export class AudioManager {
     rifleShot: null,
     sniperShot: null,
     sniperShell: null,
+    rifleReload: null,
+    sniperReload: null,
     footstep: null,
     kill: null,
     hit: null,
@@ -120,7 +134,10 @@ export class AudioManager {
   private footstepFileGain = 1;
   private footstepDebugCounter = 0;
   private gunshotDebugCounter = 0;
+  private reloadDebugCounter = 0;
   private shellingDebugCounter = 0;
+  private reloadSource: AudioBufferSourceNode | null = null;
+  private reloadGain: GainNode | null = null;
   private shellingSource: AudioBufferSourceNode | null = null;
   private shellingGain: GainNode | null = null;
   private bufferLoadPromises = new Map<AudioBufferKey, Promise<boolean>>();
@@ -240,13 +257,27 @@ export class AudioManager {
       source.buffer = shotBuffer;
       source.playbackRate.value =
         kind === "sniper"
-          ? 0.92 + Math.random() * 0.05
+          ? 1
           : 0.96 + Math.random() * 0.1;
       source.connect(voice);
+      const playbackSeconds = kind === "sniper"
+        ? source.buffer.duration
+        : Math.min(RIFLE_SHOT_MAX_SECONDS, source.buffer.duration);
       voice.gain.setValueAtTime(1, now);
-      voice.gain.exponentialRampToValueAtTime(0.0001, now + (kind === "sniper" ? 0.44 : 0.2));
+      if (kind === "sniper") {
+        voice.gain.setValueAtTime(
+          1,
+          now + Math.max(0, playbackSeconds - SNIPER_SHOT_FADE_TAIL_SECONDS),
+        );
+        voice.gain.exponentialRampToValueAtTime(
+          0.0001,
+          now + playbackSeconds,
+        );
+      } else {
+        voice.gain.exponentialRampToValueAtTime(0.0001, now + 0.2);
+      }
       source.start(now);
-      source.stop(now + Math.min(kind === "sniper" ? 0.75 : 0.45, source.buffer.duration));
+      source.stop(now + playbackSeconds);
       if (AUDIO_DEBUG) {
         this.gunshotDebugCounter += 1;
         if (this.gunshotDebugCounter % 8 === 0) {
@@ -344,6 +375,81 @@ export class AudioManager {
     osc.stop(now + 0.09);
   }
 
+  cancelReload() {
+    if (this.reloadSource) {
+      try {
+        this.reloadSource.stop();
+      } catch {
+        // Source may already be stopped by the browser.
+      }
+      this.reloadSource = null;
+    }
+    if (this.reloadGain && this.context) {
+      const now = this.context.currentTime;
+      this.reloadGain.gain.cancelScheduledValues(now);
+      this.reloadGain.gain.setValueAtTime(0, now);
+      this.reloadGain = null;
+    }
+  }
+
+  playReload(kind: WeaponKind = "rifle", maxDurationSeconds?: number) {
+    if (!this.context || this.context.state !== "running" || !this.gunGain) {
+      return;
+    }
+
+    this.cancelReload();
+
+    const now = this.context.currentTime;
+    const reloadBuffer =
+      kind === "sniper"
+        ? this.buffers.sniperReload ?? this.buffers.rifleReload
+        : this.buffers.rifleReload ?? this.buffers.sniperReload;
+    const reloadSourceUrl =
+      kind === "sniper"
+        ? this.sourceUrls.sniperReload ?? this.sourceUrls.rifleReload
+        : this.sourceUrls.rifleReload ?? this.sourceUrls.sniperReload;
+
+    if (reloadBuffer) {
+      const source = this.context.createBufferSource();
+      source.buffer = reloadBuffer;
+      source.playbackRate.value = 1;
+      const gain = this.context.createGain();
+      gain.gain.value = kind === "sniper" ? 0.86 : 0.82;
+      source.connect(gain);
+      gain.connect(this.gunGain);
+      source.start(now);
+
+      const resolvedStopDuration =
+        typeof maxDurationSeconds === "number" && Number.isFinite(maxDurationSeconds)
+          ? Math.max(0, maxDurationSeconds)
+          : null;
+      if (resolvedStopDuration !== null) {
+        source.stop(now + Math.min(resolvedStopDuration, source.buffer.duration));
+      }
+
+      this.reloadSource = source;
+      this.reloadGain = gain;
+      source.onended = () => {
+        if (this.reloadSource === source) {
+          this.reloadSource = null;
+          this.reloadGain = null;
+        }
+      };
+      if (AUDIO_DEBUG) {
+        this.reloadDebugCounter += 1;
+        if (this.reloadDebugCounter % 4 === 0) {
+          console.debug("[Audio] Reload trigger", {
+            kind,
+            source: reloadSourceUrl,
+          });
+        }
+      }
+      return;
+    }
+
+    void this.prepareBuffer(kind === "sniper" ? "sniperReload" : "rifleReload");
+  }
+
   cancelSniperShelling() {
     if (this.shellingSource) {
       try { this.shellingSource.stop(); } catch { /* already stopped */ }
@@ -368,7 +474,7 @@ export class AudioManager {
     if (this.buffers.sniperShell) {
       const source = this.context.createBufferSource();
       source.buffer = this.buffers.sniperShell;
-      source.playbackRate.value = 0.98 + Math.random() * 0.04;
+      source.playbackRate.value = 1;
       const gain = this.context.createGain();
       gain.gain.value = 0.8;
       source.connect(gain);
@@ -498,6 +604,8 @@ export class AudioManager {
 
   dispose() {
     this.bufferLoadPromises.clear();
+    this.cancelReload();
+    this.cancelSniperShelling();
     this.gunVoicePool = [];
     if (this.context) {
       void this.context.close();
