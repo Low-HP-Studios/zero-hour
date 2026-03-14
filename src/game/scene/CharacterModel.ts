@@ -11,6 +11,7 @@ import {
   loadFbxAnimation,
   preloadTextureAsset,
 } from "../AssetLoader";
+import type { CharacterTextureEntry } from "../characters";
 import {
   ANIM_CLIPS,
   CHARACTER_MODEL_URL,
@@ -242,7 +243,7 @@ export function normalizeBoneName(name: string): string {
     .replace(/^mixamorig_/, "");
 }
 
-function splitTrackName(trackName: string): { nodeName: string; property: string } {
+export function splitTrackName(trackName: string): { nodeName: string; property: string } {
   const dotIdx = trackName.lastIndexOf(".");
   if (dotIdx <= 0) {
     return { nodeName: trackName, property: "" };
@@ -437,8 +438,12 @@ export function removeRootMotion(clip: THREE.AnimationClip): void {
   }
 }
 
-async function applyCharacterTextures(model: THREE.Group): Promise<void> {
-  // Collect all meshes and their material conversion work
+async function applyCharacterTextures(
+  model: THREE.Group,
+  textureBase?: string,
+  dynamicTextures?: CharacterTextureEntry[] | null,
+): Promise<void> {
+  const useBase = textureBase ?? CHARACTER_TEXTURE_BASE;
   const tasks: Promise<void>[] = [];
 
   model.traverse((child) => {
@@ -449,20 +454,25 @@ async function applyCharacterTextures(model: THREE.Group): Promise<void> {
     const task = (async () => {
       const newMats = await Promise.all(
         mats.map(async (mat) => {
-          const entry = findTextureEntry(mat.name);
+          const entry = dynamicTextures
+            ? findDynamicTextureEntry(mat.name || mesh.name, dynamicTextures)
+            : findTextureEntry(mat.name);
           const phong = mat as THREE.MeshPhongMaterial;
 
-          // Load textures first (awaited)
           let baseTex: THREE.Texture | null = null;
           let normalTex: THREE.Texture | null = null;
           if (entry) {
-            [baseTex, normalTex] = await Promise.all([
-              preloadTextureAsset(CHARACTER_TEXTURE_BASE + entry.base),
-              preloadTextureAsset(CHARACTER_TEXTURE_BASE + entry.normal),
-            ]);
+            const loads: Promise<THREE.Texture | null>[] = [
+              preloadTextureAsset(useBase + entry.base),
+            ];
+            if (entry.normal) {
+              loads.push(preloadTextureAsset(useBase + entry.normal));
+            }
+            const [b, n] = await Promise.all(loads);
+            baseTex = b;
+            normalTex = n ?? null;
           }
 
-          // Convert to MeshStandardMaterial for proper PBR lighting
           const stdMat = new THREE.MeshStandardMaterial({
             name: mat.name,
             color: phong.color ?? new THREE.Color(0xffffff),
@@ -501,7 +511,22 @@ function findTextureEntry(materialName: string): { base: string; normal: string 
   return null;
 }
 
-export function useCharacterModel(): CharacterModelResult {
+function findDynamicTextureEntry(
+  name: string,
+  textures: CharacterTextureEntry[],
+): CharacterTextureEntry | null {
+  return textures.find((t) => t.match === "" || name.includes(t.match)) ?? null;
+}
+
+export type CharacterModelOverride = {
+  modelUrl: string;
+  textureBasePath: string;
+  textures: CharacterTextureEntry[] | null;
+};
+
+export function useCharacterModel(
+  override?: CharacterModelOverride,
+): CharacterModelResult {
   const [model, setModel] = useState<THREE.Group | null>(null);
   const [ready, setReady] = useState(false);
   const mixerRef = useRef<THREE.AnimationMixer | null>(null);
@@ -524,8 +549,9 @@ export function useCharacterModel(): CharacterModelResult {
 
     (async () => {
       try {
+        const modelUrl = override?.modelUrl ?? CHARACTER_MODEL_URL;
         const [fbxModel, SkeletonUtils, ...clips] = await Promise.all([
-          loadFbxAsset(CHARACTER_MODEL_URL),
+          loadFbxAsset(modelUrl),
           import("three/examples/jsm/utils/SkeletonUtils.js"),
           ...ANIM_CLIPS.map((a) => loadFbxAnimation(a.url, a.name)),
         ]);
@@ -556,7 +582,11 @@ export function useCharacterModel(): CharacterModelResult {
           }
         });
 
-        await applyCharacterTextures(clone);
+        await applyCharacterTextures(
+          clone,
+          override?.textureBasePath,
+          override?.textures,
+        );
 
         const modelBoneNames = new Set<string>();
         clone.traverse((child) => {
@@ -639,7 +669,8 @@ export function useCharacterModel(): CharacterModelResult {
         mixerRef.current = null;
       }
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [override?.modelUrl]);
 
   const setAnimState = useCallback((
     state: CharacterAnimState,

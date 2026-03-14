@@ -89,6 +89,7 @@ export type PersistedSettings = {
   hudPanels: HudOverlayToggles;
   stressCount: StressModeCount;
   audioVolumes: AudioVolumeSettings;
+  selectedCharacterId: string;
 };
 
 export function createDefaultPersistedSettings(): PersistedSettings {
@@ -109,6 +110,7 @@ export function createDefaultPersistedSettings(): PersistedSettings {
     hudPanels: { ...DEFAULT_HUD_OVERLAY_TOGGLES },
     stressCount: 0,
     audioVolumes: { ...DEFAULT_AUDIO_VOLUMES },
+    selectedCharacterId: "trooper",
   };
 }
 
@@ -716,6 +718,10 @@ export function parsePersistedSettings(value: unknown): PersistedSettings {
       ),
     },
     stressCount: readStressModeCount(value.stressCount, defaults.stressCount),
+    selectedCharacterId: readString(
+      value.selectedCharacterId,
+      defaults.selectedCharacterId,
+    ),
     audioVolumes: {
       master: readClampedNumber(
         audioVolumes.master,

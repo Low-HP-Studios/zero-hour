@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import {
+  CHARACTER_REGISTRY,
+  getCharacterById,
+} from "./characters";
+import { CharacterPreviewCanvas } from "../screens/LobbyCharacter";
 
 type ExperienceMenuOverlayProps = {
   onEnterPractice: () => void;
@@ -9,6 +14,8 @@ type ExperienceMenuOverlayProps = {
   updateTargetVersion?: string;
   installingUpdate: boolean;
   onInstallUpdate: () => void;
+  selectedCharacterId: string;
+  onCharacterSelect: (characterId: string) => void;
 };
 
 type LobbyTab = "play" | "friends" | "customise" | "store";
@@ -39,9 +46,8 @@ const NAV_ITEMS: NavItem[] = [
   {
     id: "customise",
     label: "Loadout",
-    hint: "Weapon tuning in progress",
-    status: "Alpha",
-    locked: true,
+    hint: "Choose your operator",
+    status: "Live",
   },
   {
     id: "store",
@@ -50,18 +56,6 @@ const NAV_ITEMS: NavItem[] = [
     status: "Alpha",
     locked: true,
   },
-];
-
-const PRACTICE_METRICS = [
-  { label: "Mode", value: "Solo drill" },
-  { label: "Range", value: "Live" },
-  { label: "Focus", value: "Recoil + pace" },
-];
-
-const PRACTICE_NOTES = [
-  "Offline sandbox with instant restarts.",
-  "Built for recoil control, snap aim, and movement reps.",
-  "No fluff. Just enough UI to feel expensive.",
 ];
 
 function LockIcon() {
@@ -150,13 +144,10 @@ export function ExperienceMenuOverlay({
   updateTargetVersion,
   installingUpdate,
   onInstallUpdate,
+  selectedCharacterId,
+  onCharacterSelect,
 }: ExperienceMenuOverlayProps) {
   const [activeTab, setActiveTab] = useState<LobbyTab>("play");
-  const activeItem = NAV_ITEMS.find((item) => item.id === activeTab) ??
-    NAV_ITEMS[0];
-  const activeModuleDescription = activeItem.locked
-    ? `${activeItem.hint}. Practice Range is still the only lane with a pulse.`
-    : "A stripped-back firing range for testing mechanics, rhythm, and recoil without matchmaking clutter.";
 
   const showAlphaToast = useCallback((featureLabel: string) => {
     toast.warning(`${featureLabel} is in alpha`, {
@@ -169,6 +160,7 @@ export function ExperienceMenuOverlay({
   const handleNavClick = useCallback((item: NavItem) => {
     if (item.locked) {
       showAlphaToast(item.label);
+      return;
     }
 
     setActiveTab(item.id);
@@ -179,6 +171,8 @@ export function ExperienceMenuOverlay({
       showAlphaToast("Online Deployment");
     }
   }, [showAlphaToast]);
+
+  const selectedCharacterDef = getCharacterById(selectedCharacterId);
 
   return (
     <div className="menu-layout-expressive">
@@ -197,6 +191,7 @@ export function ExperienceMenuOverlay({
                 activeTab === item.id ? "active" : ""
               } ${item.locked ? "locked" : ""}`}
               onClick={() => handleNavClick(item)}
+              aria-disabled={item.locked ? "true" : undefined}
             >
               <span className="nav-btn-text-expressive">{item.label}</span>
               {item.locked ? <LockIcon /> : null}
@@ -242,141 +237,102 @@ export function ExperienceMenuOverlay({
       </div>
 
       <main className="menu-main-expressive">
-        <div className="menu-grid-expressive">
-          <section className="menu-hero-expressive">
-            <div className="menu-hero-copy-expressive">
-              <span className="menu-eyebrow-expressive">
-                {activeItem.locked
-                  ? `${activeItem.status} module`
-                  : "Live practice module"}
-              </span>
-              <h2 className="menu-hero-title-expressive">
-                {activeItem.locked
-                  ? `${activeItem.label} is still in the workshop.`
-                  : "Minimal by choice, not because we forgot the rest."}
-              </h2>
-              <p className="menu-hero-description-expressive">
-                {activeModuleDescription}
-              </p>
+        {activeTab === "play" ? (
+          <>
+            <div className="menu-lobby-character-expressive">
+              <CharacterPreviewCanvas
+                characterDef={selectedCharacterDef}
+                transparent
+              />
             </div>
-
-            {activeTab === "play" ? (
-              <div className="menu-play-section-expressive">
-                <div className="menu-sub-nav-expressive">
-                  <div className="sub-nav-track-expressive">
-                    <button
-                      type="button"
-                      className="menu-sub-nav-btn-expressive active"
-                      onClick={() => handleModeClick("practice")}
-                    >
-                      Practice Range
-                    </button>
-                    <button
-                      type="button"
-                      className="menu-sub-nav-btn-expressive locked"
-                      onClick={() => handleModeClick("online")}
-                      aria-disabled="true"
-                    >
-                      Online Queue
-                    </button>
-                  </div>
-                </div>
-
-                <div className="menu-play-card-expressive">
-                  <div className="play-card-content-expressive">
-                    <div className="play-card-kicker-expressive">
-                      Current mission
-                    </div>
-                    <div className="play-card-header-expressive">
-                      <h3>Training Simulation</h3>
-                      <span className="status-badge-expressive">Ready</span>
-                    </div>
-                    <p className="play-card-desc-expressive">
-                      Enter the firing range to tune spray control, warm up
-                      aim, and abuse the reset loop until your bad habits file
-                      a complaint.
-                    </p>
-
-                    <div className="play-card-metrics-expressive">
-                      {PRACTICE_METRICS.map((metric) => (
-                        <div
-                          key={metric.label}
-                          className="play-card-metric-expressive"
-                        >
-                          <span>{metric.label}</span>
-                          <strong>{metric.value}</strong>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="play-card-footer-expressive">
-                    <p className="play-card-note-expressive">
-                      Clean layout, live target work, no fake social layer.
-                    </p>
-                    <button
-                      type="button"
-                      className="play-btn-expressive"
-                      onClick={onEnterPractice}
-                    >
-                      <span>Enter Practice</span>
-                      <ArrowIcon />
-                    </button>
-                  </div>
+            <div className="menu-play-section-expressive">
+              <div className="menu-sub-nav-expressive">
+                <div className="sub-nav-track-expressive">
+                  <button
+                    type="button"
+                    className="menu-sub-nav-btn-expressive active"
+                    onClick={() => handleModeClick("practice")}
+                  >
+                    Practice Range
+                  </button>
+                  <button
+                    type="button"
+                    className="menu-sub-nav-btn-expressive locked"
+                    onClick={() => handleModeClick("online")}
+                    aria-disabled="true"
+                  >
+                    Online (Disabled)
+                  </button>
                 </div>
               </div>
-            ) : (
-              <div className="menu-coming-soon-expressive">
-                <div className="offline-badge-expressive">
-                  <span className="material-icon-placeholder">//</span>
-                  <span>{activeItem.status} Module</span>
+
+              <div className="menu-play-card-expressive">
+                <div className="play-card-content-expressive">
+                  <div className="play-card-header-expressive">
+                    <h3>Training Simulation</h3>
+                    <span className="status-badge-expressive">Ready</span>
+                  </div>
+                  <p className="play-card-desc-expressive">
+                    Enter the firing range to test weapon mechanics, spray
+                    patterns, and advanced techniques in a controlled environment.
+                  </p>
                 </div>
-                <h3 className="menu-coming-soon-title-expressive">
-                  {activeItem.label} is staged, not shipped.
-                </h3>
-                <p>{activeModuleDescription}</p>
                 <button
                   type="button"
-                  className="menu-return-btn-expressive"
-                  onClick={() => setActiveTab("play")}
+                  className="play-btn-expressive"
+                  onClick={onEnterPractice}
                 >
-                  Return to Practice
+                  <span>Enter Practice</span>
+                  <ArrowIcon />
                 </button>
               </div>
-            )}
-          </section>
-
-          <aside className="menu-side-panel-expressive">
-            <div className="menu-side-card-expressive">
-              <span className="menu-side-label-expressive">Build pulse</span>
-              <strong className="menu-side-value-expressive">
-                {activeItem.locked ? "Alpha holding pattern" : "Ready for reps"}
-              </strong>
-              <p className="menu-side-copy-expressive">
-                {activeItem.locked
-                  ? "The live lane is still Practice Range. The rest are promises with nicer typography."
-                  : "The menu is quieter now. Your aim probably still is not."}
-              </p>
             </div>
-
-            <div className="menu-side-card-expressive">
-              <span className="menu-side-label-expressive">
-                {activeItem.locked ? "Roadmap note" : "Range notes"}
-              </span>
-              <ul className="menu-side-list-expressive">
-                {(activeItem.locked
-                  ? [
-                    activeItem.hint,
-                    "Social and progression systems are still in alpha.",
-                    "Only the live practice module can be launched today.",
-                  ]
-                  : PRACTICE_NOTES).map((note) => (
-                    <li key={note}>{note}</li>
-                  ))}
-              </ul>
+          </>
+        ) : activeTab === "customise" ? (
+          <div className="loadout-section-expressive">
+            <div className="loadout-grid-expressive">
+              <div className="loadout-grid-header">
+                <h3>Operators</h3>
+                <span className="loadout-grid-count">
+                  {CHARACTER_REGISTRY.length} available
+                </span>
+              </div>
+              <div className="loadout-grid-list">
+                {CHARACTER_REGISTRY.map((char) => {
+                  const isSelected = char.id === selectedCharacterId;
+                  return (
+                    <button
+                      key={char.id}
+                      type="button"
+                      className={`loadout-card-expressive ${
+                        isSelected ? "active" : ""
+                      }`}
+                      onClick={() => onCharacterSelect(char.id)}
+                    >
+                      <span className="loadout-card-name">
+                        {char.displayName}
+                      </span>
+                      {isSelected ? (
+                        <span className="loadout-card-equipped">Equipped</span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          </aside>
-        </div>
+            <div className="loadout-preview-expressive">
+              <CharacterPreviewCanvas characterDef={selectedCharacterDef} />
+            </div>
+          </div>
+        ) : (
+          <div className="menu-coming-soon-expressive">
+            <div className="offline-badge-expressive">
+              <span className="material-icon-placeholder">[]</span>
+              <span>Module Offline</span>
+            </div>
+            <p>This feature is currently locked in the early Alpha phase.</p>
+          </div>
+        )}
       </main>
       <LobbyFpsCounter />
     </div>

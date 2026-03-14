@@ -44,6 +44,7 @@ import type {
 import { isSprintInputEligible } from "../movement";
 import {
   type CharacterFootstepSample,
+  type CharacterModelOverride,
   normalizeBoneName,
   resolveFootstepPlaybackRate,
   useCharacterModel,
@@ -130,6 +131,7 @@ type GameplayRuntimeProps = {
   onSniperRechamberChange: (state: SniperRechamberState) => void;
   onAimingStateChange: (state: AimingState) => void;
   onCriticalAssetsReadyChange?: (ready: boolean) => void;
+  characterOverride?: CharacterModelOverride;
 };
 
 const MENU_LOOK_HEIGHT = 1.06;
@@ -597,6 +599,18 @@ function collectCharacterVisibilityMaterials(
     }
   });
 
+  // If no material was categorized as "glove" or "shoe", this model doesn't
+  // use the Trooper naming convention.  Show the entire character in first
+  // person by treating all materials as visible ("glove").
+  const hasVisibleParts = entries.some(
+    (e) => e.category === "glove" || e.category === "shoe",
+  );
+  if (!hasVisibleParts) {
+    for (const entry of entries) {
+      entry.category = "glove";
+    }
+  }
+
   return entries;
 }
 
@@ -961,6 +975,7 @@ export const GameplayRuntime = forwardRef<
   onSniperRechamberChange,
   onAimingStateChange,
   onCriticalAssetsReadyChange,
+  characterOverride,
 }: GameplayRuntimeProps, ref) {
   const gl = useThree((state) => state.gl);
   const camera = useThree((state) => state.camera);
@@ -971,7 +986,7 @@ export const GameplayRuntime = forwardRef<
     ready: characterReady,
     setAnimState: setCharacterAnim,
     getFootstepSample,
-  } = useCharacterModel();
+  } = useCharacterModel(characterOverride);
   const weaponModels = useWeaponModels();
   const sightModels = useSightModels();
   const rifleMuzzleOffsetRef = useRef(new THREE.Vector3(-0.44, 0.02, 0));

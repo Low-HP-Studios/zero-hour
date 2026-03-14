@@ -145,7 +145,7 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
   );
 
   useEffect(() => {
-    savePersistedSettings({ settings, hudPanels, audioVolumes, stressCount: 0 });
+    savePersistedSettings({ settings, hudPanels, audioVolumes, stressCount: 0, selectedCharacterId: persisted.selectedCharacterId });
   }, [settings, hudPanels, audioVolumes]);
 
   useEffect(() => {

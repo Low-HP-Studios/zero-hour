@@ -8,6 +8,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { type AudioVolumeSettings } from "./Audio";
+import { getCharacterById } from "./characters";
 import { ExperienceMenuOverlay } from "./ExperienceMenuOverlay";
 import { PerfHUD } from "./PerfHUD";
 import {
@@ -211,6 +212,17 @@ export function GameRoot({
   const [audioVolumes, setAudioVolumes] = useState<AudioVolumeSettings>(
     persistedSettings.audioVolumes,
   );
+  const [selectedCharacterId, setSelectedCharacterId] = useState<string>(
+    persistedSettings.selectedCharacterId,
+  );
+  const characterOverride = useMemo(() => {
+    const def = getCharacterById(selectedCharacterId);
+    return {
+      modelUrl: def.modelUrl,
+      textureBasePath: def.textureBasePath,
+      textures: def.textures,
+    };
+  }, [selectedCharacterId]);
   const [perfMetrics, setPerfMetrics] = useState<PerfMetrics>(
     DEFAULT_PERF_METRICS,
   );
@@ -787,8 +799,9 @@ export function GameRoot({
       hudPanels,
       stressCount,
       audioVolumes,
+      selectedCharacterId,
     });
-  }, [settings, hudPanels, stressCount, audioVolumes]);
+  }, [settings, hudPanels, stressCount, audioVolumes, selectedCharacterId]);
 
   useEffect(() => {
     if (!bindingCapture) {
@@ -1157,6 +1170,7 @@ export function GameRoot({
         onSniperRechamberChange={setSniperRechamber}
         onAimingStateChange={setAimingState}
         onBootReady={onSceneBootReady}
+        characterOverride={characterOverride}
       />
 
       {phase === "menu"
@@ -1171,6 +1185,8 @@ export function GameRoot({
             onInstallUpdate={() => {
               void handleInstallUpdate();
             }}
+            selectedCharacterId={selectedCharacterId}
+            onCharacterSelect={setSelectedCharacterId}
           />
         )
         : null}

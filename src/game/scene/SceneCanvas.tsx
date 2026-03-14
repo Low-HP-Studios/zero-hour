@@ -37,6 +37,7 @@ import {
   type AimingState,
   type ShotFiredState,
 } from "./GameplayRuntime";
+import type { CharacterModelOverride } from "./CharacterModel";
 import { MapEnvironment, StressBoxes } from "./MapEnvironment";
 import {
   CANVAS_CAMERA,
@@ -93,6 +94,7 @@ type SceneProps = {
   onSniperRechamberChange: (state: SniperRechamberState) => void;
   onAimingStateChange: (state: AimingState) => void;
   onBootReady: () => void;
+  characterOverride?: CharacterModelOverride;
 };
 
 function waitForAnimationFrame() {
@@ -231,6 +233,7 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
   onSniperRechamberChange,
   onAimingStateChange,
   onBootReady,
+  characterOverride,
 }: SceneProps, ref) {
   const [canvasEpoch, setCanvasEpoch] = useState(0);
   const [targets, setTargets] = useState<TargetState[]>(() =>
@@ -468,6 +471,7 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
         onSniperRechamberChange={onSniperRechamberChange}
         onAimingStateChange={onAimingStateChange}
         onCriticalAssetsReadyChange={setRuntimeAssetsReady}
+        characterOverride={characterOverride}
       />
       <SceneBootCompiler enabled={compileReady} onReady={onBootReady} />
       {settings.showR3fPerf ? <Perf position="top-left" minimal /> : null}
