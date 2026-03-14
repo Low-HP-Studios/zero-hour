@@ -157,17 +157,20 @@ export function createBootPreloadManifest(
       bucket: "asset",
       load: () => loadFbxAsset(SIGHT_FBX_URL),
     },
-    ...Object.entries(SIGHT_TEXTURE_MAP).flatMap(([key, texDef]) =>
-      [texDef.base, texDef.metallic, texDef.normal, texDef.roughness]
-        .filter((f): f is string => Boolean(f))
-        .map((file) => ({
-          id: `texture:sight-${key}-${file}`,
-          label: `Sight texture ${humanize(file)}`,
-          weight: 1.5,
-          bucket: "asset" as const,
-          load: () => preloadTextureAsset(SIGHT_TEXTURE_BASE + file),
-        })),
-    ),
+    ...[
+      ["rifle", SIGHT_TEXTURE_MAP.rifle.base],
+      ["rifle", SIGHT_TEXTURE_MAP.rifle.metallic],
+      ["rifle", SIGHT_TEXTURE_MAP.rifle.normal],
+      ["rifle", SIGHT_TEXTURE_MAP.rifle.roughness],
+    ]
+      .filter((entry): entry is [string, string] => Boolean(entry[1]))
+      .map(([key, file]) => ({
+        id: `texture:sight-${key}-${file}`,
+        label: `Sight texture ${humanize(file)}`,
+        weight: 1.5,
+        bucket: "asset" as const,
+        load: () => preloadTextureAsset(SIGHT_TEXTURE_BASE + file),
+      })),
     ...CHARACTER_TEXTURE_URLS.map((url) => ({
       id: `texture:${url}`,
       label: `Character texture ${humanize(fileName(url))}`,

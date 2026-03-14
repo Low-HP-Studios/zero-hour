@@ -71,17 +71,23 @@ function extractSightMesh(
   fbxGroup: THREE.Group,
   nameSubstring: string,
 ): THREE.Mesh | null {
-  let found: THREE.Mesh | null = null;
+  const target = nameSubstring.toLowerCase().replace(/[^a-z0-9]/g, "");
+  let exact: THREE.Mesh | null = null;
+  let fallback: THREE.Mesh | null = null;
   fbxGroup.traverse((child) => {
     if (
-      !found &&
-      (child as THREE.Mesh).isMesh &&
-      child.name.includes(nameSubstring)
+      (child as THREE.Mesh).isMesh
     ) {
-      found = child as THREE.Mesh;
+      const mesh = child as THREE.Mesh;
+      const normalizedName = mesh.name.toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (!exact && normalizedName === target) {
+        exact = mesh;
+      } else if (!fallback && normalizedName.includes(target)) {
+        fallback = mesh;
+      }
     }
   });
-  return found;
+  return exact ?? fallback;
 }
 
 async function applySightTextures(
@@ -149,15 +155,12 @@ export function useSightModels(): SightModelResult {
         );
 
         const rifleMesh = extractSightMesh(fbx, SIGHT_MESH_NAMES.rifle);
-        const sniperMesh = extractSightMesh(fbx, SIGHT_MESH_NAMES.sniper);
+        console.log("[Sights] rifle mesh:", rifleMesh?.name ?? "not found");
 
         // Apply PBR textures in parallel
         const textureWork: Promise<void>[] = [];
         if (rifleMesh) {
           textureWork.push(applySightTextures(rifleMesh, SIGHT_TEXTURE_MAP.rifle));
-        }
-        if (sniperMesh) {
-          textureWork.push(applySightTextures(sniperMesh, SIGHT_TEXTURE_MAP.sniper));
         }
         await Promise.all(textureWork);
         if (disposed) return;
@@ -169,6 +172,15 @@ export function useSightModels(): SightModelResult {
           const group = new THREE.Group();
           group.name = `sight-${label}`;
           const clone = mesh.clone();
+          const lensNodes: THREE.Object3D[] = [];
+          clone.traverse((child) => {
+            if (child !== clone && /lens/i.test(child.name)) {
+              lensNodes.push(child);
+            }
+          });
+          for (const lensNode of lensNodes) {
+            lensNode.parent?.remove(lensNode);
+          }
           clone.geometry = clone.geometry.clone();
           clone.castShadow = true;
           clone.receiveShadow = true;
@@ -193,7 +205,7 @@ export function useSightModels(): SightModelResult {
 
         setResult({
           rifleSight: wrapInGroup(rifleMesh, "rifle-reddot"),
-          sniperSight: wrapInGroup(sniperMesh, "sniper-scope"),
+          sniperSight: null,
           ready: true,
         });
       } catch (error) {

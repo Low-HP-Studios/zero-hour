@@ -25,10 +25,7 @@ import {
   type WeaponSwitchState,
   WeaponSystem,
 } from "../Weapon";
-import {
-  type GroundAmmoVisualState,
-  InventorySystem,
-} from "../inventory";
+import { type GroundAmmoVisualState, InventorySystem } from "../inventory";
 import type {
   CollisionRect,
   GameSettings,
@@ -76,10 +73,10 @@ import {
   PLAYER_SPAWN_YAW,
   RIFLE_RUN_START_MS,
   RIFLE_RUN_STOP_MS,
+  SIGHT_MOUNT_TRANSFORMS,
   TRACER_CAMERA_START_OFFSET,
   TRACER_DISTANCE,
   TRACER_MUZZLE_FORWARD_OFFSET,
-  SIGHT_MOUNT_TRANSFORMS,
   WEAPON_MODEL_TRANSFORMS,
   type WorldRaycastHit,
   Z_AXIS,
@@ -176,8 +173,8 @@ const PRACTICE_AMMO_SNIPER_REFILL = 30;
 
 // ADS weapon positioning: camera-local offsets so the sight aligns with screen center.
 // x = right, y = up, z = forward (in camera space). Will be tuned iteratively.
-const RIFLE_ADS_CAMERA_OFFSET = { x: 0, y: -0.04, z: 0.35 };
-const SNIPER_ADS_CAMERA_OFFSET = { x: 0, y: -0.18, z: 0.45 };
+const RIFLE_ADS_CAMERA_OFFSET = { x: 0, y: -0.05, z: 0.264 };
+const SNIPER_ADS_CAMERA_OFFSET = { x: 0.007, y: 0.016, z: 0.105 };
 
 // The weapon model's base rotation to align its barrel with camera forward.
 // The weapon FBX barrel points along +X in model space, so rotating +PI/2 around Y
@@ -740,9 +737,7 @@ function updateCharacterWeaponMesh(
   rifleMuzzleOffset: THREE.Vector3,
   sniperMuzzleOffset: THREE.Vector3,
   firstPerson: boolean,
-  adsActive: boolean,
   adsT: number,
-  leanValue: number,
   camera: THREE.Camera,
   activeWeapon: WeaponKind,
 ) {
@@ -809,18 +804,6 @@ function updateCharacterWeaponMesh(
     // Blend between hip-fire and ADS
     weaponGroup.position.lerpVectors(_tempHipPos, _tempAdsPos, adsT);
     weaponGroup.quaternion.slerpQuaternions(_tempHipQuat, _tempAdsQuat, adsT);
-
-    // Apply lean with reduced magnitude during ADS
-    if (Math.abs(leanValue) > 0.001) {
-      const leanScale = 1 - adsT * 0.6; // Lean reduces during ADS
-      const leanShift = leanValue * 0.12 * leanScale;
-      const leanRoll = -leanValue * 0.16 * leanScale;
-      const leanYaw = leanValue * 0.07 * leanScale;
-      weaponGroup.translateX(leanShift);
-      weaponGroup.translateY(-(Math.abs(leanValue) * 0.012 * leanScale));
-      weaponGroup.rotateZ(leanRoll);
-      weaponGroup.rotateY(leanYaw);
-    }
   } else if (anchor) {
     // ── Standard hip-fire positioning (unchanged) ──
     weaponGroup.position.copy(anchor.position);
@@ -834,17 +817,6 @@ function updateCharacterWeaponMesh(
     if (switchBlend > 0) {
       weaponGroup.translateY(-switchBlend * 0.06);
       weaponGroup.rotateX(-switchBlend * 0.35);
-    }
-    if (firstPerson && Math.abs(leanValue) > 0.001) {
-      const leanShift = leanValue * (adsActive ? 0.085 : 0.12);
-      const leanRoll = -leanValue * (adsActive ? 0.11 : 0.16);
-      const leanYaw = leanValue * (adsActive ? 0.04 : 0.07);
-      weaponGroup.translateX(leanShift);
-      weaponGroup.translateY(
-        -(Math.abs(leanValue) * (adsActive ? 0.008 : 0.012)),
-      );
-      weaponGroup.rotateZ(leanRoll);
-      weaponGroup.rotateY(leanYaw);
     }
   } else {
     weaponGroup.position.set(
@@ -1645,7 +1617,9 @@ export const GameplayRuntime = forwardRef<
           playerPosition.y,
           playerPosition.z,
         ];
-        const nearbyIds = inventoryRef.current.getNearbyGroundIds(playerPosTuple);
+        const nearbyIds = inventoryRef.current.getNearbyGroundIds(
+          playerPosTuple,
+        );
         const nearest = nearbyIds[0];
         const nearestItemId = nearest
           ? inventoryRef.current.getGroundItemId(nearest.id) ?? null
@@ -2958,9 +2932,7 @@ export const GameplayRuntime = forwardRef<
       rifleMuzzleOffsetRef.current,
       sniperMuzzleOffsetRef.current,
       firstPerson,
-      adsActive,
       controller.getAdsLerp(),
-      leanValue,
       camera,
       weapon.getActiveWeapon(),
     );
@@ -3653,21 +3625,6 @@ export const GameplayRuntime = forwardRef<
                 </mesh>
               </>
             )}
-          {sightModels.sniperSight
-            ? (
-              <group
-                position={SIGHT_MOUNT_TRANSFORMS.sniper.position}
-                rotation={SIGHT_MOUNT_TRANSFORMS.sniper.rotation}
-                scale={[
-                  SIGHT_MOUNT_TRANSFORMS.sniper.scale,
-                  SIGHT_MOUNT_TRANSFORMS.sniper.scale,
-                  SIGHT_MOUNT_TRANSFORMS.sniper.scale,
-                ]}
-              >
-                <primitive object={sightModels.sniperSight} />
-              </group>
-            )
-            : null}
         </group>
         <mesh ref={characterMuzzleRef} position={[0, 0, 0]} visible={false}>
           <sphereGeometry args={[0.05, 8, 8]} />

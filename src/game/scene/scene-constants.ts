@@ -313,7 +313,7 @@ export const WEAPON_MODEL_TRANSFORMS: {
       scale: 0.0013,
     },
     sniper: {
-      position: [0.02, -0.04, 0],
+      position: [-0.085, -0.05, -0.006],
       rotation: [0, -Math.PI / 2, 0],
       scale: 0.0018,
     },
@@ -379,18 +379,19 @@ export const SIGHT_MESH_NAMES: Record<string, string> = {
 // Position is in the weapon group's local space (same space as WEAPON_MODEL_TRANSFORMS.character).
 // Scale should match the weapon model scale so FBX units are consistent.
 // Rotation matches the weapon's rotation so the sight barrel-axis aligns.
-export const SIGHT_MOUNT_TRANSFORMS: Record<WeaponKind, WeaponModelTransform> = {
-  rifle: {
-    position: [0.02, 0.046, 0],
-    rotation: [0, -Math.PI / 2, 0],
-    scale: 0.0013,
-  },
-  sniper: {
-    position: [0.02, 0.058, 0],
-    rotation: [0, -Math.PI / 2, 0],
-    scale: 0.0018,
-  },
-};
+export const SIGHT_MOUNT_TRANSFORMS: Record<WeaponKind, WeaponModelTransform> =
+  {
+    rifle: {
+      position: [-0.04, 0.04, 0],
+      rotation: [0, -Math.PI / 2, 0],
+      scale: 0.0013,
+    },
+    sniper: {
+      position: [-0.04, 0.04, 0],
+      rotation: [0, -Math.PI / 2, 0],
+      scale: 0.0018,
+    },
+  };
 
 const SPRINT_ANIM_PLAYBACK_SCALE = 0.6;
 const RIFLE_RUN_TRANSITION_DURATION_SCALE = 1 / SPRINT_ANIM_PLAYBACK_SCALE;
