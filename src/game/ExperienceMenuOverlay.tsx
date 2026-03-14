@@ -1,8 +1,7 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 type ExperienceMenuOverlayProps = {
-  transitioning: boolean;
   onEnterPractice: () => void;
   onOpenSettings: () => void;
   onOpenUpdates: () => void;
@@ -107,8 +106,31 @@ function ArrowIcon() {
   );
 }
 
+function LobbyFpsCounter() {
+  const [fps, setFps] = useState(0);
+  const frameCountRef = useRef(0);
+  const lastTimeRef = useRef(performance.now());
+  const rafIdRef = useRef(0);
+
+  useEffect(() => {
+    const loop = () => {
+      frameCountRef.current++;
+      const now = performance.now();
+      if (now - lastTimeRef.current >= 1000) {
+        setFps(Math.round(frameCountRef.current * 1000 / (now - lastTimeRef.current)));
+        frameCountRef.current = 0;
+        lastTimeRef.current = now;
+      }
+      rafIdRef.current = requestAnimationFrame(loop);
+    };
+    rafIdRef.current = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(rafIdRef.current);
+  }, []);
+
+  return <div className="lobby-fps-counter">{fps} fps</div>;
+}
+
 export function ExperienceMenuOverlay({
-  transitioning,
   onEnterPractice,
   onOpenSettings,
   onOpenUpdates,
@@ -143,11 +165,7 @@ export function ExperienceMenuOverlay({
   }, [showAlphaToast]);
 
   return (
-    <div
-      className={`menu-layout-expressive ${
-        transitioning ? "menu-transitioning" : ""
-      }`}
-    >
+    <div className="menu-layout-expressive">
       <div className="menu-topbar-expressive">
         <div className="menu-brand-expressive">
           <h1 className="menu-logo-text-expressive">GrayTrace</h1>
@@ -262,6 +280,7 @@ export function ExperienceMenuOverlay({
           </div>
         )}
       </main>
+      <LobbyFpsCounter />
     </div>
   );
 }

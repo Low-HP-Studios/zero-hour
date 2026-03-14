@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import * as THREE from "three";
-import { loadFbxAsset } from "../AssetLoader";
-import { WEAPON_MODEL_URLS, type WeaponModelTransform } from "./scene-constants";
+import { loadFbxAsset, preloadTextureAsset } from "../AssetLoader";
+import {
+  SIGHT_FBX_URL,
+  SIGHT_MESH_NAMES,
+  SIGHT_TEXTURE_BASE,
+  SIGHT_TEXTURE_MAP,
+  WEAPON_MODEL_URLS,
+  type WeaponModelTransform,
+} from "./scene-constants";
 
 export type WeaponModelResult = {
   rifle: THREE.Group | null;
@@ -50,6 +57,159 @@ export function useWeaponModels(): WeaponModelResult {
   }, []);
 
   return models;
+}
+
+// ── Sight model loading ──
+
+export type SightModelResult = {
+  rifleSight: THREE.Group | null;
+  sniperSight: THREE.Group | null;
+  ready: boolean;
+};
+
+function extractSightMesh(
+  fbxGroup: THREE.Group,
+  nameSubstring: string,
+): THREE.Mesh | null {
+  let found: THREE.Mesh | null = null;
+  fbxGroup.traverse((child) => {
+    if (
+      !found &&
+      (child as THREE.Mesh).isMesh &&
+      child.name.includes(nameSubstring)
+    ) {
+      found = child as THREE.Mesh;
+    }
+  });
+  return found;
+}
+
+async function applySightTextures(
+  mesh: THREE.Mesh,
+  textureDef: { base: string; metallic: string; normal?: string; roughness: string },
+): Promise<void> {
+  const [baseTex, metallicTex, normalTex, roughnessTex] = await Promise.all([
+    preloadTextureAsset(SIGHT_TEXTURE_BASE + textureDef.base),
+    preloadTextureAsset(SIGHT_TEXTURE_BASE + textureDef.metallic),
+    textureDef.normal
+      ? preloadTextureAsset(SIGHT_TEXTURE_BASE + textureDef.normal)
+      : Promise.resolve(null),
+    preloadTextureAsset(SIGHT_TEXTURE_BASE + textureDef.roughness),
+  ]);
+
+  const mat = new THREE.MeshStandardMaterial({
+    name: `sight-${mesh.name}`,
+    color: new THREE.Color(0xffffff),
+    roughness: 0.5,
+    metalness: 0.3,
+  });
+
+  if (baseTex) {
+    baseTex.colorSpace = THREE.SRGBColorSpace;
+    mat.map = baseTex;
+  }
+  if (metallicTex) {
+    mat.metalnessMap = metallicTex;
+  }
+  if (normalTex) {
+    mat.normalMap = normalTex;
+  }
+  if (roughnessTex) {
+    mat.roughnessMap = roughnessTex;
+  }
+
+  mat.needsUpdate = true;
+  mesh.material = mat;
+}
+
+export function useSightModels(): SightModelResult {
+  const [result, setResult] = useState<SightModelResult>({
+    rifleSight: null,
+    sniperSight: null,
+    ready: false,
+  });
+
+  useEffect(() => {
+    let disposed = false;
+
+    (async () => {
+      try {
+        const fbx = await loadFbxAsset(SIGHT_FBX_URL);
+        if (disposed || !fbx) {
+          if (!disposed) {
+            setResult({ rifleSight: null, sniperSight: null, ready: true });
+          }
+          return;
+        }
+
+        // Log child names for debugging sight mesh identification
+        console.log(
+          "[Sights] FBX children:",
+          fbx.children.map((c) => `${c.name} (${c.type})`),
+        );
+
+        const rifleMesh = extractSightMesh(fbx, SIGHT_MESH_NAMES.rifle);
+        const sniperMesh = extractSightMesh(fbx, SIGHT_MESH_NAMES.sniper);
+
+        // Apply PBR textures in parallel
+        const textureWork: Promise<void>[] = [];
+        if (rifleMesh) {
+          textureWork.push(applySightTextures(rifleMesh, SIGHT_TEXTURE_MAP.rifle));
+        }
+        if (sniperMesh) {
+          textureWork.push(applySightTextures(sniperMesh, SIGHT_TEXTURE_MAP.sniper));
+        }
+        await Promise.all(textureWork);
+        if (disposed) return;
+
+        // Wrap each extracted mesh in a group for easy mounting.
+        // Center the mesh at origin so mount transforms work predictably.
+        const wrapInGroup = (mesh: THREE.Mesh | null, label: string): THREE.Group | null => {
+          if (!mesh) return null;
+          const group = new THREE.Group();
+          group.name = `sight-${label}`;
+          const clone = mesh.clone();
+          clone.geometry = clone.geometry.clone();
+          clone.castShadow = true;
+          clone.receiveShadow = true;
+          clone.frustumCulled = false;
+
+          // Center the mesh at origin by subtracting its bounding box center
+          clone.geometry.computeBoundingBox();
+          const box = clone.geometry.boundingBox;
+          if (box) {
+            const center = new THREE.Vector3();
+            box.getCenter(center);
+            clone.geometry.translate(-center.x, -center.y, -center.z);
+            console.log(`[Sights] ${label} centered from`, center.toArray(), 'box size:', new THREE.Vector3().subVectors(box.max, box.min).toArray());
+          }
+          // The source FBX arranges all sights in a catalog, so keep rotation/scale
+          // but clear the showroom position before mounting the optic on a weapon.
+          clone.position.set(0, 0, 0);
+
+          group.add(clone);
+          return group;
+        };
+
+        setResult({
+          rifleSight: wrapInGroup(rifleMesh, "rifle-reddot"),
+          sniperSight: wrapInGroup(sniperMesh, "sniper-scope"),
+          ready: true,
+        });
+      } catch (error) {
+        console.warn("[Sights] Sight model loading failed", error);
+        if (!disposed) {
+          setResult({ rifleSight: null, sniperSight: null, ready: true });
+        }
+      }
+    })();
+
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
+  return result;
 }
 
 function normalizeWeaponMaterial(material: THREE.Material): THREE.Material {

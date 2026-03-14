@@ -186,6 +186,35 @@ function SceneFramePacer({
   return null;
 }
 
+function SceneContextRecoveryWatcher({
+  onContextLost,
+}: {
+  onContextLost: () => void;
+}) {
+  const gl = useThree((state) => state.gl);
+
+  useEffect(() => {
+    const canvas = gl.domElement;
+    const handleContextLost = (event: Event) => {
+      event.preventDefault();
+      onContextLost();
+    };
+
+    canvas.addEventListener("webglcontextlost", handleContextLost as EventListener, {
+      passive: false,
+    });
+
+    return () => {
+      canvas.removeEventListener(
+        "webglcontextlost",
+        handleContextLost as EventListener,
+      );
+    };
+  }, [gl, onContextLost]);
+
+  return null;
+}
+
 export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
   settings,
   audioVolumes,
@@ -203,11 +232,13 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
   onAimingStateChange,
   onBootReady,
 }: SceneProps, ref) {
+  const [canvasEpoch, setCanvasEpoch] = useState(0);
   const [targets, setTargets] = useState<TargetState[]>(() =>
     createDefaultTargets()
   );
   const sceneTargetsRef = useRef(targets);
   const runtimeRef = useRef<GameplayRuntimeHandle | null>(null);
+  const recoveringContextRef = useRef(false);
   const [runtimeAssetsReady, setRuntimeAssetsReady] = useState(false);
   const [targetAssetsReady, setTargetAssetsReady] = useState(false);
   sceneTargetsRef.current = targets;
@@ -215,6 +246,8 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
   const compileReady = booting && bootAssetsReady && runtimeAssetsReady &&
     targetAssetsReady;
   const lobbyFrameCapEnabled = presentation.phase !== "playing";
+  // Don't advance frames during menu — scene is hidden; only pace during returning transition
+  const paceEnabled = lobbyFrameCapEnabled && presentation.phase !== "menu";
 
   const dpr = useMemo(() => {
     const devicePixelRatio =
@@ -300,6 +333,20 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
     });
   }, []);
 
+  const handleSceneContextLost = useCallback(() => {
+    if (recoveringContextRef.current) {
+      return;
+    }
+    recoveringContextRef.current = true;
+    console.warn("[Scene] WebGL context lost. Rebuilding canvas.");
+    window.setTimeout(() => {
+      startTransition(() => {
+        setCanvasEpoch((value) => value + 1);
+      });
+      recoveringContextRef.current = false;
+    }, 120);
+  }, []);
+
   useImperativeHandle(ref, () => ({
     requestPointerLock: () => {
       runtimeRef.current?.requestPointerLock();
@@ -340,6 +387,7 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
 
   return (
     <Canvas
+      key={canvasEpoch}
       className="game-canvas"
       shadows={settings.shadows && worldTheme > 0.6 ? "percentage" : false}
       dpr={dpr}
@@ -347,7 +395,8 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
       gl={CANVAS_GL}
       frameloop={lobbyFrameCapEnabled ? "never" : "always"}
     >
-      <SceneFramePacer lobbyCapEnabled={lobbyFrameCapEnabled} />
+      <SceneContextRecoveryWatcher onContextLost={handleSceneContextLost} />
+      <SceneFramePacer lobbyCapEnabled={paceEnabled} />
       <color attach="background" args={[backgroundColor]} />
       <fog attach="fog" args={[fogColor, 60, 420]} />
       <hemisphereLight

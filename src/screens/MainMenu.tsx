@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
-import { LobbyScene } from "./LobbyCharacter";
 
 import { type AudioVolumeSettings } from "../game/Audio";
 import {
@@ -135,7 +134,6 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<PauseMenuTab>("gameplay");
   const [bindingCapture, setBindingCapture] = useState<BindingKey | null>(null);
-  const [transitioning, setTransitioning] = useState(false);
 
   const persisted = useMemo(loadPersistedSettings, []);
   const [settings, setSettings] = useState<GameSettings>(persisted.settings);
@@ -204,14 +202,6 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
     setBindingCapture(null);
   }, []);
 
-  const handlePlayClick = useCallback(() => {
-    setTransitioning(true);
-  }, []);
-
-  const handleTransitionComplete = useCallback(() => {
-    onStartGame();
-  }, [onStartGame]);
-
   const showAlphaToast = useCallback((featureLabel: string) => {
     toast.warning(`${featureLabel} is in alpha`, {
       description:
@@ -237,12 +227,7 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
 
   return (
     <div className="lobby-screen">
-      <LobbyScene
-        transitioning={transitioning}
-        onTransitionComplete={handleTransitionComplete}
-      />
-
-      <div className={`menu-layout-expressive ${transitioning ? "menu-transitioning" : ""}`}>
+      <div className="menu-layout-expressive">
         <div className="menu-topbar-expressive">
           <div className="menu-brand-expressive">
             <h1 className="menu-logo-text-expressive">GrayTrace</h1>
@@ -309,7 +294,7 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
                   </div>
                   <p className="play-card-desc-expressive">Enter the firing range to test weapon mechanics, spray patterns, and advanced techniques in a controlled environment.</p>
                 </div>
-                <button type="button" className="play-btn-expressive" onClick={handlePlayClick}>
+                <button type="button" className="play-btn-expressive" onClick={onStartGame}>
                   <span>Enter Practice</span>
                   <ArrowIcon />
                 </button>

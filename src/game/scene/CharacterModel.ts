@@ -41,6 +41,7 @@ export type CharacterModelResult = {
     options?: CharacterAnimPlaybackOptions,
   ) => void;
   getFootstepSample: () => CharacterFootstepSample | null;
+  getCurrentAnimState: () => CharacterAnimState | null;
 };
 
 export type CharacterAnimPlaybackOptions = {
@@ -89,6 +90,30 @@ function isFootstepLocomotionState(state: CharacterAnimState): boolean {
     state === "crouchRight" ||
     state === "rifleCrouchWalk" ||
     isScaledLocomotionState(state);
+}
+
+const PHASE_SYNC_ELIGIBLE: ReadonlySet<CharacterAnimState> = new Set([
+  // Unarmed walk
+  "walk", "walkBack", "walkLeft", "walkRight",
+  "walkForwardLeft", "walkForwardRight", "walkBackwardLeft", "walkBackwardRight",
+  "sprint",
+  // Rifle walk
+  "rifleWalk", "rifleWalkBack", "rifleWalkLeft", "rifleWalkRight",
+  "rifleWalkForwardLeft", "rifleWalkForwardRight", "rifleWalkBackwardLeft", "rifleWalkBackwardRight",
+  // Rifle jog
+  "rifleJog", "rifleJogBack", "rifleJogLeft", "rifleJogRight",
+  "rifleJogForwardLeft", "rifleJogForwardRight", "rifleJogBackwardLeft", "rifleJogBackwardRight",
+  // Rifle run (loop only, NOT start/stop)
+  "rifleRun",
+  // Rifle aim walk
+  "rifleAimWalk", "rifleAimWalkBack", "rifleAimWalkLeft", "rifleAimWalkRight",
+  // Crouch locomotion
+  "crouchForward", "crouchBack", "crouchLeft", "crouchRight",
+  "rifleCrouchWalk",
+]);
+
+function isPhaseSyncEligible(state: CharacterAnimState): boolean {
+  return PHASE_SYNC_ELIGIBLE.has(state);
 }
 
 function resolveCharacterAnimTimeScale(
@@ -655,23 +680,51 @@ export function useCharacterModel(): CharacterModelResult {
           });
 
       if (currentAction && currentAction !== target) {
-        currentAction.fadeOut(layerOptions.fadeDurationSeconds);
-      }
+        // Phase sync: carry over gait cycle position between looping locomotion states
+        const shouldPhaseSync =
+          seekNormalizedTime === null &&
+          currentStateRef.current !== null &&
+          isPhaseSyncEligible(currentStateRef.current) &&
+          isPhaseSyncEligible(targetState);
 
-      target.enabled = true;
-      target.setEffectiveWeight(1);
-      target.setEffectiveTimeScale(targetSpeed);
-      target.timeScale = targetSpeed;
+        target.reset();
 
-      if (currentAction !== target) {
+        if (shouldPhaseSync) {
+          const srcDur = currentAction.getClip().duration;
+          if (srcDur > 0) {
+            const normalizedPhase = (currentAction.time / srcDur) % 1;
+            target.time = normalizedPhase * target.getClip().duration;
+          }
+        } else if (seekNormalizedTime !== null) {
+          target.time = target.getClip().duration * seekNormalizedTime;
+        }
+
+        target.setEffectiveWeight(1);
+        target.setEffectiveTimeScale(targetSpeed);
+        target.timeScale = targetSpeed;
+        target.play();
+
+        // crossFadeFrom: synchronized weight interpolation (weights sum to 1.0)
+        // warp=false: we control timeScale ourselves via locomotionScale
+        target.crossFadeFrom(currentAction, layerOptions.fadeDurationSeconds, false);
+      } else if (currentAction !== target) {
+        // No current action — just fade in from scratch
         target.reset();
         if (seekNormalizedTime !== null) {
           target.time = target.getClip().duration * seekNormalizedTime;
         }
+        target.setEffectiveWeight(1);
+        target.setEffectiveTimeScale(targetSpeed);
+        target.timeScale = targetSpeed;
         target.fadeIn(layerOptions.fadeDurationSeconds).play();
-      } else if (seekNormalizedTime !== null) {
-        target.time = target.getClip().duration * seekNormalizedTime;
-        target.play();
+      } else {
+        // Same action — just update speed and optionally seek
+        target.setEffectiveTimeScale(targetSpeed);
+        target.timeScale = targetSpeed;
+        if (seekNormalizedTime !== null) {
+          target.time = target.getClip().duration * seekNormalizedTime;
+          target.play();
+        }
       }
 
       currentActionRef.current = target;
@@ -755,5 +808,10 @@ export function useCharacterModel(): CharacterModelResult {
     ) ?? sampleFrom(currentBaseActionRef.current, currentBaseStateRef.current);
   }, []);
 
-  return { model, ready, setAnimState, getFootstepSample };
+  const getCurrentAnimState = useCallback(
+    (): CharacterAnimState | null => currentBaseStateRef.current,
+    [],
+  );
+
+  return { model, ready, setAnimState, getFootstepSample, getCurrentAnimState };
 }

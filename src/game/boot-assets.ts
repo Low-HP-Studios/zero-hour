@@ -12,6 +12,9 @@ import {
   CHARACTER_MODEL_URL,
   CHARACTER_TEXTURE_BASE,
   CHARACTER_TEXTURE_MAP,
+  SIGHT_FBX_URL,
+  SIGHT_TEXTURE_BASE,
+  SIGHT_TEXTURE_MAP,
   WEAPON_MODEL_URLS,
 } from "./scene/scene-constants";
 
@@ -77,6 +80,7 @@ const BOOT_AUDIO_KEYS: readonly AudioBufferKey[] = [
   "sniperShell",
   "rifleReload",
   "sniperReload",
+  "dryFire",
   "footstep",
   "kill",
 ];
@@ -87,6 +91,7 @@ const AUDIO_LABELS: Record<AudioBufferKey, string> = {
   sniperShell: "Sniper shell audio",
   rifleReload: "Rifle reload audio",
   sniperReload: "Sniper reload audio",
+  dryFire: "Dry fire audio",
   footstep: "Footstep audio",
   kill: "Kill sound",
   hit: "Hit sound",
@@ -98,6 +103,7 @@ const AUDIO_WEIGHTS: Record<AudioBufferKey, number> = {
   sniperShell: 1.1,
   rifleReload: 1.1,
   sniperReload: 1.1,
+  dryFire: 0.9,
   footstep: 1.6,
   kill: 1.0,
   hit: 0.8,
@@ -144,6 +150,24 @@ export function createBootPreloadManifest(
       bucket: "asset",
       load: () => loadFbxAsset(WEAPON_MODEL_URLS.sniper),
     },
+    {
+      id: "sight:model",
+      label: "Weapon sights model",
+      weight: 3,
+      bucket: "asset",
+      load: () => loadFbxAsset(SIGHT_FBX_URL),
+    },
+    ...Object.entries(SIGHT_TEXTURE_MAP).flatMap(([key, texDef]) =>
+      [texDef.base, texDef.metallic, texDef.normal, texDef.roughness]
+        .filter((f): f is string => Boolean(f))
+        .map((file) => ({
+          id: `texture:sight-${key}-${file}`,
+          label: `Sight texture ${humanize(file)}`,
+          weight: 1.5,
+          bucket: "asset" as const,
+          load: () => preloadTextureAsset(SIGHT_TEXTURE_BASE + file),
+        })),
+    ),
     ...CHARACTER_TEXTURE_URLS.map((url) => ({
       id: `texture:${url}`,
       label: `Character texture ${humanize(fileName(url))}`,

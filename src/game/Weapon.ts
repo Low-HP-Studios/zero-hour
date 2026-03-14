@@ -40,6 +40,19 @@ export type WeaponReloadState = {
   remainingMs: number;
 };
 
+export type WeaponFireBlockReason =
+  | "none"
+  | "noWeapon"
+  | "switching"
+  | "reloading"
+  | "empty"
+  | "sniperRechamber";
+
+export type WeaponFireState = {
+  blocked: boolean;
+  reason: WeaponFireBlockReason;
+};
+
 export type WeaponPickupState = {
   canPickup: boolean;
   weaponKind: WeaponKind | null;
@@ -66,6 +79,7 @@ type TracerState = {
 };
 
 type WeaponProfile = {
+  baseMagAmmo: number;
   ammoPerPack: number;
   maxPacks: number;
   fireIntervalMs: number;
@@ -83,6 +97,7 @@ type WeaponProfile = {
 
 const WEAPON_CONFIG: Record<WeaponKind, WeaponProfile> = {
   rifle: {
+    baseMagAmmo: 30,
     ammoPerPack: 30,
     maxPacks: 4,
     fireIntervalMs: 130,
@@ -97,6 +112,7 @@ const WEAPON_CONFIG: Record<WeaponKind, WeaponProfile> = {
     reloadMs: 3000,
   },
   sniper: {
+    baseMagAmmo: 7,
     ammoPerPack: 30,
     maxPacks: 1,
     fireIntervalMs: 700,
@@ -161,7 +177,6 @@ const DEFAULT_DROPPED_POSITION = {
   sniper: new THREE.Vector3(1.9, DROP_HEIGHT, 3.5),
 };
 const WEAPON_SWITCH_DURATION_MS = 180;
-const MAX_MAG_AMMO = 30;
 
 function resolveDefaultSlot(weaponKind: WeaponKind): WeaponSlotState {
   return {
@@ -169,7 +184,7 @@ function resolveDefaultSlot(weaponKind: WeaponKind): WeaponSlotState {
     hasWeapon: false,
     magAmmo: 0,
     reserveAmmo: 0,
-    maxMagAmmo: MAX_MAG_AMMO,
+    maxMagAmmo: WEAPON_CONFIG[weaponKind].baseMagAmmo,
     maxReserveAmmo:
       WEAPON_CONFIG[weaponKind].ammoPerPack *
       WEAPON_CONFIG[weaponKind].maxPacks,
@@ -387,7 +402,7 @@ export class WeaponSystem {
   }
 
   private resolveMaxMagAmmo(kind: WeaponKind) {
-    return Math.max(1, MAX_MAG_AMMO + this.getMagBonus(kind));
+    return Math.max(1, WEAPON_CONFIG[kind].baseMagAmmo + this.getMagBonus(kind));
   }
 
   private refreshSlotMagCapacity(slotId: WeaponSlotId) {
@@ -438,11 +453,10 @@ export class WeaponSystem {
 
   private equipToSlot(slotId: WeaponSlotId, kind: WeaponKind) {
     const slot = this.getSlotById(slotId);
-    const config = WEAPON_CONFIG[kind];
     this.applySlotDefaultsForWeapon(slot, kind);
     slot.hasWeapon = true;
-    slot.magAmmo = slot.maxMagAmmo;
-    slot.reserveAmmo = config.ammoPerPack * config.maxPacks;
+    slot.magAmmo = 0;
+    slot.reserveAmmo = 0;
     this.setSlotById(slotId, slot);
   }
 
@@ -535,9 +549,13 @@ export class WeaponSystem {
       !activeSlot.hasWeapon ||
       !activeKind ||
       !this.triggerHeld ||
-      activeSlot.magAmmo <= 0 ||
       reloading
     ) {
+      return shotEvents;
+    }
+
+    if (activeSlot.magAmmo <= 0) {
+      this.beginReload(nowMs);
       return shotEvents;
     }
 
@@ -626,6 +644,7 @@ export class WeaponSystem {
       this.setSlotById(this.activeSlot, { ...activeSlot });
       this.applyPendingReloadCompletion(nowMs + 1);
       if (activeSlot.magAmmo <= 0 && this.reloadSlot === null) {
+        this.beginReload(nowMs);
         break;
       }
     }
@@ -804,6 +823,26 @@ export class WeaponSystem {
     return true;
   }
 
+  setReserveAmmoForKind(kind: WeaponKind, reserveAmmo: number) {
+    const slotId = this.getSlotIdForKind(kind);
+    const slot = this.getSlotById(slotId);
+    if (!slot.hasWeapon || slot.weaponKind !== kind) {
+      return false;
+    }
+
+    const next = Math.max(0, Math.min(slot.maxReserveAmmo, Math.floor(reserveAmmo)));
+    if (slot.reserveAmmo === next) {
+      return false;
+    }
+
+    slot.reserveAmmo = next;
+    if (this.reloadSlot === slotId && this.reloadWeaponKind === kind) {
+      this.reloadAmmoToLoad = Math.min(this.reloadAmmoToLoad, slot.reserveAmmo);
+    }
+    this.setSlotById(slotId, slot);
+    return true;
+  }
+
   beginReload(nowMs: number): boolean {
     this.applyPendingReloadCompletion(nowMs);
     this.applyPendingSwitch(nowMs);
@@ -852,6 +891,32 @@ export class WeaponSystem {
 
   isReloading(nowMs: number) {
     return this.reloadUntilMs > nowMs;
+  }
+
+  getFireState(nowMs: number): WeaponFireState {
+    const active = this.resolveActiveSlot();
+    const activeKind = this.resolveActiveWeaponKind();
+    if (!active.hasWeapon || !activeKind) {
+      return { blocked: true, reason: "noWeapon" };
+    }
+
+    if (this.isSwitching(nowMs)) {
+      return { blocked: true, reason: "switching" };
+    }
+
+    if (this.isReloading(nowMs)) {
+      return { blocked: true, reason: "reloading" };
+    }
+
+    if (activeKind === "sniper" && this.sniperRechamberUntilMs > nowMs) {
+      return { blocked: true, reason: "sniperRechamber" };
+    }
+
+    if (active.magAmmo <= 0) {
+      return { blocked: true, reason: "empty" };
+    }
+
+    return { blocked: false, reason: "none" };
   }
 
   getSniperRechamberState(nowMs: number): SniperRechamberState {

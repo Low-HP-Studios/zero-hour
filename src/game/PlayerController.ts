@@ -75,6 +75,7 @@ export type PlayerControllerApi = {
   isFirstPerson: () => boolean;
   getViewModeLerp: () => number;
   isADS: () => boolean;
+  getAdsLerp: () => number;
   isSprinting: () => boolean;
   isSprintPressed: () => boolean;
   isWalkPressed: () => boolean;
@@ -1107,6 +1108,7 @@ export function usePlayerController({
         : viewModeLerpRef.current > FPP_EXIT_VISUAL_THRESHOLD,
     getViewModeLerp: () => viewModeLerpRef.current,
     isADS: () => adsRef.current,
+    getAdsLerp: () => adsLerpRef.current,
     isSprinting: () => sprintingRef.current,
     isSprintPressed: () => sprintPressedRef.current,
     isWalkPressed: () => walkPressedRef.current,

@@ -485,7 +485,7 @@ export const DEFAULT_PLAYER_SNAPSHOT: PlayerSnapshot = {
       hasWeapon: false,
       magAmmo: 0,
       reserveAmmo: 0,
-      maxMagAmmo: 30,
+      maxMagAmmo: 7,
       maxReserveAmmo: 30,
       maxPacks: 1,
       packAmmo: 30,

@@ -14,6 +14,7 @@ type LoadedBuffers = {
   sniperShell: AudioBuffer | null;
   rifleReload: AudioBuffer | null;
   sniperReload: AudioBuffer | null;
+  dryFire: AudioBuffer | null;
   footstep: AudioBuffer | null;
   kill: AudioBuffer | null;
   hit: AudioBuffer | null;
@@ -25,6 +26,7 @@ type BufferSourceUrls = {
   sniperShell: string | null;
   rifleReload: string | null;
   sniperReload: string | null;
+  dryFire: string | null;
   footstep: string | null;
   kill: string | null;
   hit: string | null;
@@ -48,6 +50,7 @@ const AUDIO_BUFFER_KEYS: AudioBufferKey[] = [
   "sniperShell",
   "rifleReload",
   "sniperReload",
+  "dryFire",
   "footstep",
   "kill",
   "hit",
@@ -77,6 +80,9 @@ const AUDIO_URL_CANDIDATES = {
   ],
   sniperReload: [
     "/assets/audio/improved/sniper/sniper-reloading.mp3",
+  ],
+  dryFire: [
+    "/assets/audio/improved/fire-empty-gun.mp3",
   ],
   footstep: [
     "/assets/audio/footstep.wav",
@@ -115,6 +121,7 @@ export class AudioManager {
     sniperShell: null,
     rifleReload: null,
     sniperReload: null,
+    dryFire: null,
     footstep: null,
     kill: null,
     hit: null,
@@ -125,6 +132,7 @@ export class AudioManager {
     sniperShell: null,
     rifleReload: null,
     sniperReload: null,
+    dryFire: null,
     footstep: null,
     kill: null,
     hit: null,
@@ -136,6 +144,7 @@ export class AudioManager {
   private gunshotDebugCounter = 0;
   private reloadDebugCounter = 0;
   private shellingDebugCounter = 0;
+  private lastDryFireAtSeconds = -Infinity;
   private reloadSource: AudioBufferSourceNode | null = null;
   private reloadGain: GainNode | null = null;
   private shellingSource: AudioBufferSourceNode | null = null;
@@ -373,6 +382,46 @@ export class AudioManager {
 
     osc.start(now);
     osc.stop(now + 0.09);
+  }
+
+  playDryFire() {
+    if (!this.context || this.context.state !== "running" || !this.gunGain) {
+      return;
+    }
+
+    const now = this.context.currentTime;
+    if (now - this.lastDryFireAtSeconds < 0.12) {
+      return;
+    }
+    this.lastDryFireAtSeconds = now;
+
+    if (this.buffers.dryFire) {
+      const source = this.context.createBufferSource();
+      source.buffer = this.buffers.dryFire;
+      source.playbackRate.value = 0.98 + Math.random() * 0.05;
+      const gain = this.context.createGain();
+      gain.gain.value = 0.72;
+      source.connect(gain);
+      gain.connect(this.gunGain);
+      source.start(now);
+      source.stop(now + Math.min(0.32, source.buffer.duration));
+      return;
+    }
+
+    const click = this.context.createOscillator();
+    const clickGain = this.context.createGain();
+    click.type = "square";
+    click.frequency.setValueAtTime(1300, now);
+    click.frequency.exponentialRampToValueAtTime(700, now + 0.045);
+    clickGain.gain.setValueAtTime(0.001, now);
+    clickGain.gain.exponentialRampToValueAtTime(0.085, now + 0.002);
+    clickGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.06);
+    click.connect(clickGain);
+    clickGain.connect(this.gunGain);
+    click.start(now);
+    click.stop(now + 0.07);
+
+    void this.prepareBuffer("dryFire");
   }
 
   cancelReload() {

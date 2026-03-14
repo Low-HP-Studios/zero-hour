@@ -10,16 +10,63 @@ type WeaponThumbnailProps = {
 const THUMB_WIDTH = 256;
 const THUMB_HEIGHT = 128;
 
-function renderThumbnail(source: THREE.Group): string | null {
+const THUMBNAIL_CACHE = new Map<string, string>();
+let sharedThumbnailRenderer: THREE.WebGLRenderer | null = null;
+
+function getThumbnailRenderer(): THREE.WebGLRenderer | null {
+  if (sharedThumbnailRenderer) {
+    const context = sharedThumbnailRenderer.getContext();
+    if (!context.isContextLost()) {
+      return sharedThumbnailRenderer;
+    }
+    try {
+      sharedThumbnailRenderer.dispose();
+      sharedThumbnailRenderer.forceContextLoss();
+    } catch {
+      // Ignore renderer teardown failures and recreate below.
+    }
+    sharedThumbnailRenderer = null;
+  }
+
+  try {
+    sharedThumbnailRenderer = new THREE.WebGLRenderer({
+      alpha: true,
+      antialias: true,
+      preserveDrawingBuffer: true,
+      powerPreference: "low-power",
+    });
+    sharedThumbnailRenderer.setPixelRatio(1);
+    sharedThumbnailRenderer.setSize(THUMB_WIDTH, THUMB_HEIGHT, false);
+    sharedThumbnailRenderer.setClearColor(0x000000, 0);
+    return sharedThumbnailRenderer;
+  } catch (error) {
+    console.warn("[WeaponThumbnail] Failed to create renderer", error);
+    return null;
+  }
+}
+
+function buildThumbnailCacheKey(source: THREE.Group, kind: WeaponThumbnailProps["kind"]) {
+  return `${kind}:${source.uuid}`;
+}
+
+function renderThumbnail(
+  source: THREE.Group,
+  kind: WeaponThumbnailProps["kind"],
+): string | null {
+  const cacheKey = buildThumbnailCacheKey(source, kind);
+  const cached = THUMBNAIL_CACHE.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const renderer = getThumbnailRenderer();
+  if (!renderer) {
+    return null;
+  }
+
   const clone = cloneWeaponModel(source);
   if (!clone) return null;
-
-  const renderer = new THREE.WebGLRenderer({
-    alpha: true,
-    antialias: true,
-    preserveDrawingBuffer: true,
-  });
-  renderer.setSize(THUMB_WIDTH, THUMB_HEIGHT);
+  renderer.setSize(THUMB_WIDTH, THUMB_HEIGHT, false);
   renderer.setClearColor(0x000000, 0);
 
   const scene = new THREE.Scene();
@@ -68,9 +115,6 @@ function renderThumbnail(source: THREE.Group): string | null {
 
   renderer.render(scene, camera);
   const dataUrl = renderer.domElement.toDataURL("image/png");
-
-  // Dispose
-  renderer.dispose();
   scene.traverse((child) => {
     if ((child as THREE.Mesh).isMesh) {
       const mesh = child as THREE.Mesh;
@@ -80,6 +124,7 @@ function renderThumbnail(source: THREE.Group): string | null {
     }
   });
 
+  THUMBNAIL_CACHE.set(cacheKey, dataUrl);
   return dataUrl;
 }
 
@@ -92,14 +137,27 @@ export function WeaponThumbnail({ model, kind }: WeaponThumbnailProps) {
       return;
     }
 
+    const cacheKey = buildThumbnailCacheKey(model, kind);
+    const cached = THUMBNAIL_CACHE.get(cacheKey);
+    if (cached) {
+      setDataUrl(cached);
+      return;
+    }
+
     // Render in next microtask to avoid blocking
+    let cancelled = false;
     const id = requestAnimationFrame(() => {
-      const url = renderThumbnail(model);
-      setDataUrl(url);
+      const url = renderThumbnail(model, kind);
+      if (!cancelled) {
+        setDataUrl(url);
+      }
     });
 
-    return () => cancelAnimationFrame(id);
-  }, [model]);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(id);
+    };
+  }, [kind, model]);
 
   if (dataUrl) {
     return (
