@@ -211,6 +211,31 @@ function easeInOutCubic(t: number): number {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }
 
+const LOBBY_FRAME_RATE = 60;
+const LOBBY_FRAME_INTERVAL_MS = 1000 / LOBBY_FRAME_RATE;
+
+function LobbyFramePacer() {
+  const advance = useThree((state) => state.advance);
+
+  useEffect(() => {
+    let rafId: number;
+    let lastTime = 0;
+    const loop = (time: number) => {
+      if (time - lastTime >= LOBBY_FRAME_INTERVAL_MS) {
+        lastTime = time - ((time - lastTime) % LOBBY_FRAME_INTERVAL_MS);
+        advance(time);
+      }
+      rafId = window.requestAnimationFrame(loop);
+    };
+    rafId = window.requestAnimationFrame(loop);
+    return () => {
+      window.cancelAnimationFrame(rafId);
+    };
+  }, [advance]);
+
+  return null;
+}
+
 function LobbySceneContent({
   transitioning,
   onTransitionComplete,
@@ -241,6 +266,7 @@ function LobbySceneContent({
         transitioning={transitioning}
         onTransitionComplete={onTransitionComplete}
       />
+      <LobbyFramePacer />
     </>
   );
 }
@@ -252,9 +278,10 @@ export function LobbyScene({
   return (
     <div className="lobby-scene-viewport">
       <Canvas
-        gl={{ antialias: true, powerPreference: "high-performance" }}
+        gl={{ antialias: false, powerPreference: "high-performance" }}
         camera={{ fov: 40, near: 0.1, far: 650 }}
-        dpr={Math.min(1.5, window.devicePixelRatio)}
+        dpr={1}
+        frameloop="never"
       >
         <LobbySceneContent
           transitioning={transitioning}

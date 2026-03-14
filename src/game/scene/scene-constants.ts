@@ -313,7 +313,7 @@ export const WEAPON_MODEL_TRANSFORMS: {
       scale: 0.0013,
     },
     sniper: {
-      position: [0.02, -0.04, 0],
+      position: [-0.085, -0.05, -0.006],
       rotation: [0, -Math.PI / 2, 0],
       scale: 0.0018,
     },
@@ -343,6 +343,55 @@ export const WEAPON_MODEL_TRANSFORMS: {
     },
   },
 };
+
+// ── Sight / scope assets ──
+export const SIGHT_FBX_URL = '/assets/weapons/sights/source/Scopes Part 1.fbx';
+export const SIGHT_TEXTURE_BASE = '/assets/weapons/sights/textures/';
+
+export const SIGHT_TEXTURE_MAP: Record<
+  string,
+  { base: string; metallic: string; normal?: string; roughness: string }
+> = {
+  rifle: {
+    base: 'Sight1_Base_color.png',
+    metallic: 'Sight1_Metallic.png',
+    normal: 'Sight1_Normal_DirectX.png',
+    roughness: 'Sight1_Roughness.png',
+  },
+  sniper: {
+    base: 'Sight5_Base_color.png',
+    metallic: 'Sight5_Metallic.png',
+    normal: 'Sight5_Normal_DirectX.png',
+    roughness: 'Sight5_Roughness.png',
+  },
+};
+
+// Substring identifiers to find the right child meshes inside the multi-mesh FBX.
+// These will be matched via child.name.includes(). If the loaded FBX uses different
+// names, inspect the children via console.log and update these values.
+export const SIGHT_MESH_NAMES: Record<string, string> = {
+  rifle: 'Sight1',
+  sniper: 'Sight5',
+};
+
+// Transform for mounting sights on top of the weapon model rail.
+// The sight meshes are centered at origin after extraction.
+// Position is in the weapon group's local space (same space as WEAPON_MODEL_TRANSFORMS.character).
+// Scale should match the weapon model scale so FBX units are consistent.
+// Rotation matches the weapon's rotation so the sight barrel-axis aligns.
+export const SIGHT_MOUNT_TRANSFORMS: Record<WeaponKind, WeaponModelTransform> =
+  {
+    rifle: {
+      position: [-0.04, 0.04, 0],
+      rotation: [0, -Math.PI / 2, 0],
+      scale: 0.0013,
+    },
+    sniper: {
+      position: [-0.04, 0.04, 0],
+      rotation: [0, -Math.PI / 2, 0],
+      scale: 0.0018,
+    },
+  };
 
 const SPRINT_ANIM_PLAYBACK_SCALE = 0.6;
 const RIFLE_RUN_TRANSITION_DURATION_SCALE = 1 / SPRINT_ANIM_PLAYBACK_SCALE;

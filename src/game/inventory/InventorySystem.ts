@@ -14,6 +14,7 @@ import {
   BACKPACK_CAPACITY,
   INVENTORY_ITEM_DEFS,
   INVENTORY_NEARBY_RADIUS,
+  PRACTICE_AMMO_SPAWNS,
   type InventoryItemDefinition,
   type InventoryItemId,
   STATIC_GROUND_SPAWNS,
@@ -49,6 +50,11 @@ export type GroundWeaponVisualState = {
     isPresentOnGround: boolean;
     droppedPosition: [number, number, number] | null;
   };
+};
+
+export type GroundAmmoVisualState = {
+  rifle: Array<[number, number, number]>;
+  sniper: Array<[number, number, number]>;
 };
 
 const EMPTY_ATTACHMENTS: RuntimeAttachmentSlots = {
@@ -164,6 +170,81 @@ export class InventorySystem {
 
   getGroundItemId(groundId: string): InventoryItemId | null {
     return this.groundItems.get(groundId)?.stack.itemId ?? null;
+  }
+
+  getAmmoCount(itemId: "ammo_rifle" | "ammo_sniper") {
+    let total = 0;
+    for (const stack of this.backpackSlots) {
+      if (stack?.itemId === itemId) {
+        total += stack.quantity;
+      }
+    }
+    return total;
+  }
+
+  getAmmoTotalsByWeaponKind() {
+    return {
+      rifle: this.getAmmoCount("ammo_rifle"),
+      sniper: this.getAmmoCount("ammo_sniper"),
+    };
+  }
+
+  consumeAmmo(itemId: "ammo_rifle" | "ammo_sniper", amount: number) {
+    let remaining = Math.max(0, Math.floor(amount));
+    if (remaining <= 0) {
+      return 0;
+    }
+
+    let consumed = 0;
+    for (let index = BACKPACK_CAPACITY - 1; index >= 0 && remaining > 0; index -= 1) {
+      const stack = this.backpackSlots[index];
+      if (!stack || stack.itemId !== itemId) {
+        continue;
+      }
+
+      const take = Math.min(stack.quantity, remaining);
+      stack.quantity -= take;
+      consumed += take;
+      remaining -= take;
+      if (stack.quantity <= 0) {
+        this.backpackSlots[index] = null;
+      } else {
+        this.backpackSlots[index] = stack;
+      }
+    }
+
+    if (consumed > 0) {
+      this.bumpRevision();
+    }
+    return consumed;
+  }
+
+  ensurePracticeAmmoStock(rifleAmount = 120, sniperAmount = 30) {
+    const nextRifleAmount = Math.max(1, Math.floor(rifleAmount));
+    const nextSniperAmount = Math.max(1, Math.floor(sniperAmount));
+
+    let changed = false;
+    if (!this.hasGroundItemWithId("ammo_rifle")) {
+      this.addGroundItem(
+        this.createStack("ammo_rifle", nextRifleAmount),
+        PRACTICE_AMMO_SPAWNS.rifle,
+      );
+      changed = true;
+    }
+
+    if (!this.hasGroundItemWithId("ammo_sniper")) {
+      this.addGroundItem(
+        this.createStack("ammo_sniper", nextSniperAmount),
+        PRACTICE_AMMO_SPAWNS.sniper,
+      );
+      changed = true;
+    }
+
+    if (changed) {
+      this.bumpRevision();
+    }
+
+    return changed;
   }
 
   quickPickupClosestNearby(
@@ -385,6 +466,20 @@ export class InventorySystem {
         droppedPosition: sniperPosition,
       },
     };
+  }
+
+  getGroundAmmoVisualState(): GroundAmmoVisualState {
+    const rifle: Array<[number, number, number]> = [];
+    const sniper: Array<[number, number, number]> = [];
+    for (const item of this.groundItems.values()) {
+      if (item.stack.itemId === "ammo_rifle") {
+        rifle.push([item.position[0], item.position[1], item.position[2]]);
+      } else if (item.stack.itemId === "ammo_sniper") {
+        sniper.push([item.position[0], item.position[1], item.position[2]]);
+      }
+    }
+
+    return { rifle, sniper };
   }
 
   getSnapshot(
@@ -638,6 +733,15 @@ export class InventorySystem {
       }
     }
     return null;
+  }
+
+  private hasGroundItemWithId(itemId: InventoryItemId) {
+    for (const item of this.groundItems.values()) {
+      if (item.stack.itemId === itemId) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private isWeaponEquipLocation(location: InventoryMoveLocation) {

@@ -75,6 +75,7 @@ export type PlayerControllerApi = {
   isFirstPerson: () => boolean;
   getViewModeLerp: () => number;
   isADS: () => boolean;
+  getAdsLerp: () => number;
   isSprinting: () => boolean;
   isSprintPressed: () => boolean;
   isWalkPressed: () => boolean;
@@ -125,7 +126,7 @@ const FIRST_PERSON_CAMERA_HEIGHT_CROUCH = 1.08;
 const TPP_CROUCH_LOOK_HEIGHT_OFFSET = -0.3;
 const FIRST_PERSON_CAMERA_FORWARD_OFFSET = 0.06;
 const RIFLE_ADS_FOV = 52;
-const SNIPER_ADS_FOV = 26;
+const SNIPER_ADS_FOV = 32;
 const VIEW_MODE_TRANSITION_SPEED = 13;
 const CROUCH_TRANSITION_SPEED = 14;
 const TPP_CROUCH_CAMERA_TRANSITION_SPEED = 12;
@@ -1107,6 +1108,7 @@ export function usePlayerController({
         : viewModeLerpRef.current > FPP_EXIT_VISUAL_THRESHOLD,
     getViewModeLerp: () => viewModeLerpRef.current,
     isADS: () => adsRef.current,
+    getAdsLerp: () => adsLerpRef.current,
     isSprinting: () => sprintingRef.current,
     isSprintPressed: () => sprintPressedRef.current,
     isWalkPressed: () => walkPressedRef.current,

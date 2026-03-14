@@ -194,6 +194,9 @@ export function GameRoot({
 }: GameRootProps) {
   const persistedSettings = useMemo(loadPersistedSettings, []);
   const sceneRef = useRef<SceneHandle | null>(null);
+  const settingsModalRef = useRef<HTMLDivElement | null>(null);
+  const pointerLockResumeTimerRef = useRef<number | null>(null);
+  const pointerLockResumePendingRef = useRef(false);
   const [settings, setSettings] = useState<GameSettings>(
     persistedSettings.settings,
   );
@@ -340,20 +343,26 @@ export function GameRoot({
       sceneRef.current?.requestPointerLock();
     };
 
-    // Try immediately via synthetic click (works in Electron/Tauri)
-    const timer = setTimeout(() => {
-      tryLock();
-    }, 50);
+    // Use double-RAF: all sibling/child effects (including PlayerController's
+    // inputEnabledRef update) finish synchronously before any RAF fires, so
+    // inputEnabled is guaranteed true and the canvas is visible by then.
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(tryLock);
+    });
 
-    // Fallback: wait for a real user click
+    // Fallback: real user click on the canvas (always works via PlayerController's
+    // own mousedown handler, but keep this for non-Electron environments)
     const onClick = () => {
-      clearTimeout(timer);
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
       tryLock();
     };
     document.addEventListener("click", onClick, { once: true });
 
     return () => {
-      clearTimeout(timer);
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
       document.removeEventListener("click", onClick);
     };
   }, [needsPointerLock]);
@@ -388,11 +397,23 @@ export function GameRoot({
   const showSettingsModal = menuSettingsOpen || showPauseMenu;
   const showUpdatesModal = inLobbyPhase && menuUpdatesOpen;
 
+  const requestGameplayPointerLock = useCallback(() => {
+    pointerLockResumePendingRef.current = true;
+    if (pointerLockResumeTimerRef.current !== null) {
+      window.clearTimeout(pointerLockResumeTimerRef.current);
+    }
+    pointerLockResumeTimerRef.current = window.setTimeout(() => {
+      pointerLockResumePendingRef.current = false;
+      pointerLockResumeTimerRef.current = null;
+    }, 800);
+    sceneRef.current?.requestPointerLock();
+  }, []);
+
   const handleCloseMenuAndResume = useCallback(() => {
     setBindingCapture(null);
     setPauseMenuOpen(false);
-    sceneRef.current?.requestPointerLock();
-  }, []);
+    requestGameplayPointerLock();
+  }, [requestGameplayPointerLock]);
 
   const handleCloseSettingsModal = useCallback(() => {
     setBindingCapture(null);
@@ -415,14 +436,32 @@ export function GameRoot({
     setMenuUpdatesOpen(true);
   }, []);
 
+  useEffect(() => {
+    if (!showSettingsModal) {
+      return;
+    }
+
+    const focusModal = () => {
+      window.focus();
+      settingsModalRef.current?.focus({ preventScroll: true });
+    };
+
+    focusModal();
+    const frameId = window.requestAnimationFrame(focusModal);
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [showSettingsModal]);
+
   const handleEnterPractice = useCallback(() => {
     setMenuSettingsOpen(false);
     setMenuUpdatesOpen(false);
     setPauseMenuOpen(false);
     setBindingCapture(null);
     setHitMarker({ until: 0, kind: "body" });
-    setPhaseProgress(0);
-    setPhase("entering");
+    enteredPlayingAtRef.current = performance.now();
+    setPhase("playing");
+    setNeedsPointerLock(true);
   }, []);
 
   const handleReturnToLobby = useCallback(() => {
@@ -432,8 +471,10 @@ export function GameRoot({
     setPauseMenuOpen(false);
     sceneRef.current?.releasePointerLock();
     sceneRef.current?.dropWeaponForReturn();
-    setPhaseProgress(0);
-    setPhase("returning");
+    sceneRef.current?.resetForMenu();
+    setHitMarker({ until: 0, kind: "body" });
+    setHasBeenLocked(false);
+    setPhase("menu");
   }, []);
 
   const reportInventoryResult = useCallback((result: InventoryMoveResult) => {
@@ -791,6 +832,36 @@ export function GameRoot({
   }, [phase, pauseMenuOpen]);
 
   useEffect(() => {
+    if (player.pointerLocked && pointerLockResumePendingRef.current) {
+      pointerLockResumePendingRef.current = false;
+      if (pointerLockResumeTimerRef.current !== null) {
+        window.clearTimeout(pointerLockResumeTimerRef.current);
+        pointerLockResumeTimerRef.current = null;
+      }
+    }
+  }, [player.pointerLocked]);
+
+  useEffect(() => {
+    if (phase !== "playing" || !hasBeenLocked || inventoryOpen) {
+      return;
+    }
+    if (player.pointerLocked || pauseMenuOpen || pointerLockResumePendingRef.current) {
+      return;
+    }
+
+    setBindingCapture(null);
+    setMenuSettingsOpen(false);
+    setMenuUpdatesOpen(false);
+    setPauseMenuOpen(true);
+  }, [
+    hasBeenLocked,
+    inventoryOpen,
+    pauseMenuOpen,
+    phase,
+    player.pointerLocked,
+  ]);
+
+  useEffect(() => {
     if (phase !== "playing" || !hasBeenLocked) return;
     if (bindingCapture) return;
 
@@ -804,7 +875,7 @@ export function GameRoot({
         pendingTimer = null;
         if (pauseMenuOpen) {
           setPauseMenuOpen(false);
-          sceneRef.current?.requestPointerLock();
+          requestGameplayPointerLock();
           return;
         }
 
@@ -821,7 +892,21 @@ export function GameRoot({
       window.removeEventListener("keydown", onEscTogglePause);
       if (pendingTimer !== null) window.clearTimeout(pendingTimer);
     };
-  }, [phase, hasBeenLocked, bindingCapture, pauseMenuOpen]);
+  }, [
+    phase,
+    hasBeenLocked,
+    bindingCapture,
+    pauseMenuOpen,
+    requestGameplayPointerLock,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      if (pointerLockResumeTimerRef.current !== null) {
+        window.clearTimeout(pointerLockResumeTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (phase !== "playing") {
@@ -935,12 +1020,11 @@ export function GameRoot({
   const renderedPresentation = booting ? BOOT_PRESENTATION : scenePresentation;
 
   const hitMarkerVisible = hitMarker.until > performance.now();
-  const sniperScopeActive = activeWeapon === "sniper" && aimingState.ads &&
-    phase === "playing" &&
-    !isPaused;
-  const rifleScopeActive = activeWeapon === "rifle" && aimingState.ads &&
-    phase === "playing" &&
-    !isPaused;
+  const isAimingDownSight = aimingState.ads && phase === "playing" && !isPaused;
+  const sniperRechamberProgress =
+    activeWeapon === "sniper" && sniperRechamber.active
+      ? sniperRechamber.progress
+      : 1;
   const stressLabel = stressCount === 0 ? "Off" : `${stressCount} boxes`;
   const lockLabel = player.pointerLocked
     ? "Live look mode"
@@ -977,29 +1061,8 @@ export function GameRoot({
     ["--ch-outer-length" as string]: `${settings.crosshair.outerLines.length}`,
     ["--ch-outer-thickness" as string]: `${settings.crosshair.outerLines.thickness}`,
     ["--ch-outer-gap" as string]: `${outerGap}`,
-    ["--sniper-cycle-progress" as string]: `${
-      activeWeapon === "sniper" && (sniperRechamber.active || sniperScopeActive)
-        ? sniperRechamber.progress
-        : 1
-    }`,
+    ["--sniper-cycle-progress" as string]: `${sniperRechamberProgress}`,
   } as CSSProperties);
-  const rifleAdsStyle = ({
-    ["--ads-dot-size" as string]: `${settings.crosshair.ads.rifleDotSize}`,
-    ["--ads-dot-color" as string]:
-      CROSSHAIR_COLOR_HEX[settings.crosshair.ads.rifleDotColor],
-    ["--ch-outline-enabled" as string]: settings.crosshair.outline.enabled
-      ? "1"
-      : "0",
-    ["--ch-outline-thickness" as string]: `${settings.crosshair.outline.thickness}`,
-    ["--ch-outline-opacity" as string]: `${settings.crosshair.outline.opacity}`,
-  } as CSSProperties);
-  const sniperScopeStyle = ({
-    ...crosshairStyle,
-    ["--scope-dot-size" as string]: `${settings.crosshair.ads.sniperDotSize}`,
-    ["--scope-dot-color" as string]:
-      CROSSHAIR_COLOR_HEX[settings.crosshair.ads.sniperDotColor],
-  } as CSSProperties);
-
   const playerSummary = useMemo(() => {
     return {
       x: player.x.toFixed(1),
@@ -1036,9 +1099,14 @@ export function GameRoot({
     ? "Slot 1 (Rifle)"
     : "Slot 2 (Sniper)";
   const anyWeaponEquipped = rifleSlot.hasWeapon || sniperSlot.hasWeapon;
+  const interactItemLabel = player.interactWeaponKind === "sniper"
+    ? "Sniper"
+    : player.interactWeaponKind === "rifle"
+    ? "Rifle"
+    : "Item";
   const interactPromptLabel = player.canInteract
     ? `Press ${formatKeyCode(settings.keybinds.pickup)} to loot ${
-      player.interactWeaponKind === "sniper" ? "Sniper" : "Rifle"
+      interactItemLabel
     }`
     : "";
 
@@ -1091,10 +1159,9 @@ export function GameRoot({
         onBootReady={onSceneBootReady}
       />
 
-      {phase === "menu" || phase === "entering"
+      {phase === "menu"
         ? (
           <ExperienceMenuOverlay
-            transitioning={phase === "entering"}
             onEnterPractice={handleEnterPractice}
             onOpenSettings={handleOpenSettingsModal}
             onOpenUpdates={handleOpenUpdatesModal}
@@ -1144,9 +1211,7 @@ export function GameRoot({
                 <dt>Interact</dt>
                 <dd>
                   {player.canInteract
-                    ? player.interactWeaponKind === "sniper"
-                      ? "Sniper nearby"
-                      : "Rifle nearby"
+                    ? `${interactItemLabel} nearby`
                     : "-"}
                 </dd>
                 <dt>Weapon</dt>
@@ -1171,8 +1236,7 @@ export function GameRoot({
           : null}
 
         <div className="center-stack">
-          {combatHudVisible && !isPaused && !sniperScopeActive &&
-              !rifleScopeActive
+          {combatHudVisible && !isPaused && !isAimingDownSight
             ? (
               <div
                 className={`crosshair ${
@@ -1222,37 +1286,59 @@ export function GameRoot({
               </div>
             )
             : null}
-          {combatHudVisible && rifleScopeActive
+          {isAimingDownSight && activeWeapon === "rifle" && combatHudVisible
             ? (
               <div
                 className="rifle-ads-overlay"
-                style={rifleAdsStyle}
-                role="img"
-                aria-label="Red Dot Reticle (2 MOA emitter dot)"
+                style={
+                  {
+                    "--ads-dot-size": `${settings.crosshair.ads.rifleDotSize}`,
+                    "--ads-dot-color":
+                      CROSSHAIR_COLOR_HEX[settings.crosshair.ads.rifleDotColor],
+                    "--ch-outline-enabled": settings.crosshair.outline.enabled
+                      ? "1"
+                      : "0",
+                    "--ch-outline-thickness": `${settings.crosshair.outline.thickness}`,
+                    "--ch-outline-opacity": `${settings.crosshair.outline.opacity}`,
+                  } as React.CSSProperties
+                }
               >
-                <div className="rifle-scope-housing">
-                  <div className="rifle-scope-glass" />
-                  <div className="rifle-ads-dot" />
-                </div>
+                <div className="rifle-ads-dot" />
               </div>
             )
             : null}
-          {combatHudVisible && sniperScopeActive
+          {isAimingDownSight && activeWeapon === "sniper" && combatHudVisible
             ? (
-              <div className="sniper-scope-overlay" style={sniperScopeStyle}>
-                <div className="scope-outside" />
-                <div className="scope-lens">
+              <div
+                className="sniper-scope-overlay"
+                style={
+                  {
+                    "--scope-dot-size": `${settings.crosshair.ads.sniperDotSize}`,
+                    "--scope-dot-color":
+                      CROSSHAIR_COLOR_HEX[
+                        settings.crosshair.ads.sniperDotColor
+                      ],
+                    "--ch-outline-enabled": settings.crosshair.outline.enabled
+                      ? "1"
+                      : "0",
+                    "--ch-outline-thickness": `${settings.crosshair.outline.thickness}`,
+                    "--ch-outline-opacity": `${settings.crosshair.outline.opacity}`,
+                    "--sniper-cycle-progress": `${sniperRechamberProgress}`,
+                  } as React.CSSProperties
+                }
+              >
+                <div className="sniper-ads-reticle">
                   <div className="scope-reticle">
-                    <span className="scope-line vertical" />
-                    <span className="scope-line horizontal" />
-                    <span className="scope-center-dot" />
-                    <span className="scope-hash hash-1" />
-                    <span className="scope-hash hash-2" />
-                    <span className="scope-hash hash-3" />
-                    {sniperRechamber.active
-                      ? <span className="scope-rechamber" />
-                      : null}
+                    <div className="scope-line vertical" />
+                    <div className="scope-line horizontal" />
+                    <div className="scope-center-dot" />
+                    <div className="scope-hash hash-1" />
+                    <div className="scope-hash hash-2" />
+                    <div className="scope-hash hash-3" />
                   </div>
+                  {sniperRechamber.active
+                    ? <div className="scope-rechamber" />
+                    : null}
                 </div>
               </div>
             )
@@ -1425,10 +1511,24 @@ export function GameRoot({
               >
                 <div
                   className="lobby-settings-modal"
+                  ref={settingsModalRef}
                   onClick={(e) => e.stopPropagation()}
                   onMouseDown={(e) => e.stopPropagation()}
+                  onKeyDown={(event) => {
+                    if (event.code !== "Escape") {
+                      return;
+                    }
+                    event.preventDefault();
+                    event.stopPropagation();
+                    if (showPauseMenu) {
+                      handleCloseMenuAndResume();
+                      return;
+                    }
+                    handleCloseSettingsModal();
+                  }}
                   role="dialog"
                   aria-label={showPauseMenu ? "Pause menu" : "Settings"}
+                  tabIndex={-1}
                 >
                   <div className="lobby-settings-header">
                     <h2>{menuTitle(menuTab)}</h2>

@@ -1,6 +1,7 @@
 export {
   InventorySystem,
   type AttachmentRuntimeModifiers,
+  type GroundAmmoVisualState,
 } from "./InventorySystem";
 
 export {
