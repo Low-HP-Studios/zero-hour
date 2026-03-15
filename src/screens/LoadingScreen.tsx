@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { DotLottieReact } from "@lottiefiles/dotlottie-react";
 import { runPreloadManifest } from "../game/AssetLoader";
 import { sharedAudioManager } from "../game/Audio";
 import { createBootPreloadManifest } from "../game/boot-assets";
@@ -10,9 +11,43 @@ type LoadingScreenProps = {
   onComplete: () => void;
 };
 
-const MIN_DISPLAY_MS = 800;
+const INTRO_WORDMARK = "LOW HP STUDIOS";
+const INTRO_BLACK_MS = 60;
+const INTRO_FADE_IN_MS = 500;
+const INTRO_HOLD_MS = 2_000;
+const INTRO_FADE_OUT_MS = 900;
+const INTRO_ENTER_AT_MS = INTRO_BLACK_MS;
+const INTRO_HOLD_AT_MS = INTRO_ENTER_AT_MS + INTRO_FADE_IN_MS;
+const INTRO_EXIT_AT_MS = INTRO_HOLD_AT_MS + INTRO_HOLD_MS;
+const INTRO_TOTAL_MS = INTRO_EXIT_AT_MS + INTRO_FADE_OUT_MS;
+const MIN_LOADING_SCREEN_MS = 10_000;
 const FADE_OUT_MS = 600;
-const FINAL_WARMUP_RATIO = 0.98;
+
+type LoadingPhase = "black" | "intro-enter" | "intro-hold" | "intro-exit" | "main";
+
+let introAudioSingleton: HTMLAudioElement | null = null;
+
+function playIntroAudio() {
+  if (!introAudioSingleton) {
+    const audio = new Audio("/assets/branding/Intro.mp3");
+    audio.preload = "auto";
+    audio.volume = 0.72;
+    audio.addEventListener(
+      "ended",
+      () => {
+        introAudioSingleton = null;
+      },
+      { once: true },
+    );
+    introAudioSingleton = audio;
+  }
+
+  if (introAudioSingleton.paused) {
+    void introAudioSingleton.play().catch(() => {
+      // Autoplay can be blocked outside Electron; boot should continue anyway.
+    });
+  }
+}
 
 export function LoadingScreen({
   bootComplete,
@@ -24,12 +59,9 @@ export function LoadingScreen({
     () => createBootPreloadManifest(sharedAudioManager),
     [],
   );
+  const [phase, setPhase] = useState<LoadingPhase>("black");
   const [assetsReady, setAssetsReady] = useState(false);
   const [fadingOut, setFadingOut] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [currentLabel, setCurrentLabel] = useState(
-    manifest[0]?.label ?? "Initializing...",
-  );
   const mountTimeRef = useRef(performance.now());
   const fadeStartedRef = useRef(false);
 
@@ -40,13 +72,6 @@ export function LoadingScreen({
       concurrency: {
         asset: 3,
         audio: 2,
-      },
-      onProgress: (next) => {
-        if (cancelled) {
-          return;
-        }
-        setProgress(next.ratio);
-        setCurrentLabel(next.currentLabel);
       },
     }).then(() => {
       if (cancelled) {
@@ -62,18 +87,45 @@ export function LoadingScreen({
   }, [manifest, onAssetsReady]);
 
   useEffect(() => {
-    if (!assetsReady || !bootComplete || fadeStartedRef.current) {
+    playIntroAudio();
+
+    const enterTimer = window.setTimeout(() => {
+      setPhase("intro-enter");
+    }, INTRO_ENTER_AT_MS);
+    const holdTimer = window.setTimeout(() => {
+      setPhase("intro-hold");
+    }, INTRO_HOLD_AT_MS);
+    const exitTimer = window.setTimeout(() => {
+      setPhase("intro-exit");
+    }, INTRO_EXIT_AT_MS);
+    const showMainTimer = window.setTimeout(() => {
+      setPhase("main");
+    }, INTRO_TOTAL_MS);
+
+    return () => {
+      window.clearTimeout(enterTimer);
+      window.clearTimeout(holdTimer);
+      window.clearTimeout(exitTimer);
+      window.clearTimeout(showMainTimer);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (
+      phase !== "main" ||
+      !assetsReady ||
+      !bootComplete ||
+      fadeStartedRef.current
+    ) {
       return;
     }
 
     fadeStartedRef.current = true;
     const elapsed = performance.now() - mountTimeRef.current;
-    const remaining = Math.max(0, MIN_DISPLAY_MS - elapsed);
+    const remaining = Math.max(0, MIN_LOADING_SCREEN_MS - elapsed);
     let finishTimer = 0;
 
     const startTimer = window.setTimeout(() => {
-      setProgress(1);
-      setCurrentLabel("Ready");
       onFadeOutStart();
       setFadingOut(true);
       finishTimer = window.setTimeout(onComplete, FADE_OUT_MS);
@@ -85,35 +137,47 @@ export function LoadingScreen({
         window.clearTimeout(finishTimer);
       }
     };
-  }, [assetsReady, bootComplete, onComplete, onFadeOutStart]);
-
-  const displayedProgress = bootComplete
-    ? 1
-    : assetsReady
-    ? FINAL_WARMUP_RATIO
-    : progress * FINAL_WARMUP_RATIO;
-  const displayedLabel = assetsReady && !bootComplete
-    ? "Warming shaders..."
-    : currentLabel;
+  }, [assetsReady, bootComplete, onComplete, onFadeOutStart, phase]);
 
   return (
-    <div className={`loading-screen ${fadingOut ? "fade-out" : ""}`}>
-      <div className="loading-top-right">{displayedLabel}</div>
-      <div className="loading-center">
-        <h1 className="loading-logo-text">GreyTrace</h1>
+    <div
+      className={`loading-screen ${
+        phase === "main" ? "loading-screen--main" : "loading-screen--intro"
+      } loading-screen--${phase} ${fadingOut ? "fade-out" : ""}`}
+    >
+      <div className="loading-main-backdrop" aria-hidden="true" />
+      <div className="loading-intro">
+        <h1 className="loading-intro-wordmark">
+          {INTRO_WORDMARK.split("").map((char, i) => (
+            <span
+              key={i}
+              className="loading-intro-char"
+              style={{ "--char-i": i } as React.CSSProperties}
+            >
+              {char === " " ? "\u00A0" : char}
+            </span>
+          ))}
+        </h1>
       </div>
-      <div className="loading-bottom-section">
-        <div className="loading-bottom-left">Low Hp Studio</div>
-        <div className="loading-progress-wrap">
-          <div className="loading-progress-bar">
-            <div
-              className="loading-progress-fill"
-              style={{ width: `${Math.round(displayedProgress * 100)}%` }}
-            />
+      <div className="loading-main">
+        <div className="loading-content">
+          <div className="loading-hero">
+            <h1 className="loading-logo-text">GreyTrace</h1>
           </div>
-          <div className="loading-progress-text">
-            {Math.round(displayedProgress * 100)}%
-          </div>
+        </div>
+        <div className="loading-bottom-left">
+          <div className="loading-bottom-left-brand">Low HP Studios</div>
+          <p className="loading-alpha-note">
+            GreyTrace is currently in alpha stage. Please report issues.
+          </p>
+        </div>
+        <div className="loading-bottom-right" aria-hidden="true">
+          <DotLottieReact
+            className="loading-lottie-animation"
+            src="/assets/branding/Loading Hand Animation.lottie"
+            autoplay
+            loop
+          />
         </div>
       </div>
     </div>

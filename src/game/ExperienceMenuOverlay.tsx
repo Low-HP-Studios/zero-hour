@@ -9,54 +9,34 @@ import { CharacterPreviewCanvas } from "../screens/LobbyCharacter";
 type ExperienceMenuOverlayProps = {
   onEnterPractice: () => void;
   onOpenSettings: () => void;
-  onOpenUpdates: () => void;
   updateReadyToInstall: boolean;
   updateTargetVersion?: string;
   installingUpdate: boolean;
   onInstallUpdate: () => void;
   selectedCharacterId: string;
   onCharacterSelect: (characterId: string) => void;
+  updaterStatus: UpdaterStatusPayload;
+  updaterBusyAction: "check" | "install" | "repair" | null;
+  updaterAvailable: boolean;
+  onCheckForUpdates: () => void;
 };
 
-type LobbyTab = "play" | "friends" | "customise" | "store";
-type LobbyMode = "practice" | "online";
+type LobbyTab = "play" | "collection" | "store" | "updates";
 
 type NavItem = {
   id: LobbyTab;
   label: string;
-  hint: string;
-  status: string;
-  locked?: boolean;
 };
 
 const NAV_ITEMS: NavItem[] = [
-  {
-    id: "play",
-    label: "Play",
-    hint: "Practice lane online",
-    status: "Live",
-  },
-  {
-    id: "friends",
-    label: "Squads",
-    hint: "Party systems on deck",
-    status: "Alpha",
-    locked: true,
-  },
-  {
-    id: "customise",
-    label: "Loadout",
-    hint: "Choose your operator",
-    status: "Live",
-  },
-  {
-    id: "store",
-    label: "Armory",
-    hint: "Progression hooks in development",
-    status: "Alpha",
-    locked: true,
-  },
+  { id: "play", label: "Play" },
+  { id: "collection", label: "Collection" },
+  { id: "store", label: "Store" },
+  { id: "updates", label: "Updates" },
 ];
+
+// Ring buffer of speed samples for the download graph
+const SPEED_SAMPLES = 40;
 
 function LockIcon() {
   return (
@@ -136,204 +116,374 @@ function LobbyFpsCounter() {
   return <div className="lobby-fps-counter">{fps} fps</div>;
 }
 
+// SVG sparkline for download speed history
+function DownloadSpeedGraph({ samples }: { samples: number[] }) {
+  const W = 360;
+  const H = 72;
+  const pad = 4;
+
+  if (samples.length < 2) {
+    return (
+      <div className="updates-graph-wrap-v2">
+        <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
+          <line x1={pad} y1={H / 2} x2={W - pad} y2={H / 2}
+            stroke="rgba(147,220,192,0.12)" strokeWidth="1" strokeDasharray="4 4" />
+        </svg>
+        <span className="updates-graph-idle-v2">No download activity</span>
+      </div>
+    );
+  }
+
+  const max = Math.max(...samples, 0.01);
+  const pts = samples.map((v, i) => {
+    const x = pad + (i / (samples.length - 1)) * (W - pad * 2);
+    const y = H - pad - (v / max) * (H - pad * 2);
+    return `${x},${y}`;
+  });
+
+  const polyline = pts.join(" ");
+  const areaPoints = [
+    `${pad},${H - pad}`,
+    ...pts,
+    `${W - pad},${H - pad}`,
+  ].join(" ");
+
+  const currentRate = samples[samples.length - 1] ?? 0;
+
+  return (
+    <div className="updates-graph-wrap-v2">
+      <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
+        <defs>
+          <linearGradient id="speed-grad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#93dcc0" stopOpacity="0.25" />
+            <stop offset="100%" stopColor="#93dcc0" stopOpacity="0.01" />
+          </linearGradient>
+        </defs>
+        <polygon points={areaPoints} fill="url(#speed-grad)" />
+        <polyline points={polyline} fill="none" stroke="#93dcc0" strokeWidth="1.5"
+          strokeLinejoin="round" strokeLinecap="round" />
+      </svg>
+      <span className="updates-graph-rate-v2">
+        {currentRate.toFixed(1)} <em>%/s</em>
+      </span>
+    </div>
+  );
+}
+
 export function ExperienceMenuOverlay({
   onEnterPractice,
   onOpenSettings,
-  onOpenUpdates,
   updateReadyToInstall,
   updateTargetVersion,
   installingUpdate,
   onInstallUpdate,
   selectedCharacterId,
   onCharacterSelect,
+  updaterStatus,
+  updaterBusyAction,
+  updaterAvailable,
+  onCheckForUpdates,
 }: ExperienceMenuOverlayProps) {
   const [activeTab, setActiveTab] = useState<LobbyTab>("play");
 
-  const showAlphaToast = useCallback((featureLabel: string) => {
-    toast.warning(`${featureLabel} is in alpha`, {
+  // Track download speed as %/sec samples
+  const speedSamplesRef = useRef<number[]>([]);
+  const lastProgressRef = useRef<{ progress: number; time: number } | null>(null);
+  const [speedSamples, setSpeedSamples] = useState<number[]>([]);
+
+  useEffect(() => {
+    if (updaterStatus.phase !== "downloading" || typeof updaterStatus.progress !== "number") {
+      if (updaterStatus.phase !== "downloading") {
+        lastProgressRef.current = null;
+      }
+      return;
+    }
+
+    const now = performance.now();
+    const current = updaterStatus.progress;
+
+    if (lastProgressRef.current !== null) {
+      const dt = (now - lastProgressRef.current.time) / 1000;
+      if (dt > 0.05) {
+        const rate = (current - lastProgressRef.current.progress) / dt;
+        const clamped = Math.max(0, rate);
+        const next = [...speedSamplesRef.current, clamped].slice(-SPEED_SAMPLES);
+        speedSamplesRef.current = next;
+        setSpeedSamples([...next]);
+        lastProgressRef.current = { progress: current, time: now };
+      }
+    } else {
+      lastProgressRef.current = { progress: current, time: now };
+    }
+  }, [updaterStatus.phase, updaterStatus.progress]);
+
+  const showOnlineToast = useCallback(() => {
+    toast.warning("Online Deployment is in alpha", {
       description:
         "This lane is still under development. Practice Range is the only live module in the current build.",
       duration: 4200,
     });
   }, []);
 
-  const handleNavClick = useCallback((item: NavItem) => {
-    if (item.locked) {
-      showAlphaToast(item.label);
-      return;
-    }
-
-    setActiveTab(item.id);
-  }, [showAlphaToast]);
-
-  const handleModeClick = useCallback((mode: LobbyMode) => {
-    if (mode === "online") {
-      showAlphaToast("Online Deployment");
-    }
-  }, [showAlphaToast]);
-
   const selectedCharacterDef = getCharacterById(selectedCharacterId);
 
+  const isDownloading = updaterStatus.phase === "downloading";
+  const progress = typeof updaterStatus.progress === "number" ? updaterStatus.progress : null;
+
   return (
-    <div className="menu-layout-expressive">
-      <div className="menu-topbar-expressive">
-        <div className="menu-brand-expressive">
-          <h1 className="menu-logo-text-expressive">GrayTrace</h1>
-          <span className="menu-brand-subtitle-expressive">ALPHA</span>
+    <div className="lobby-layout-v2">
+      {/* ── Topbar: three-zone ── */}
+      <header className="lobby-topbar-v2">
+        <div className="lobby-brand-v2">
+          <h1 className="lobby-logo-v2">GrayTrace</h1>
+          <span className="lobby-alpha-chip-v2">α</span>
+          {updateReadyToInstall && (
+            <button
+              type="button"
+              className="lobby-update-ready-btn-v2"
+              onClick={onInstallUpdate}
+              disabled={installingUpdate}
+            >
+              {installingUpdate
+                ? "Restarting..."
+                : `Restart to install${updateTargetVersion ? ` ${updateTargetVersion}` : ""}`}
+            </button>
+          )}
         </div>
 
-        <nav className="menu-nav-expressive" aria-label="Main navigation">
+        <nav className="lobby-nav-v2" aria-label="Main navigation">
           {NAV_ITEMS.map((item) => (
             <button
               key={item.id}
               type="button"
-              className={`menu-nav-btn-expressive ${
-                activeTab === item.id ? "active" : ""
-              } ${item.locked ? "locked" : ""}`}
-              onClick={() => handleNavClick(item)}
-              aria-disabled={item.locked ? "true" : undefined}
+              className={`lobby-nav-btn-v2 ${activeTab === item.id ? "active" : ""}${item.id === "updates" && isDownloading ? " downloading" : ""}`}
+              onClick={() => setActiveTab(item.id)}
             >
-              <span className="nav-btn-text-expressive">{item.label}</span>
-              {item.locked ? <LockIcon /> : null}
+              {item.label}
+              {item.id === "updates" && isDownloading && (
+                <span className="lobby-nav-dl-dot-v2" />
+              )}
             </button>
           ))}
         </nav>
 
-        <div className="menu-topbar-footer-expressive">
-          {updateReadyToInstall ? (
-            <button
-              type="button"
-              className="menu-settings-btn-expressive menu-restart-btn-expressive"
-              onClick={onInstallUpdate}
-              disabled={installingUpdate}
-            >
-              <span>
-                {installingUpdate
-                  ? "Restarting..."
-                  : `Restart to install${
-                    updateTargetVersion ? ` ${updateTargetVersion}` : ""
-                  }`}
-              </span>
-            </button>
-          ) : null}
+        <div className="lobby-utilities-v2">
           <button
             type="button"
-            className="menu-settings-btn-expressive menu-updates-btn-expressive"
-            onClick={onOpenUpdates}
-          >
-            <span>Updates</span>
-          </button>
-          <button
-            type="button"
-            className="menu-settings-btn-expressive"
+            className="lobby-settings-btn-v2"
             onClick={onOpenSettings}
+            aria-label="Settings"
           >
-            <div className="settings-icon-wrapper-expressive">
-              <SettingsIcon />
-            </div>
+            <SettingsIcon />
             <span>Settings</span>
           </button>
         </div>
-      </div>
+      </header>
 
-      <main className="menu-main-expressive">
-        {activeTab === "play" ? (
-          <>
-            <div className="menu-lobby-character-expressive">
-              <CharacterPreviewCanvas
-                characterDef={selectedCharacterDef}
-                transparent
-              />
+      {/* ── Main content ── */}
+      <main className="lobby-main-v2">
+
+        {/* PLAY TAB */}
+        {activeTab === "play" && (
+          <div className="lobby-hero-v2">
+            <div className="lobby-mode-card-v2 teaser">
+              <div className="lobby-teaser-lock-v2"><LockIcon /></div>
+              <div className="lobby-teaser-label-v2">Coming Soon</div>
+              <div className="lobby-teaser-name-v2">Ranked Mode</div>
             </div>
-            <div className="menu-play-section-expressive">
-              <div className="menu-sub-nav-expressive">
-                <div className="sub-nav-track-expressive">
-                  <button
-                    type="button"
-                    className="menu-sub-nav-btn-expressive active"
-                    onClick={() => handleModeClick("practice")}
-                  >
-                    Practice Range
-                  </button>
-                  <button
-                    type="button"
-                    className="menu-sub-nav-btn-expressive locked"
-                    onClick={() => handleModeClick("online")}
-                    aria-disabled="true"
-                  >
-                    Online (Disabled)
-                  </button>
-                </div>
-              </div>
 
-              <div className="menu-play-card-expressive">
-                <div className="play-card-content-expressive">
-                  <div className="play-card-header-expressive">
-                    <h3>Training Simulation</h3>
-                    <span className="status-badge-expressive">Ready</span>
-                  </div>
-                  <p className="play-card-desc-expressive">
-                    Enter the firing range to test weapon mechanics, spray
-                    patterns, and advanced techniques in a controlled environment.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  className="play-btn-expressive"
-                  onClick={onEnterPractice}
-                >
+            <div className="lobby-mode-card-v2 active">
+              <div className="lobby-card-header-v2">
+                <h2 className="lobby-card-title-v2">Training Simulation</h2>
+                <span className="lobby-card-badge-v2 ready">Ready</span>
+              </div>
+              <p className="lobby-card-desc-v2">
+                Enter the firing range to test weapon mechanics, spray
+                patterns, and advanced techniques in a controlled environment.
+              </p>
+              <div className="lobby-card-actions-v2">
+                <button type="button" className="lobby-play-btn-v2" onClick={onEnterPractice}>
                   <span>Enter Practice</span>
                   <ArrowIcon />
                 </button>
+                <button type="button" className="lobby-play-btn-v2 secondary" onClick={showOnlineToast}>
+                  Online Match — Coming Soon
+                </button>
               </div>
             </div>
-          </>
-        ) : activeTab === "customise" ? (
-          <div className="loadout-section-expressive">
-            <div className="loadout-grid-expressive">
-              <div className="loadout-grid-header">
-                <h3>Operators</h3>
-                <span className="loadout-grid-count">
-                  {CHARACTER_REGISTRY.length} available
-                </span>
-              </div>
-              <div className="loadout-grid-list">
-                {CHARACTER_REGISTRY.map((char) => {
-                  const isSelected = char.id === selectedCharacterId;
-                  return (
-                    <button
-                      key={char.id}
-                      type="button"
-                      className={`loadout-card-expressive ${
-                        isSelected ? "active" : ""
-                      }`}
-                      onClick={() => onCharacterSelect(char.id)}
-                    >
-                      <span className="loadout-card-name">
-                        {char.displayName}
-                      </span>
-                      {isSelected ? (
-                        <span className="loadout-card-equipped">Equipped</span>
-                      ) : null}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-            <div className="loadout-preview-expressive">
-              <CharacterPreviewCanvas characterDef={selectedCharacterDef} />
+
+            <div className="lobby-mode-card-v2 teaser">
+              <div className="lobby-teaser-lock-v2"><LockIcon /></div>
+              <div className="lobby-teaser-label-v2">Coming Soon</div>
+              <div className="lobby-teaser-name-v2">Custom Match</div>
             </div>
           </div>
-        ) : (
-          <div className="menu-coming-soon-expressive">
-            <div className="offline-badge-expressive">
-              <span className="material-icon-placeholder">[]</span>
-              <span>Module Offline</span>
+        )}
+
+        {/* COLLECTION TAB */}
+        {activeTab === "collection" && (
+          <div className="lobby-collection-v2">
+            <div className="lobby-collection-list-v2">
+              <div className="lobby-collection-list-header-v2">
+                <h2>Characters</h2>
+                <span className="lobby-collection-count-v2">{CHARACTER_REGISTRY.length}</span>
+              </div>
+              <div className="lobby-collection-grid-v2">
+                {CHARACTER_REGISTRY.map((char) => (
+                  <button
+                    key={char.id}
+                    type="button"
+                    className={`lobby-char-card-v2 ${selectedCharacterId === char.id ? "equipped" : ""}`}
+                    onClick={() => onCharacterSelect(char.id)}
+                  >
+                    <span className="lobby-char-name-v2">{char.displayName}</span>
+                    {selectedCharacterId === char.id && (
+                      <span className="lobby-char-equipped-v2">Equipped</span>
+                    )}
+                  </button>
+                ))}
+              </div>
             </div>
-            <p>This feature is currently locked in the early Alpha phase.</p>
+            <div className="lobby-collection-preview-v2">
+              <CharacterPreviewCanvas characterDef={selectedCharacterDef} transparent />
+              <div className="lobby-collection-preview-name-v2">
+                {selectedCharacterDef.displayName}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* STORE TAB */}
+        {activeTab === "store" && (
+          <div className="lobby-store-v2">
+            <div className="lobby-store-header-v2">
+              <div>
+                <h2 className="lobby-store-title-v2">Character Store</h2>
+                <p className="lobby-store-subtitle-v2">All characters are available during Early Access</p>
+              </div>
+              <span className="lobby-store-balance-v2">All Owned</span>
+            </div>
+            <div className="lobby-store-grid-v2">
+              {CHARACTER_REGISTRY.map((char) => {
+                const isEquipped = selectedCharacterId === char.id;
+                return (
+                  <div key={char.id} className="lobby-store-item-v2">
+                    <div className="lobby-store-item-art-v2" aria-hidden="true">
+                      <span className="lobby-store-item-owned-tag-v2">OWNED</span>
+                    </div>
+                    <div className="lobby-store-item-info-v2">
+                      <span className="lobby-store-item-name-v2">{char.displayName}</span>
+                      <span className="lobby-store-item-price-v2">FREE</span>
+                    </div>
+                    <button
+                      type="button"
+                      className={`lobby-store-item-cta-v2 ${isEquipped ? "equipped" : ""}`}
+                      onClick={() => onCharacterSelect(char.id)}
+                    >
+                      {isEquipped ? "Equipped" : "Equip"}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* UPDATES TAB */}
+        {activeTab === "updates" && (
+          <div className="updates-page-v2">
+            {/* Version info row */}
+            <div className="updates-meta-row-v2">
+              <div className="updates-version-grid-v2">
+                <div className="updates-metric-v2">
+                  <span>Current build</span>
+                  <strong>{updaterStatus.currentVersion}</strong>
+                </div>
+                <div className="updates-metric-v2">
+                  <span>Latest known</span>
+                  <strong>{updaterStatus.targetVersion ?? "—"}</strong>
+                </div>
+                <div className="updates-metric-v2">
+                  <span>Platform</span>
+                  <strong>{window.electronAPI?.platform ?? "web"}</strong>
+                </div>
+                <div className="updates-metric-v2">
+                  <span>Status</span>
+                  <strong className={`updates-phase-label-v2 phase-${updaterStatus.phase}`}>
+                    {updaterStatus.phase}
+                  </strong>
+                </div>
+              </div>
+
+              <div className="updates-actions-v2">
+                <button
+                  type="button"
+                  className="updates-action-btn-v2"
+                  onClick={onCheckForUpdates}
+                  disabled={!updaterAvailable || updaterBusyAction !== null}
+                >
+                  {updaterBusyAction === "check" ? "Checking..." : "Check for updates"}
+                </button>
+                <button
+                  type="button"
+                  className="updates-action-btn-v2 primary"
+                  onClick={onInstallUpdate}
+                  disabled={!updaterAvailable || !updateReadyToInstall || updaterBusyAction !== null}
+                >
+                  {updaterBusyAction === "install" ? "Installing..." : "Restart to install"}
+                </button>
+                <button
+                  type="button"
+                  className="updates-action-btn-v2 danger"
+                  disabled
+                  title="Cancel not yet supported by the updater API"
+                >
+                  Cancel download
+                </button>
+              </div>
+            </div>
+
+            {/* Download progress + graph */}
+            <div className="updates-download-section-v2">
+              <div className="updates-download-header-v2">
+                <span className="updates-download-title-v2">Download progress</span>
+                {progress !== null && (
+                  <span className="updates-download-pct-v2">{progress.toFixed(1)}%</span>
+                )}
+              </div>
+
+              {/* Progress bar */}
+              <div className="updates-progress-bar-v2">
+                <div
+                  className="updates-progress-fill-v2"
+                  style={{ width: `${progress ?? 0}%` }}
+                />
+              </div>
+
+              {/* Speed sparkline */}
+              <DownloadSpeedGraph samples={speedSamples} />
+
+              {isDownloading && (
+                <p className="updates-download-note-v2">
+                  Downloading update — do not quit the application.
+                </p>
+              )}
+            </div>
+
+            {/* Status message */}
+            {updaterStatus.message && (
+              <p className="updates-message-v2">{updaterStatus.message}</p>
+            )}
+
+            {!updaterAvailable && (
+              <p className="updates-warning-v2">
+                Updater API unavailable — running outside Electron or preload not loaded.
+              </p>
+            )}
           </div>
         )}
       </main>
+
       <LobbyFpsCounter />
     </div>
   );

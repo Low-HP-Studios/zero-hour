@@ -318,10 +318,90 @@ export function computeWeaponMuzzleOffset(
   tempGroup.add(clone);
   tempGroup.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(tempGroup);
-  tempGroup.remove(clone);
-  return new THREE.Vector3(
-    box.min.x,
+  const size = new THREE.Vector3();
+  box.getSize(size);
+
+  const axisOrder = ["x", "y", "z"] as const;
+  const dominantAxis = axisOrder.reduce((bestAxis, axis) =>
+    size[axis] > size[bestAxis] ? axis : bestAxis
+  , "x" as const);
+  const perpendicularAxes = axisOrder.filter((axis) => axis !== dominantAxis);
+  const axisMin = box.min[dominantAxis];
+  const axisMax = box.max[dominantAxis];
+  const axisLength = axisMax - axisMin;
+  const sliceThickness = Math.max(axisLength * 0.04, 0.008);
+
+  const tempPoint = new THREE.Vector3();
+  const minSlice = {
+    count: 0,
+    sumA: 0,
+    sumB: 0,
+    maxRadiusSq: 0,
+  };
+  const maxSlice = {
+    count: 0,
+    sumA: 0,
+    sumB: 0,
+    maxRadiusSq: 0,
+  };
+
+  tempGroup.traverse((child) => {
+    if (!(child as THREE.Mesh).isMesh) {
+      return;
+    }
+
+    const mesh = child as THREE.Mesh;
+    const positions = mesh.geometry.getAttribute("position");
+    if (!positions || positions.itemSize < 3) {
+      return;
+    }
+
+    for (let index = 0; index < positions.count; index += 1) {
+      tempPoint.fromBufferAttribute(positions, index);
+      tempPoint.applyMatrix4(mesh.matrixWorld);
+
+      const axisValue = tempPoint[dominantAxis];
+      const perpendicularA = tempPoint[perpendicularAxes[0]];
+      const perpendicularB = tempPoint[perpendicularAxes[1]];
+      const radiusSq = perpendicularA * perpendicularA + perpendicularB * perpendicularB;
+
+      if (axisValue <= axisMin + sliceThickness) {
+        minSlice.count += 1;
+        minSlice.sumA += perpendicularA;
+        minSlice.sumB += perpendicularB;
+        minSlice.maxRadiusSq = Math.max(minSlice.maxRadiusSq, radiusSq);
+      }
+
+      if (axisValue >= axisMax - sliceThickness) {
+        maxSlice.count += 1;
+        maxSlice.sumA += perpendicularA;
+        maxSlice.sumB += perpendicularB;
+        maxSlice.maxRadiusSq = Math.max(maxSlice.maxRadiusSq, radiusSq);
+      }
+    }
+  });
+
+  const minRadius = minSlice.count > 0
+    ? Math.sqrt(minSlice.maxRadiusSq)
+    : Number.POSITIVE_INFINITY;
+  const maxRadius = maxSlice.count > 0
+    ? Math.sqrt(maxSlice.maxRadiusSq)
+    : Number.POSITIVE_INFINITY;
+  const useMinSlice = minRadius <= maxRadius;
+  const chosenSlice = useMinSlice ? minSlice : maxSlice;
+  const axisPadding = Math.min(axisLength * 0.015, 0.01);
+
+  const muzzleOffset = new THREE.Vector3(
+    (box.min.x + box.max.x) / 2,
     (box.min.y + box.max.y) / 2,
     (box.min.z + box.max.z) / 2,
   );
+  muzzleOffset[dominantAxis] = useMinSlice ? axisMin - axisPadding : axisMax + axisPadding;
+  if (chosenSlice.count > 0) {
+    muzzleOffset[perpendicularAxes[0]] = chosenSlice.sumA / chosenSlice.count;
+    muzzleOffset[perpendicularAxes[1]] = chosenSlice.sumB / chosenSlice.count;
+  }
+
+  tempGroup.remove(clone);
+  return muzzleOffset;
 }
