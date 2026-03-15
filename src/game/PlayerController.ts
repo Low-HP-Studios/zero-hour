@@ -331,6 +331,7 @@ export function usePlayerController({
     const element = gl.domElement;
 
     const requestLock = (el: HTMLElement) => {
+      if (document.pointerLockElement === el) return;
       if (document.pointerLockElement !== null) return;
       el.requestPointerLock();
     };
@@ -342,7 +343,7 @@ export function usePlayerController({
       inventoryPanelOpenRef.current = false;
       if (
         inputEnabledRef.current &&
-        document.pointerLockElement === null &&
+        document.pointerLockElement !== element &&
         document.visibilityState === 'visible'
       ) {
         requestLock(element);
@@ -519,7 +520,7 @@ export function usePlayerController({
     };
 
     const onPointerLockChange = () => {
-      const locked = document.pointerLockElement !== null;
+      const locked = document.pointerLockElement === element;
       pointerLockedRef.current = locked;
       if (locked) {
         userGestureCallbackRef.current();
@@ -1146,9 +1147,16 @@ export function usePlayerController({
       };
     },
     requestPointerLock: () => {
-      if (!inputEnabledRef.current) return;
       userGestureCallbackRef.current();
-      if (pointerLockedRef.current) return;
+      if (
+        pointerLockedRef.current ||
+        document.pointerLockElement === gl.domElement
+      ) {
+        return;
+      }
+      if (document.pointerLockElement !== null) {
+        return;
+      }
       gl.domElement.requestPointerLock();
     },
     releasePointerLock: () => {

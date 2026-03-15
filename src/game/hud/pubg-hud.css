@@ -1,8 +1,8 @@
 /* PUBG-style HUD — isolated from App.css */
 
 .pubg-hud {
-  --pubg-bg: rgba(0, 0, 0, 0.55);
-  --pubg-bg-active: rgba(0, 0, 0, 0.72);
+  --pubg-bg: rgba(0, 0, 0, 0.90);
+  --pubg-bg-active: rgba(0, 0, 0, 0.95);
   --pubg-text: rgba(255, 255, 255, 0.92);
   --pubg-text-dim: rgba(255, 255, 255, 0.48);
   --pubg-accent: #e8c252;
@@ -14,7 +14,6 @@
 
   position: fixed;
   bottom: 20px;
-  left: 20px;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -22,6 +21,17 @@
   z-index: 10000;
   pointer-events: none;
   user-select: none;
+}
+
+.pubg-hud--right {
+  right: 20px;
+  align-items: flex-end;
+}
+
+.pubg-hud--center {
+  left: 50%;
+  transform: translateX(-50%);
+  align-items: center;
 }
 
 /* ── Weapon Slots Row ── */
@@ -42,7 +52,10 @@
   border: 1px solid var(--pubg-border);
   border-radius: 2px;
   opacity: 0.5;
-  transition: opacity 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+  transition:
+    opacity 0.15s ease,
+    border-color 0.15s ease,
+    background 0.15s ease;
 }
 
 .pubg-weapon-card.active {
@@ -74,11 +87,11 @@
   width: 90px;
   height: 40px;
   object-fit: contain;
-  filter: brightness(1.2) drop-shadow(0 0 2px rgba(255, 255, 255, 0.15));
+  filter: invert(1) brightness(1.1) drop-shadow(0 0 2px rgba(255, 255, 255, 0.2));
 }
 
 .pubg-weapon-card:not(.active) .pubg-weapon-thumbnail {
-  filter: brightness(0.6) grayscale(0.4);
+  filter: invert(1) brightness(0.6) grayscale(0.4);
 }
 
 .pubg-thumbnail-fallback {
@@ -178,20 +191,16 @@
 /* ── Health Bar ── */
 
 .pubg-health-bar {
-  display: flex;
-  gap: 2px;
   width: 268px;
-  height: 6px;
-  padding: 0;
+  height: 17px;
+  background: var(--pubg-health-bg);
+  border-radius: 1px;
+  overflow: hidden;
 }
 
-.pubg-health-segment {
-  flex: 1;
+.pubg-health-fill {
   height: 100%;
   background: var(--pubg-health);
   border-radius: 1px;
-}
-
-.pubg-health-segment.empty {
-  background: var(--pubg-health-bg);
+  transition: width 0.15s ease;
 }

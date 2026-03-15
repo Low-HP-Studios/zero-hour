@@ -53,33 +53,38 @@ function PubgHudInner({ player, visible }: PubgHudProps) {
   const activeSlot = isSlotAActive ? slotA : slotB;
 
   return (
-    <div className="pubg-hud">
-      <div className="pubg-weapon-slots">
-        <WeaponSlotCard
-          slot={slotA}
-          slotNumber={1}
-          isActive={isSlotAActive}
-          weaponModel={models.rifle}
-        />
-        <WeaponSlotCard
-          slot={slotB}
-          slotNumber={2}
-          isActive={!isSlotAActive}
-          weaponModel={models.sniper}
-        />
+    <>
+      {/* Weapon slots — bottom right */}
+      <div className="pubg-hud pubg-hud--right">
+        <div className="pubg-weapon-slots">
+          <WeaponSlotCard
+            slot={slotA}
+            slotNumber={1}
+            isActive={isSlotAActive}
+            weaponModel={models.rifle}
+          />
+          <WeaponSlotCard
+            slot={slotB}
+            slotNumber={2}
+            isActive={!isSlotAActive}
+            weaponModel={models.sniper}
+          />
+        </div>
       </div>
 
-      {activeSlot.hasWeapon ? (
-        <AmmoDisplay
-          magAmmo={activeSlot.magAmmo}
-          reserveAmmo={activeSlot.reserveAmmo}
-          isReloading={weaponReload.active}
-          reloadProgress={weaponReload.progress}
-        />
-      ) : null}
-
-      <HealthBar health={100} maxHealth={100} />
-    </div>
+      {/* Ammo + health bar — bottom center */}
+      <div className="pubg-hud pubg-hud--center">
+        {activeSlot.hasWeapon ? (
+          <AmmoDisplay
+            magAmmo={activeSlot.magAmmo}
+            reserveAmmo={activeSlot.reserveAmmo}
+            isReloading={weaponReload.active}
+            reloadProgress={weaponReload.progress}
+          />
+        ) : null}
+        <HealthBar health={100} maxHealth={100} />
+      </div>
+    </>
   );
 }
 

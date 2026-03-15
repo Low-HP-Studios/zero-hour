@@ -99,7 +99,7 @@ const WEAPON_CONFIG: Record<WeaponKind, WeaponProfile> = {
   rifle: {
     baseMagAmmo: 30,
     ammoPerPack: 30,
-    maxPacks: 4,
+    maxPacks: 8,
     fireIntervalMs: 130,
     damage: 15,
     muzzleFlashMs: 15,
@@ -114,7 +114,7 @@ const WEAPON_CONFIG: Record<WeaponKind, WeaponProfile> = {
   sniper: {
     baseMagAmmo: 7,
     ammoPerPack: 30,
-    maxPacks: 1,
+    maxPacks: 4,
     fireIntervalMs: 700,
     damage: 60,
     muzzleFlashMs: 70,

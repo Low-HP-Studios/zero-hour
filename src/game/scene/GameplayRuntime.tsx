@@ -170,8 +170,8 @@ const RIFLE_READY_YAW_OFFSET = THREE.MathUtils.degToRad(-3.5);
 const RIFLE_READY_YAW_QUAT = new THREE.Quaternion();
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
 const PRACTICE_AMMO_RESPAWN_MS = 5_000;
-const PRACTICE_AMMO_RIFLE_REFILL = 120;
-const PRACTICE_AMMO_SNIPER_REFILL = 30;
+const PRACTICE_AMMO_RIFLE_REFILL = 240;
+const PRACTICE_AMMO_SNIPER_REFILL = 120;
 
 // ADS weapon positioning: camera-local offsets so the sight aligns with screen center.
 // x = right, y = up, z = forward (in camera space). Will be tuned iteratively.

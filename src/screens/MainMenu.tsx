@@ -20,50 +20,24 @@ import {
   loadPersistedSettings,
   savePersistedSettings,
 } from "../game/settings";
+import { CHARACTER_REGISTRY, getCharacterById } from "../game/characters";
+import { CharacterPreviewCanvas } from "./LobbyCharacter";
 
 type MainMenuProps = {
   onStartGame: () => void;
 };
 
-type LobbyTab = "play" | "friends" | "customise" | "store";
-type LobbyMode = "practice" | "online";
+type LobbyTab = "play" | "collection" | "store";
 
 type NavItem = {
   id: LobbyTab;
   label: string;
-  hint: string;
-  status: string;
-  locked?: boolean;
 };
 
 const NAV_ITEMS: NavItem[] = [
-  {
-    id: "play",
-    label: "Play",
-    hint: "Practice lane online",
-    status: "Live",
-  },
-  {
-    id: "friends",
-    label: "Squads",
-    hint: "Party systems on deck",
-    status: "Alpha",
-    locked: true,
-  },
-  {
-    id: "customise",
-    label: "Loadout",
-    hint: "Weapon tuning in progress",
-    status: "Alpha",
-    locked: true,
-  },
-  {
-    id: "store",
-    label: "Armory",
-    hint: "Progression hooks in development",
-    status: "Alpha",
-    locked: true,
-  },
+  { id: "play", label: "Play" },
+  { id: "collection", label: "Collection" },
+  { id: "store", label: "Store" },
 ];
 
 const SETTINGS_TABS: Array<{ id: PauseMenuTab; label: string }> = [
@@ -72,8 +46,6 @@ const SETTINGS_TABS: Array<{ id: PauseMenuTab; label: string }> = [
   { id: "controls", label: "Controls" },
   { id: "graphics", label: "Graphics" },
 ];
-
-
 
 function LockIcon() {
   return (
@@ -137,16 +109,13 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
 
   const persisted = useMemo(loadPersistedSettings, []);
   const [settings, setSettings] = useState<GameSettings>(persisted.settings);
-  const [hudPanels] = useState<HudOverlayToggles>(
-    persisted.hudPanels,
-  );
-  const [audioVolumes, setAudioVolumes] = useState<AudioVolumeSettings>(
-    persisted.audioVolumes,
-  );
+  const [hudPanels] = useState<HudOverlayToggles>(persisted.hudPanels);
+  const [audioVolumes, setAudioVolumes] = useState<AudioVolumeSettings>(persisted.audioVolumes);
+  const [selectedCharacterId, setSelectedCharacterId] = useState<string>(persisted.selectedCharacterId);
 
   useEffect(() => {
-    savePersistedSettings({ settings, hudPanels, audioVolumes, stressCount: 0, selectedCharacterId: persisted.selectedCharacterId });
-  }, [settings, hudPanels, audioVolumes]);
+    savePersistedSettings({ settings, hudPanels, audioVolumes, stressCount: 0, selectedCharacterId });
+  }, [settings, hudPanels, audioVolumes, selectedCharacterId]);
 
   useEffect(() => {
     if (!bindingCapture) return;
@@ -202,116 +171,193 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
     setBindingCapture(null);
   }, []);
 
-  const showAlphaToast = useCallback((featureLabel: string) => {
-    toast.warning(`${featureLabel} is in alpha`, {
+  const showOnlineToast = useCallback(() => {
+    toast.warning("Online Deployment is in alpha", {
       description:
         "This lane is still under development. Practice Range is the only live module in the current build.",
       duration: 4200,
     });
   }, []);
 
-  const handleNavClick = useCallback((item: NavItem) => {
-    if (item.locked) {
-      showAlphaToast(item.label);
-      return;
-    }
-
-    setActiveTab(item.id);
-  }, [showAlphaToast]);
-
-  const handleModeClick = useCallback((mode: LobbyMode) => {
-    if (mode === "online") {
-      showAlphaToast("Online Deployment");
-    }
-  }, [showAlphaToast]);
+  const previewCharacterDef = useMemo(
+    () => getCharacterById(selectedCharacterId),
+    [selectedCharacterId],
+  );
 
   return (
     <div className="lobby-screen">
-      <div className="menu-layout-expressive">
-        <div className="menu-topbar-expressive">
-          <div className="menu-brand-expressive">
-            <h1 className="menu-logo-text-expressive">GrayTrace</h1>
-            <span className="menu-brand-subtitle-expressive">ALPHA</span>
+      {/* Background character art */}
+      <div className="lobby-scene-viewport" aria-hidden="true" />
+
+      <div className="lobby-layout-v2">
+        {/* ── Topbar: three-zone ── */}
+        <header className="lobby-topbar-v2">
+          <div className="lobby-brand-v2">
+            <h1 className="lobby-logo-v2">GrayTrace</h1>
+            <span className="lobby-alpha-chip-v2">α</span>
           </div>
 
-          <nav className="menu-nav-expressive" aria-label="Main navigation">
+          <nav className="lobby-nav-v2" aria-label="Main navigation">
             {NAV_ITEMS.map((item) => (
               <button
                 key={item.id}
                 type="button"
-                className={`menu-nav-btn-expressive ${activeTab === item.id ? "active" : ""} ${item.locked ? "locked" : ""}`}
-                onClick={() => handleNavClick(item)}
-                aria-disabled={item.locked ? "true" : undefined}
+                className={`lobby-nav-btn-v2 ${activeTab === item.id ? "active" : ""}`}
+                onClick={() => setActiveTab(item.id)}
               >
-                <span className="nav-btn-text-expressive">{item.label}</span>
-                {item.locked && <LockIcon />}
+                {item.label}
               </button>
             ))}
           </nav>
 
-          <div className="menu-topbar-footer-expressive">
+          <div className="lobby-utilities-v2">
             <button
               type="button"
-              className="menu-settings-btn-expressive"
+              className="lobby-settings-btn-v2"
               onClick={() => setSettingsOpen(true)}
+              aria-label="Settings"
             >
-              <div className="settings-icon-wrapper-expressive">
-                <SettingsIcon />
-              </div>
+              <SettingsIcon />
               <span>Settings</span>
             </button>
           </div>
-        </div>
+        </header>
 
-        <main className="menu-main-expressive">
-          {activeTab === "play" ? (
-            <div className="menu-play-section-expressive">
-              <div className="menu-sub-nav-expressive">
-                <div className="sub-nav-track-expressive">
+        {/* ── Main content ── */}
+        <main className="lobby-main-v2">
+
+          {/* PLAY TAB — three-card hero layout */}
+          {activeTab === "play" && (
+            <div className="lobby-hero-v2">
+              <div className="lobby-mode-card-v2 teaser">
+                <div className="lobby-teaser-lock-v2">
+                  <LockIcon />
+                </div>
+                <div className="lobby-teaser-label-v2">Coming Soon</div>
+                <div className="lobby-teaser-name-v2">Ranked Mode</div>
+              </div>
+
+              <div className="lobby-mode-card-v2 active">
+                <div className="lobby-card-header-v2">
+                  <h2 className="lobby-card-title-v2">Training Simulation</h2>
+                  <span className="lobby-card-badge-v2 ready">Ready</span>
+                </div>
+                <p className="lobby-card-desc-v2">
+                  Enter the firing range to test weapon mechanics, spray
+                  patterns, and advanced techniques in a controlled environment.
+                </p>
+                <div className="lobby-card-actions-v2">
                   <button
                     type="button"
-                    className="menu-sub-nav-btn-expressive active"
-                    onClick={() => handleModeClick("practice")}
+                    className="lobby-play-btn-v2"
+                    onClick={onStartGame}
                   >
-                    Practice Range
+                    <span>Enter Practice</span>
+                    <ArrowIcon />
                   </button>
                   <button
                     type="button"
-                    className="menu-sub-nav-btn-expressive locked"
-                    onClick={() => handleModeClick("online")}
-                    aria-disabled="true"
+                    className="lobby-play-btn-v2 secondary"
+                    onClick={showOnlineToast}
                   >
-                    Online (Disabled)
+                    Online Match — Coming Soon
                   </button>
                 </div>
               </div>
 
-              <div className="menu-play-card-expressive">
-                <div className="play-card-content-expressive">
-                  <div className="play-card-header-expressive">
-                    <h3>Training Simulation</h3>
-                    <span className="status-badge-expressive">Ready</span>
-                  </div>
-                  <p className="play-card-desc-expressive">Enter the firing range to test weapon mechanics, spray patterns, and advanced techniques in a controlled environment.</p>
+              <div className="lobby-mode-card-v2 teaser">
+                <div className="lobby-teaser-lock-v2">
+                  <LockIcon />
                 </div>
-                <button type="button" className="play-btn-expressive" onClick={onStartGame}>
-                  <span>Enter Practice</span>
-                  <ArrowIcon />
-                </button>
+                <div className="lobby-teaser-label-v2">Coming Soon</div>
+                <div className="lobby-teaser-name-v2">Custom Match</div>
               </div>
             </div>
-          ) : (
-            <div className="menu-coming-soon-expressive">
-              <div className="offline-badge-expressive">
-                <span className="material-icon-placeholder">🚧</span>
-                <span>Module Offline</span>
+          )}
+
+          {/* COLLECTION TAB — character selection + 3D preview */}
+          {activeTab === "collection" && (
+            <div className="lobby-collection-v2">
+              <div className="lobby-collection-list-v2">
+                <div className="lobby-collection-list-header-v2">
+                  <h2>Characters</h2>
+                  <span className="lobby-collection-count-v2">
+                    {CHARACTER_REGISTRY.length}
+                  </span>
+                </div>
+                <div className="lobby-collection-grid-v2">
+                  {CHARACTER_REGISTRY.map((char) => (
+                    <button
+                      key={char.id}
+                      type="button"
+                      className={`lobby-char-card-v2 ${selectedCharacterId === char.id ? "equipped" : ""}`}
+                      onClick={() => setSelectedCharacterId(char.id)}
+                    >
+                      <span className="lobby-char-name-v2">
+                        {char.displayName}
+                      </span>
+                      {selectedCharacterId === char.id && (
+                        <span className="lobby-char-equipped-v2">Equipped</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
               </div>
-              <p>This feature is currently locked in the early Alpha phase.</p>
+              <div className="lobby-collection-preview-v2">
+                <CharacterPreviewCanvas
+                  characterDef={previewCharacterDef}
+                  transparent
+                />
+                <div className="lobby-collection-preview-name-v2">
+                  {previewCharacterDef.displayName}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* STORE TAB — pre-owned character store */}
+          {activeTab === "store" && (
+            <div className="lobby-store-v2">
+              <div className="lobby-store-header-v2">
+                <div>
+                  <h2 className="lobby-store-title-v2">Character Store</h2>
+                  <p className="lobby-store-subtitle-v2">
+                    All characters are available during Early Access
+                  </p>
+                </div>
+                <span className="lobby-store-balance-v2">All Owned</span>
+              </div>
+              <div className="lobby-store-grid-v2">
+                {CHARACTER_REGISTRY.map((char) => {
+                  const isEquipped = selectedCharacterId === char.id;
+                  return (
+                    <div key={char.id} className="lobby-store-item-v2">
+                      <div className="lobby-store-item-art-v2" aria-hidden="true">
+                        <span className="lobby-store-item-owned-tag-v2">OWNED</span>
+                      </div>
+                      <div className="lobby-store-item-info-v2">
+                        <span className="lobby-store-item-name-v2">
+                          {char.displayName}
+                        </span>
+                        <span className="lobby-store-item-price-v2">FREE</span>
+                      </div>
+                      <button
+                        type="button"
+                        className={`lobby-store-item-cta-v2 ${isEquipped ? "equipped" : ""}`}
+                        onClick={() => setSelectedCharacterId(char.id)}
+                      >
+                        {isEquipped ? "Equipped" : "Equip"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
         </main>
       </div>
 
+      {/* Settings modal — unchanged */}
       {settingsOpen && createPortal(
         <div className="lobby-settings-overlay" onClick={handleSettingsClose}>
           <div
@@ -369,133 +415,56 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
                       <RangeField
                         label="Camera / Free Look"
                         value={settings.sensitivity.look}
-                        min={0.05}
-                        max={3}
-                        step={0.01}
-                        onChange={(value) =>
-                          setSettings((prev) => ({
-                            ...prev,
-                            sensitivity: { ...prev.sensitivity, look: value },
-                          }))
-                        }
+                        min={0.05} max={3} step={0.01}
+                        onChange={(value) => setSettings((prev) => ({ ...prev, sensitivity: { ...prev.sensitivity, look: value } }))}
                       />
                       <RangeField
                         label="Rifle ADS"
                         value={settings.sensitivity.rifleAds}
-                        min={0.05}
-                        max={2.5}
-                        step={0.01}
-                        onChange={(value) =>
-                          setSettings((prev) => ({
-                            ...prev,
-                            sensitivity: {
-                              ...prev.sensitivity,
-                              rifleAds: value,
-                            },
-                          }))
-                        }
+                        min={0.05} max={2.5} step={0.01}
+                        onChange={(value) => setSettings((prev) => ({ ...prev, sensitivity: { ...prev.sensitivity, rifleAds: value } }))}
                       />
                       <RangeField
                         label="Sniper ADS"
                         value={settings.sensitivity.sniperAds}
-                        min={0.05}
-                        max={2}
-                        step={0.01}
-                        onChange={(value) =>
-                          setSettings((prev) => ({
-                            ...prev,
-                            sensitivity: {
-                              ...prev.sensitivity,
-                              sniperAds: value,
-                            },
-                          }))
-                        }
+                        min={0.05} max={2} step={0.01}
+                        onChange={(value) => setSettings((prev) => ({ ...prev, sensitivity: { ...prev.sensitivity, sniperAds: value } }))}
                       />
                       <RangeField
                         label="Vertical Multiplier"
                         value={settings.sensitivity.vertical}
-                        min={0.3}
-                        max={2}
-                        step={0.01}
-                        onChange={(value) =>
-                          setSettings((prev) => ({
-                            ...prev,
-                            sensitivity: {
-                              ...prev.sensitivity,
-                              vertical: value,
-                            },
-                          }))
-                        }
+                        min={0.3} max={2} step={0.01}
+                        onChange={(value) => setSettings((prev) => ({ ...prev, sensitivity: { ...prev.sensitivity, vertical: value } }))}
                       />
                       <div className="settings-chip-wrap">
-                        <span className="pill-chip">
-                          Effective Rifle ADS: {effectiveRifleAds}
-                        </span>
-                        <span className="pill-chip">
-                          Effective Sniper ADS: {effectiveSniperAds}
-                        </span>
+                        <span className="pill-chip">Effective Rifle ADS: {effectiveRifleAds}</span>
+                        <span className="pill-chip">Effective Sniper ADS: {effectiveSniperAds}</span>
                       </div>
                     </MenuSection>
                     <MenuSection title="Field of View">
                       <RangeField
                         label="Base FOV"
                         value={settings.fov}
-                        min={40}
-                        max={120}
-                        step={1}
-                        suffix="°"
-                        onChange={(value) =>
-                          setSettings((prev) => ({ ...prev, fov: value }))
-                        }
+                        min={40} max={120} step={1} suffix="°"
+                        onChange={(value) => setSettings((prev) => ({ ...prev, fov: value }))}
                       />
                     </MenuSection>
                   </div>
                 )}
-
                 {settingsTab === "audio" && (
                   <div className="menu-sections">
                     <MenuSection title="Volume Mixer">
-                      <VolumeSlider
-                        label="Master"
-                        value={audioVolumes.master}
-                        onChange={(value) =>
-                          setAudioVolumes((prev) => ({
-                            ...prev,
-                            master: value,
-                          }))
-                        }
-                      />
-                      <VolumeSlider
-                        label="Gunshots"
-                        value={audioVolumes.gunshot}
-                        onChange={(value) =>
-                          setAudioVolumes((prev) => ({
-                            ...prev,
-                            gunshot: value,
-                          }))
-                        }
-                      />
-                      <VolumeSlider
-                        label="Footsteps"
-                        value={audioVolumes.footsteps}
-                        onChange={(value) =>
-                          setAudioVolumes((prev) => ({
-                            ...prev,
-                            footsteps: value,
-                          }))
-                        }
-                      />
-                      <VolumeSlider
-                        label="Hit / Kill"
-                        value={audioVolumes.hit}
-                        onChange={(value) =>
-                          setAudioVolumes((prev) => ({ ...prev, hit: value }))
-                        }
-                      />
+                      <VolumeSlider label="Master" value={audioVolumes.master}
+                        onChange={(value) => setAudioVolumes((prev) => ({ ...prev, master: value }))} />
+                      <VolumeSlider label="Gunshots" value={audioVolumes.gunshot}
+                        onChange={(value) => setAudioVolumes((prev) => ({ ...prev, gunshot: value }))} />
+                      <VolumeSlider label="Footsteps" value={audioVolumes.footsteps}
+                        onChange={(value) => setAudioVolumes((prev) => ({ ...prev, footsteps: value }))} />
+                      <VolumeSlider label="Hit / Kill" value={audioVolumes.hit}
+                        onChange={(value) => setAudioVolumes((prev) => ({ ...prev, hit: value }))} />
                     </MenuSection>
                   </div>
                 )}
-
                 {settingsTab === "controls" && (
                   <div className="menu-sections">
                     <MenuSection title="Keyboard Shortcuts">
@@ -515,15 +484,9 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
                               <button
                                 type="button"
                                 className={`keybind-btn ${bindingCapture === row.key ? "active" : ""}`}
-                                onClick={() =>
-                                  setBindingCapture((prev) =>
-                                    prev === row.key ? null : row.key,
-                                  )
-                                }
+                                onClick={() => setBindingCapture((prev) => prev === row.key ? null : row.key)}
                               >
-                                {bindingCapture === row.key
-                                  ? "Press key..."
-                                  : formatKeyCode(code)}
+                                {bindingCapture === row.key ? "Press key..." : formatKeyCode(code)}
                               </button>
                             </div>
                           );
@@ -532,7 +495,6 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
                     </MenuSection>
                   </div>
                 )}
-
                 {settingsTab === "graphics" && (
                   <div className="menu-sections">
                     <MenuSection title="Render Quality">
@@ -540,30 +502,18 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
                         label="Shadows"
                         hint="Sun shadow maps for scene and targets"
                         checked={settings.shadows}
-                        onChange={(checked) =>
-                          setSettings((prev) => ({
-                            ...prev,
-                            shadows: checked,
-                          }))
-                        }
+                        onChange={(checked) => setSettings((prev) => ({ ...prev, shadows: checked }))}
                       />
                       <SwitchRow
                         label="r3f-perf Overlay"
                         hint="Developer perf overlay"
                         checked={settings.showR3fPerf}
-                        onChange={(checked) =>
-                          setSettings((prev) => ({
-                            ...prev,
-                            showR3fPerf: checked,
-                          }))
-                        }
+                        onChange={(checked) => setSettings((prev) => ({ ...prev, showR3fPerf: checked }))}
                       />
                       <div className="field-row">
                         <div>
                           <div className="field-label">Pixel Ratio</div>
-                          <div className="field-hint">
-                            Render scale multiplier
-                          </div>
+                          <div className="field-hint">Render scale multiplier</div>
                         </div>
                         <div className="segmented-row compact">
                           {PIXEL_RATIO_OPTIONS.map((option) => (
@@ -571,12 +521,7 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
                               key={option.value}
                               type="button"
                               className={`chip-btn ${settings.pixelRatioScale === option.value ? "active" : ""}`}
-                              onClick={() =>
-                                setSettings((prev) => ({
-                                  ...prev,
-                                  pixelRatioScale: option.value,
-                                }))
-                              }
+                              onClick={() => setSettings((prev) => ({ ...prev, pixelRatioScale: option.value }))}
                             >
                               {option.label}
                             </button>
@@ -586,7 +531,6 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
                     </MenuSection>
                   </div>
                 )}
-
               </section>
             </div>
           </div>
