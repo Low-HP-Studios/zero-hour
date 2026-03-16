@@ -12,6 +12,7 @@ import { Canvas, useThree } from "@react-three/fiber";
 import { Perf } from "r3f-perf";
 import * as THREE from "three";
 import type { AudioVolumeSettings } from "../Audio";
+import { markBootEvent } from "../boot-trace";
 import {
   Targets,
   createDefaultTargets,
@@ -83,7 +84,7 @@ type SceneProps = {
   audioVolumes: AudioVolumeSettings;
   stressCount: StressModeCount;
   booting: boolean;
-  bootAssetsReady: boolean;
+  deferredAssetsEnabled: boolean;
   presentation: ScenePresentation;
   onPlayerSnapshot: (snapshot: PlayerSnapshot) => void;
   onPerfMetrics: (metrics: PerfMetrics) => void;
@@ -131,6 +132,7 @@ function SceneBootCompiler({
       }
 
       try {
+        markBootEvent("boot:scene-compile-start");
         const renderer = gl as THREE.WebGLRenderer & {
           compileAsync?: (
             scene: THREE.Scene,
@@ -142,8 +144,12 @@ function SceneBootCompiler({
         } else {
           renderer.compile(scene, camera);
         }
+        markBootEvent("boot:scene-compile-end");
       } catch (error) {
         console.warn("[Scene] Warm-up compile failed", error);
+        markBootEvent("boot:scene-compile-end", {
+          failed: true,
+        });
       }
 
       await waitForAnimationFrame();
@@ -222,7 +228,7 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
   audioVolumes,
   stressCount,
   booting,
-  bootAssetsReady,
+  deferredAssetsEnabled,
   presentation,
   onPlayerSnapshot,
   onPerfMetrics,
@@ -243,11 +249,9 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
   const runtimeRef = useRef<GameplayRuntimeHandle | null>(null);
   const recoveringContextRef = useRef(false);
   const [runtimeAssetsReady, setRuntimeAssetsReady] = useState(false);
-  const [targetAssetsReady, setTargetAssetsReady] = useState(false);
   sceneTargetsRef.current = targets;
   const resetTimeoutsRef = useRef<Map<string, number>>(new Map());
-  const compileReady = booting && bootAssetsReady && runtimeAssetsReady &&
-    targetAssetsReady;
+  const compileReady = booting && runtimeAssetsReady;
   const lobbyFrameCapEnabled = presentation.phase !== "playing";
   // Don't advance frames during menu — scene is hidden; only pace during returning transition
   const paceEnabled = lobbyFrameCapEnabled && presentation.phase !== "menu";
@@ -442,7 +446,7 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
         shadows={settings.shadows && worldTheme > 0.6}
         reveal={presentation.targetReveal}
         outline={settings.enemyOutline}
-        onReadyChange={setTargetAssetsReady}
+        loadCharacterAsset={deferredAssetsEnabled}
       />
       <StressBoxes count={stressCount} shadows={settings.shadows} />
       <GameplayRuntime
@@ -470,6 +474,7 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
         onActiveWeaponChange={onActiveWeaponChange}
         onSniperRechamberChange={onSniperRechamberChange}
         onAimingStateChange={onAimingStateChange}
+        deferredAssetsEnabled={deferredAssetsEnabled}
         onCriticalAssetsReadyChange={setRuntimeAssetsReady}
         characterOverride={characterOverride}
       />

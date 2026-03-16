@@ -3,7 +3,10 @@ import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 import { loadFbxAnimation, loadGlbWithAnimations } from "./AssetLoader";
-import { TARGET_CHARACTER_MODEL_URL } from "./boot-assets";
+import {
+  TARGET_CHARACTER_MODEL_URL,
+  TARGET_IDLE_ANIMATION_URL,
+} from "./boot-assets";
 import type {
   EnemyOutlineColor,
   EnemyOutlineSettings,
@@ -17,6 +20,7 @@ type TargetsProps = {
   shadows: boolean;
   reveal: number;
   outline: EnemyOutlineSettings;
+  loadCharacterAsset?: boolean;
   onReadyChange?: (ready: boolean) => void;
 };
 
@@ -34,7 +38,6 @@ const DAMAGE_PER_SHOT = 25;
 const RESPAWN_DELAY_MS = 2000;
 const TARGET_VISUAL_SCALE = 0.9;
 const TARGET_CHARACTER_HEIGHT = CHARACTER_TARGET_HEIGHT * TARGET_VISUAL_SCALE;
-const TARGET_IDLE_ANIMATION_URL = "/assets/animations/movement/standing/idle.fbx";
 const TARGET_HP_BAR_Y = 2.4 * TARGET_VISUAL_SCALE;
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
 const ENEMY_OUTLINE_COLOR_HEX: Record<EnemyOutlineColor, string> = {
@@ -517,7 +520,7 @@ function prepareTargetCharacterModel(model: THREE.Group): void {
   });
 }
 
-function useTargetCharacterAsset(): TargetCharacterAsset {
+function useTargetCharacterAsset(enabled: boolean): TargetCharacterAsset {
   const [asset, setAsset] = useState<TargetCharacterAsset>({
     model: null,
     idleClip: null,
@@ -525,6 +528,10 @@ function useTargetCharacterAsset(): TargetCharacterAsset {
   });
 
   useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+
     let disposed = false;
 
     (async () => {
@@ -575,7 +582,7 @@ function useTargetCharacterAsset(): TargetCharacterAsset {
     return () => {
       disposed = true;
     };
-  }, []);
+  }, [enabled]);
 
   return asset;
 }
@@ -852,9 +859,10 @@ export function Targets({
   shadows,
   reveal,
   outline,
+  loadCharacterAsset = true,
   onReadyChange,
 }: TargetsProps) {
-  const characterAsset = useTargetCharacterAsset();
+  const characterAsset = useTargetCharacterAsset(loadCharacterAsset);
   const assetReady = characterAsset.ready;
 
   useEffect(() => {

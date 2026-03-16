@@ -254,25 +254,28 @@ export function splitTrackName(trackName: string): { nodeName: string; property:
   };
 }
 
+// Lower split point = more bones in the upper body set, so the upper body overlay
+// fully masks jog animation shoulder/arm sway. spine1 captures everything from the
+// mid-torso up; runtime IK in GameplayRuntime uses its own bone lookup for chest.
 function resolveUpperBodyBonePriority(normalizedBoneName: string): number {
   if (
-    normalizedBoneName === "upper_chest" ||
-    normalizedBoneName === "upperchest"
+    normalizedBoneName === "spine1" ||
+    normalizedBoneName === "spine_01"
   ) {
     return 0;
-  }
-  if (normalizedBoneName === "chest") {
-    return 1;
   }
   if (
     normalizedBoneName === "spine2" ||
     normalizedBoneName === "spine_02"
   ) {
+    return 1;
+  }
+  if (normalizedBoneName === "chest") {
     return 2;
   }
   if (
-    normalizedBoneName === "spine1" ||
-    normalizedBoneName === "spine_01"
+    normalizedBoneName === "upper_chest" ||
+    normalizedBoneName === "upperchest"
   ) {
     return 3;
   }
@@ -531,7 +534,10 @@ export function useCharacterModel(
   const [ready, setReady] = useState(false);
   const mixerRef = useRef<THREE.AnimationMixer | null>(null);
   const fullActionsRef = useRef<Map<string, THREE.AnimationAction>>(new Map());
-  const lowerBodyActionsRef = useRef<Map<string, THREE.AnimationAction>>(
+  const lowerBodyBaseActionsRef = useRef<Map<string, THREE.AnimationAction>>(
+    new Map(),
+  );
+  const lowerBodyOverlayActionsRef = useRef<Map<string, THREE.AnimationAction>>(
     new Map(),
   );
   const upperBodyActionsRef = useRef<Map<string, THREE.AnimationAction>>(
@@ -604,7 +610,8 @@ export function useCharacterModel(
 
         const upperBodyBoneNames = collectUpperBodyBoneNames(clone);
         const fullActions = new Map<string, THREE.AnimationAction>();
-        const lowerBodyActions = new Map<string, THREE.AnimationAction>();
+        const lowerBodyBaseActions = new Map<string, THREE.AnimationAction>();
+        const lowerBodyOverlayActions = new Map<string, THREE.AnimationAction>();
         const upperBodyActions = new Map<string, THREE.AnimationAction>();
         for (let i = 0; i < ANIM_CLIPS.length; i++) {
           const clip = clips[i];
@@ -625,9 +632,13 @@ export function useCharacterModel(
             (boneName) => !upperBodyBoneNames.has(boneName),
           );
           if (lowerBodyClip) {
-            const lowerBodyAction = mixer.clipAction(lowerBodyClip);
-            configureActionLooping(clipName, lowerBodyAction);
-            lowerBodyActions.set(clipName, lowerBodyAction);
+            const lowerBodyBaseAction = mixer.clipAction(lowerBodyClip);
+            configureActionLooping(clipName, lowerBodyBaseAction);
+            lowerBodyBaseActions.set(clipName, lowerBodyBaseAction);
+
+            const lowerBodyOverlayAction = mixer.clipAction(lowerBodyClip.clone());
+            configureActionLooping(clipName, lowerBodyOverlayAction);
+            lowerBodyOverlayActions.set(clipName, lowerBodyOverlayAction);
           }
 
           const upperBodyClip = cloneFilteredClip(
@@ -641,7 +652,8 @@ export function useCharacterModel(
           }
         }
         fullActionsRef.current = fullActions;
-        lowerBodyActionsRef.current = lowerBodyActions;
+        lowerBodyBaseActionsRef.current = lowerBodyBaseActions;
+        lowerBodyOverlayActionsRef.current = lowerBodyOverlayActions;
         upperBodyActionsRef.current = upperBodyActions;
 
         const idleAction = fullActions.get("idle");
@@ -766,7 +778,8 @@ export function useCharacterModel(
     const upperOverlayState = options?.upperBodyState ?? null;
     const useLowerBodyBase = upperOverlayState && !lowerOverlayState;
     const baseAction = useLowerBodyBase
-      ? lowerBodyActionsRef.current.get(state) ?? fullActionsRef.current.get(state) ??
+      ? lowerBodyBaseActionsRef.current.get(state) ??
+        fullActionsRef.current.get(state) ??
         null
       : fullActionsRef.current.get(state) ?? null;
 
@@ -781,7 +794,7 @@ export function useCharacterModel(
       currentLowerBodyActionRef,
       currentLowerBodyStateRef,
       lowerOverlayState
-        ? lowerBodyActionsRef.current.get(lowerOverlayState) ?? null
+        ? lowerBodyOverlayActionsRef.current.get(lowerOverlayState) ?? null
         : null,
       lowerOverlayState,
       {

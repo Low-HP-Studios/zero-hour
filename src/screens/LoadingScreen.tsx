@@ -1,12 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { DotLottieReact } from "@lottiefiles/dotlottie-react";
-import { runPreloadManifest } from "../game/AssetLoader";
-import { sharedAudioManager } from "../game/Audio";
-import { createBootPreloadManifest } from "../game/boot-assets";
+import { markBootEvent } from "../game/boot-trace";
 
 type LoadingScreenProps = {
-  bootComplete: boolean;
-  onAssetsReady: () => void;
+  canDismiss: boolean;
+  onMainPhaseStart: () => void;
   onFadeOutStart: () => void;
   onComplete: () => void;
 };
@@ -20,77 +18,107 @@ const INTRO_ENTER_AT_MS = INTRO_BLACK_MS;
 const INTRO_HOLD_AT_MS = INTRO_ENTER_AT_MS + INTRO_FADE_IN_MS;
 const INTRO_EXIT_AT_MS = INTRO_HOLD_AT_MS + INTRO_HOLD_MS;
 const INTRO_TOTAL_MS = INTRO_EXIT_AT_MS + INTRO_FADE_OUT_MS;
-const MIN_LOADING_SCREEN_MS = 10_000;
+const MIN_LOADING_SCREEN_MS = INTRO_TOTAL_MS + 400;
 const FADE_OUT_MS = 600;
 
 type LoadingPhase = "black" | "intro-enter" | "intro-hold" | "intro-exit" | "main";
 
-let introAudioSingleton: HTMLAudioElement | null = null;
+type WindowWithPassiveListener = Window & typeof globalThis;
 
-function playIntroAudio() {
+let introAudioSingleton: HTMLAudioElement | null = null;
+let introAudioPlayableMarked = false;
+let introAudioRetryArmed = false;
+
+function retryIntroAudioPlayback() {
+  detachIntroAudioRetryListeners();
+  void playIntroAudio();
+}
+
+function detachIntroAudioRetryListeners() {
+  if (!introAudioRetryArmed || typeof window === "undefined") {
+    return;
+  }
+
+  introAudioRetryArmed = false;
+  const retryWindow = window as WindowWithPassiveListener;
+  retryWindow.removeEventListener("pointerdown", retryIntroAudioPlayback);
+  retryWindow.removeEventListener("keydown", retryIntroAudioPlayback);
+}
+
+function attachIntroAudioRetryListeners() {
+  if (introAudioRetryArmed || typeof window === "undefined") {
+    return;
+  }
+
+  introAudioRetryArmed = true;
+  const retryWindow = window as WindowWithPassiveListener;
+  retryWindow.addEventListener("pointerdown", retryIntroAudioPlayback, {
+    passive: true,
+  });
+  retryWindow.addEventListener("keydown", retryIntroAudioPlayback);
+}
+
+function getIntroAudio(): HTMLAudioElement {
   if (!introAudioSingleton) {
     const audio = new Audio("/assets/branding/Intro.mp3");
     audio.preload = "auto";
     audio.volume = 0.72;
-    audio.addEventListener(
-      "ended",
-      () => {
-        introAudioSingleton = null;
-      },
-      { once: true },
-    );
+    audio.addEventListener("canplaythrough", () => {
+      if (!introAudioPlayableMarked) {
+        introAudioPlayableMarked = true;
+        markBootEvent("boot:intro-audio-playable");
+      }
+    });
     introAudioSingleton = audio;
   }
 
-  if (introAudioSingleton.paused) {
-    void introAudioSingleton.play().catch(() => {
-      // Autoplay can be blocked outside Electron; boot should continue anyway.
-    });
+  return introAudioSingleton;
+}
+
+function primeIntroAudio() {
+  const audio = getIntroAudio();
+  markBootEvent("boot:intro-audio-requested");
+  audio.load();
+}
+
+async function playIntroAudio() {
+  const audio = getIntroAudio();
+  markBootEvent("boot:intro-audio-play-attempted", {
+    paused: audio.paused,
+    readyState: audio.readyState,
+  });
+
+  if (!audio.paused) {
+    detachIntroAudioRetryListeners();
+    return;
+  }
+
+  try {
+    await audio.play();
+    detachIntroAudioRetryListeners();
+  } catch {
+    attachIntroAudioRetryListeners();
   }
 }
 
 export function LoadingScreen({
-  bootComplete,
-  onAssetsReady,
+  canDismiss,
+  onMainPhaseStart,
   onFadeOutStart,
   onComplete,
 }: LoadingScreenProps) {
-  const manifest = useMemo(
-    () => createBootPreloadManifest(sharedAudioManager),
-    [],
-  );
   const [phase, setPhase] = useState<LoadingPhase>("black");
-  const [assetsReady, setAssetsReady] = useState(false);
   const [fadingOut, setFadingOut] = useState(false);
   const mountTimeRef = useRef(performance.now());
   const fadeStartedRef = useRef(false);
+  const mainPhaseStartedRef = useRef(false);
 
   useEffect(() => {
-    let cancelled = false;
-
-    void runPreloadManifest(manifest, {
-      concurrency: {
-        asset: 3,
-        audio: 2,
-      },
-    }).then(() => {
-      if (cancelled) {
-        return;
-      }
-      setAssetsReady(true);
-      onAssetsReady();
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [manifest, onAssetsReady]);
-
-  useEffect(() => {
-    playIntroAudio();
+    primeIntroAudio();
 
     const enterTimer = window.setTimeout(() => {
       setPhase("intro-enter");
+      void playIntroAudio();
     }, INTRO_ENTER_AT_MS);
     const holdTimer = window.setTimeout(() => {
       setPhase("intro-hold");
@@ -111,10 +139,18 @@ export function LoadingScreen({
   }, []);
 
   useEffect(() => {
+    if (phase !== "main" || mainPhaseStartedRef.current) {
+      return;
+    }
+
+    mainPhaseStartedRef.current = true;
+    onMainPhaseStart();
+  }, [onMainPhaseStart, phase]);
+
+  useEffect(() => {
     if (
       phase !== "main" ||
-      !assetsReady ||
-      !bootComplete ||
+      !canDismiss ||
       fadeStartedRef.current
     ) {
       return;
@@ -137,7 +173,13 @@ export function LoadingScreen({
         window.clearTimeout(finishTimer);
       }
     };
-  }, [assetsReady, bootComplete, onComplete, onFadeOutStart, phase]);
+  }, [canDismiss, onComplete, onFadeOutStart, phase]);
+
+  useEffect(() => {
+    return () => {
+      detachIntroAudioRetryListeners();
+    };
+  }, []);
 
   return (
     <div
@@ -147,17 +189,7 @@ export function LoadingScreen({
     >
       <div className="loading-main-backdrop" aria-hidden="true" />
       <div className="loading-intro">
-        <h1 className="loading-intro-wordmark">
-          {INTRO_WORDMARK.split("").map((char, i) => (
-            <span
-              key={i}
-              className="loading-intro-char"
-              style={{ "--char-i": i } as React.CSSProperties}
-            >
-              {char === " " ? "\u00A0" : char}
-            </span>
-          ))}
-        </h1>
+        <h1 className="loading-intro-wordmark">{INTRO_WORDMARK}</h1>
       </div>
       <div className="loading-main">
         <div className="loading-content">

@@ -130,6 +130,7 @@ type GameplayRuntimeProps = {
   onActiveWeaponChange: (weapon: WeaponKind) => void;
   onSniperRechamberChange: (state: SniperRechamberState) => void;
   onAimingStateChange: (state: AimingState) => void;
+  deferredAssetsEnabled?: boolean;
   onCriticalAssetsReadyChange?: (ready: boolean) => void;
   characterOverride?: CharacterModelOverride;
 };
@@ -154,6 +155,8 @@ const HEAD_PITCH_QUAT = new THREE.Quaternion();
 const UPPER_TORSO_LEAN_QUAT = new THREE.Quaternion();
 const UPPER_TORSO_PITCH_QUAT = new THREE.Quaternion();
 const UPPER_TORSO_LEAN_ANGLE = THREE.MathUtils.degToRad(18);
+const LOWER_TORSO_LEAN_ANGLE = THREE.MathUtils.degToRad(10);
+const LOWER_TORSO_LEAN_QUAT = new THREE.Quaternion();
 const CROUCH_AIM_HEAD_LIFT_ANGLE = THREE.MathUtils.degToRad(12);
 const CROUCH_AIM_UPPER_TORSO_LIFT_ANGLE = THREE.MathUtils.degToRad(16);
 
@@ -974,6 +977,7 @@ export const GameplayRuntime = forwardRef<
   onActiveWeaponChange,
   onSniperRechamberChange,
   onAimingStateChange,
+  deferredAssetsEnabled = true,
   onCriticalAssetsReadyChange,
   characterOverride,
 }: GameplayRuntimeProps, ref) {
@@ -988,7 +992,7 @@ export const GameplayRuntime = forwardRef<
     getFootstepSample,
   } = useCharacterModel(characterOverride);
   const weaponModels = useWeaponModels();
-  const sightModels = useSightModels();
+  const sightModels = useSightModels(deferredAssetsEnabled);
   const rifleMuzzleOffsetRef = useRef(new THREE.Vector3(-0.44, 0.02, 0));
   const sniperMuzzleOffsetRef = useRef(new THREE.Vector3(-0.66, 0.02, 0));
 
@@ -1109,8 +1113,10 @@ export const GameplayRuntime = forwardRef<
   const characterWeaponAttachBoneRef = useRef<THREE.Bone | null>(null);
   const characterHeadBoneRef = useRef<THREE.Bone | null>(null);
   const characterUpperTorsoBoneRef = useRef<THREE.Bone | null>(null);
+  const characterLowerTorsoBoneRef = useRef<THREE.Bone | null>(null);
   const characterHeadBaseQuatRef = useRef<THREE.Quaternion | null>(null);
   const characterUpperTorsoBaseQuatRef = useRef<THREE.Quaternion | null>(null);
+  const characterLowerTorsoBaseQuatRef = useRef<THREE.Quaternion | null>(null);
   const tempCharacterWeaponAnchorWorldRef = useRef(new THREE.Vector3());
   const tempBoneWorldQuatRef = useRef(new THREE.Quaternion());
   const tempBackWeaponAnchorWorldRef = useRef(new THREE.Vector3());
@@ -1194,8 +1200,10 @@ export const GameplayRuntime = forwardRef<
       characterWeaponAttachBoneRef.current = null;
       characterHeadBoneRef.current = null;
       characterUpperTorsoBoneRef.current = null;
+      characterLowerTorsoBoneRef.current = null;
       characterHeadBaseQuatRef.current = null;
       characterUpperTorsoBaseQuatRef.current = null;
+      characterLowerTorsoBaseQuatRef.current = null;
       characterWeaponAnchorRef.current = null;
       backWeaponAnchorRef.current = null;
       characterVisibilityMaterialsRef.current = [];
@@ -1254,9 +1262,30 @@ export const GameplayRuntime = forwardRef<
     const resolvedHeadBone = headBone as THREE.Bone | null;
     const resolvedUpperTorsoBone = upperTorsoBone as THREE.Bone | null;
 
+    // Find lower torso bone (spine ancestor of the upper torso bone) for deeper lean.
+    let resolvedLowerTorsoBone: THREE.Bone | null = null;
+    if (resolvedUpperTorsoBone) {
+      let ancestor = resolvedUpperTorsoBone.parent as THREE.Object3D | null;
+      while (ancestor) {
+        if ((ancestor as THREE.Bone).isBone) {
+          const ancestorName = normalizeBoneName(ancestor.name).toLowerCase();
+          if (
+            ancestorName === "spine1" ||
+            ancestorName === "spine_01" ||
+            ancestorName === "spine"
+          ) {
+            resolvedLowerTorsoBone = ancestor as THREE.Bone;
+            break;
+          }
+        }
+        ancestor = ancestor.parent;
+      }
+    }
+
     characterWeaponAttachBoneRef.current = resolvedRightHandBone;
     characterHeadBoneRef.current = resolvedHeadBone;
     characterUpperTorsoBoneRef.current = resolvedUpperTorsoBone;
+    characterLowerTorsoBoneRef.current = resolvedLowerTorsoBone;
     if (resolvedHeadBone) {
       characterHeadBaseQuatRef.current = resolvedHeadBone.quaternion.clone();
     } else {
@@ -1267,6 +1296,12 @@ export const GameplayRuntime = forwardRef<
         .clone();
     } else {
       characterUpperTorsoBaseQuatRef.current = null;
+    }
+    if (resolvedLowerTorsoBone) {
+      characterLowerTorsoBaseQuatRef.current = resolvedLowerTorsoBone.quaternion
+        .clone();
+    } else {
+      characterLowerTorsoBaseQuatRef.current = null;
     }
     if (!resolvedRightHandBone) {
       console.warn(
@@ -2291,7 +2326,10 @@ export const GameplayRuntime = forwardRef<
         : 1 - fromPose;
     };
 
-    if (crouchEntered || crouchExited) {
+    const crouchKeyStillHeld = controller.isCrouchKeyHeld();
+    const suppressCrouchExit =
+      crouchExited && crouchKeyStillHeld && crouchMode === "hold";
+    if ((crouchEntered || crouchExited) && !suppressCrouchExit) {
       const requestedState: Exclude<CrouchTransitionState, "idle"> =
         crouchEntered ? "enter" : "exit";
       const requestedPose = resolveCrouchTransitionTargetPose(requestedState);
@@ -2644,14 +2682,23 @@ export const GameplayRuntime = forwardRef<
       crouchSpeedScale,
       crouchPose,
     );
-    const movementProfileRunScale = THREE.MathUtils.lerp(
+    const baseRunScale = THREE.MathUtils.lerp(
       standingRunScale,
       crouchSpeedScale,
       crouchPose,
     );
+    const runStopFactor = runState === "stop"
+      ? 1 -
+        clamp01(
+          (nowMs - (rifleRunStateUntilRef.current - RIFLE_RUN_STOP_MS)) /
+            RIFLE_RUN_STOP_MS,
+        )
+      : 1;
+    const movementProfileRunScale = baseRunScale * runStopFactor;
     const movementProfileAllowSprint = !adsActive &&
       !firePrepIntent &&
-      crouchPose < CROUCH_SPRINT_RELEASE_POSE;
+      crouchPose < CROUCH_SPRINT_RELEASE_POSE &&
+      runState !== "stop";
     controller.setMovementProfile({
       walkScale: movementProfileWalkScale,
       jogScale: movementProfileJogScale,
@@ -2803,6 +2850,11 @@ export const GameplayRuntime = forwardRef<
       if (upperTorsoBone && upperTorsoBaseQuat) {
         upperTorsoBone.quaternion.copy(upperTorsoBaseQuat);
       }
+      const lowerTorsoBone = characterLowerTorsoBoneRef.current;
+      const lowerTorsoBaseQuat = characterLowerTorsoBaseQuatRef.current;
+      if (lowerTorsoBone && lowerTorsoBaseQuat) {
+        lowerTorsoBone.quaternion.copy(lowerTorsoBaseQuat);
+      }
       const mixer = characterModel.userData.__mixer as
         | THREE.AnimationMixer
         | undefined;
@@ -2828,6 +2880,16 @@ export const GameplayRuntime = forwardRef<
         } else {
           characterUpperTorsoBaseQuatRef.current.copy(
             upperTorsoBone.quaternion,
+          );
+        }
+      }
+      if (lowerTorsoBone) {
+        if (!characterLowerTorsoBaseQuatRef.current) {
+          characterLowerTorsoBaseQuatRef.current = lowerTorsoBone.quaternion
+            .clone();
+        } else {
+          characterLowerTorsoBaseQuatRef.current.copy(
+            lowerTorsoBone.quaternion,
           );
         }
       }
@@ -2916,6 +2978,19 @@ export const GameplayRuntime = forwardRef<
         );
         upperTorsoBone.quaternion.premultiply(UPPER_TORSO_LEAN_QUAT);
       }
+    }
+
+    const lowerTorsoBoneForLean = characterLowerTorsoBoneRef.current;
+    if (
+      lowerTorsoBoneForLean &&
+      presentation.phase === "playing" &&
+      Math.abs(leanValue) > 0.001
+    ) {
+      LOWER_TORSO_LEAN_QUAT.setFromAxisAngle(
+        Z_AXIS,
+        leanValue * LOWER_TORSO_LEAN_ANGLE,
+      );
+      lowerTorsoBoneForLean.quaternion.premultiply(LOWER_TORSO_LEAN_QUAT);
     }
 
     const switchState = weapon.getSwitchState(nowMs);

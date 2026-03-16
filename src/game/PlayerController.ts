@@ -80,6 +80,7 @@ export type PlayerControllerApi = {
   isSprintPressed: () => boolean;
   isWalkPressed: () => boolean;
   isCrouched: () => boolean;
+  isCrouchKeyHeld: () => boolean;
   isMoving: () => boolean;
   isGrounded: () => boolean;
   getMovementTier: () => MovementTier;
@@ -107,7 +108,13 @@ const GRAVITY_UP = -28;
 const GRAVITY_PEAK = -16;
 const GRAVITY_DOWN = -48;
 const PEAK_VELOCITY_THRESHOLD = 1.4;
-const JUMP_SPEED = 10.4;
+const JUMP_SPEED = 7.8;
+const JUMP_PENALTY_PER_CONSECUTIVE = 0.12;
+const MAX_CONSECUTIVE_JUMP_PENALTY = 0.4;
+const CONSECUTIVE_JUMP_RESET_MS = 800;
+const GROUND_ACCEL_RATE = 18;
+const GROUND_DECEL_RATE = 22;
+const DIRECTION_REVERSAL_DECEL_RATE = 30;
 
 const CAMERA_ARM_LENGTH = 2.25;
 const CAMERA_ARM_LENGTH_ADS = 0.0;
@@ -141,6 +148,7 @@ const SHOOT_ALIGN_WINDOW_MS = 180;
 const HEAD_TURN_DEAD_ZONE = THREE.MathUtils.degToRad(45);
 const MAX_FREE_LOOK_YAW_OFFSET = THREE.MathUtils.degToRad(120);
 const FORWARD_DIAGONAL_BODY_YAW_THRESHOLD = 0.35;
+const DIAGONAL_BODY_YAW_OFFSET = THREE.MathUtils.degToRad(30);
 const LEAN_TRANSITION_SPEED = 10;
 const LEAN_CAMERA_OFFSET_X = 0.54;
 const LEAN_CAMERA_TILT = THREE.MathUtils.degToRad(14.4);
@@ -195,6 +203,8 @@ export function usePlayerController({
   const verticalVelocityRef = useRef(0);
   const airborneMomentumSpeedRef = useRef(0);
   const jumpQueuedRef = useRef(false);
+  const lastLandedAtRef = useRef(0);
+  const consecutiveJumpsRef = useRef(0);
   const yawRef = useRef(0);
   const bodyYawRef = useRef(0);
   const pitchRef = useRef(0);
@@ -679,10 +689,45 @@ export function usePlayerController({
 
     if (groundedRef.current) {
       if (movementEnabled) {
-        velocityRef.current.x = desiredX * moveSpeed;
-        velocityRef.current.y = desiredZ * moveSpeed;
+        const dvx = desiredX * moveSpeed;
+        const dvz = desiredZ * moveSpeed;
+        const dot =
+          velocityRef.current.x * dvx + velocityRef.current.y * dvz;
+        const desiredSq = dvx * dvx + dvz * dvz;
+        const currentSq =
+          velocityRef.current.x * velocityRef.current.x +
+          velocityRef.current.y * velocityRef.current.y;
+        const dampRate =
+          dot < 0
+            ? DIRECTION_REVERSAL_DECEL_RATE
+            : desiredSq < currentSq
+              ? GROUND_DECEL_RATE
+              : GROUND_ACCEL_RATE;
+        velocityRef.current.x = THREE.MathUtils.damp(
+          velocityRef.current.x,
+          dvx,
+          dampRate,
+          delta,
+        );
+        velocityRef.current.y = THREE.MathUtils.damp(
+          velocityRef.current.y,
+          dvz,
+          dampRate,
+          delta,
+        );
       } else {
-        velocityRef.current.set(0, 0);
+        velocityRef.current.x = THREE.MathUtils.damp(
+          velocityRef.current.x,
+          0,
+          GROUND_DECEL_RATE,
+          delta,
+        );
+        velocityRef.current.y = THREE.MathUtils.damp(
+          velocityRef.current.y,
+          0,
+          GROUND_DECEL_RATE,
+          delta,
+        );
       }
     } else if (!movementEnabled) {
       velocityRef.current.set(0, 0);
@@ -729,7 +774,7 @@ export function usePlayerController({
         Math.abs(localX) > FORWARD_DIAGONAL_BODY_YAW_THRESHOLD;
       if (movingWithInput) {
         targetBodyYawRef.current = forwardDiagonalMove
-          ? yawRef.current - Math.sign(localX) * HEAD_TURN_DEAD_ZONE
+          ? yawRef.current - Math.sign(localX) * DIAGONAL_BODY_YAW_OFFSET
           : yawRef.current;
       } else if (runFacingActive) {
         targetBodyYawRef.current = runFacingYawRef.current;
@@ -814,11 +859,27 @@ export function usePlayerController({
       resolvedXZRef.current.y,
     );
 
-    if (movementEnabled && jumpQueuedRef.current && groundedRef.current) {
+    const nowJumpMs = performance.now();
+    if (
+      movementEnabled &&
+      jumpQueuedRef.current &&
+      groundedRef.current
+    ) {
       jumpQueuedRef.current = false;
-      airborneMomentumSpeedRef.current = planarSpeedRef.current;
+      const jumpPenalty = Math.min(
+        consecutiveJumpsRef.current * JUMP_PENALTY_PER_CONSECUTIVE,
+        MAX_CONSECUTIVE_JUMP_PENALTY,
+      );
+      const jumpMomentumFloor = hasDirectionalInput
+        ? WALK_SPEED * movementProfile.jogScale * 0.7
+        : 0;
+      airborneMomentumSpeedRef.current = Math.max(
+        planarSpeedRef.current,
+        jumpMomentumFloor,
+      );
       groundedRef.current = false;
-      verticalVelocityRef.current = JUMP_SPEED;
+      verticalVelocityRef.current = JUMP_SPEED * (1 - jumpPenalty);
+      consecutiveJumpsRef.current += 1;
     } else {
       jumpQueuedRef.current = false;
     }
@@ -839,11 +900,19 @@ export function usePlayerController({
         verticalVelocityRef.current = 0;
         groundedRef.current = true;
         airborneMomentumSpeedRef.current = 0;
+        lastLandedAtRef.current = nowJumpMs;
       }
     } else {
       groundedRef.current = true;
       positionRef.current.y = GROUND_Y;
       airborneMomentumSpeedRef.current = 0;
+    }
+
+    if (
+      groundedRef.current &&
+      nowJumpMs - lastLandedAtRef.current >= CONSECUTIVE_JUMP_RESET_MS
+    ) {
+      consecutiveJumpsRef.current = 0;
     }
 
     recoilPitchRef.current = THREE.MathUtils.damp(
@@ -1114,6 +1183,8 @@ export function usePlayerController({
     isSprintPressed: () => sprintPressedRef.current,
     isWalkPressed: () => walkPressedRef.current,
     isCrouched: () => crouchedRef.current,
+    isCrouchKeyHeld: () =>
+      isBindingDown(keyStateRef.current, keybindsRef.current.crouch),
     isMoving: () => movingRef.current,
     isGrounded: () => groundedRef.current,
     getMovementTier: () => movementTierRef.current,

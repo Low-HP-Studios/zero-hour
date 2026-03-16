@@ -185,13 +185,13 @@ const BOOT_PRESENTATION: ScenePresentation = {
 
 type GameRootProps = {
   booting: boolean;
-  bootAssetsReady: boolean;
+  deferredAssetsEnabled: boolean;
   onSceneBootReady: () => void;
 };
 
 export function GameRoot({
   booting,
-  bootAssetsReady,
+  deferredAssetsEnabled,
   onSceneBootReady,
 }: GameRootProps) {
   const persistedSettings = useMemo(loadPersistedSettings, []);
@@ -651,7 +651,7 @@ export function GameRoot({
     void updaterApi.check().catch(() => {
       // Updater status events surface errors to UI and toast channel.
     });
-  }, [phase, updaterApi]);
+  }, [booting, phase, updaterApi]);
 
   const handleCheckForUpdates = useCallback(async () => {
     if (!updaterApi) {
@@ -1129,7 +1129,7 @@ export function GameRoot({
         audioVolumes={audioVolumes}
         stressCount={stressCount}
         booting={booting}
-        bootAssetsReady={bootAssetsReady}
+        deferredAssetsEnabled={deferredAssetsEnabled}
         presentation={renderedPresentation}
         onPerfMetrics={setPerfMetrics}
         onPlayerSnapshot={setPlayer}

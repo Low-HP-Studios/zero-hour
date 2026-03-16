@@ -128,7 +128,7 @@ async function applySightTextures(
   mesh.material = mat;
 }
 
-export function useSightModels(): SightModelResult {
+export function useSightModels(enabled = true): SightModelResult {
   const [result, setResult] = useState<SightModelResult>({
     rifleSight: null,
     sniperSight: null,
@@ -136,6 +136,10 @@ export function useSightModels(): SightModelResult {
   });
 
   useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+
     let disposed = false;
 
     (async () => {
@@ -219,7 +223,7 @@ export function useSightModels(): SightModelResult {
     return () => {
       disposed = true;
     };
-  }, []);
+  }, [enabled]);
 
   return result;
 }
