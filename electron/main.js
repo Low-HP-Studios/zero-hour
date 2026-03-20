@@ -119,26 +119,6 @@ ipcMain.on('app:set-gameplay-active', (_event, isPlaying) => {
   applyGameplayFrameRate(Boolean(isPlaying));
 });
 
-ipcMain.handle('app:set-window-mode', (_event, mode) => {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  if (mode === 'fullscreen') {
-    mainWindow.setFullScreen(true);
-  } else if (mode === 'borderless') {
-    mainWindow.setFullScreen(false);
-    if (process.platform === 'darwin') {
-      mainWindow.setSimpleFullScreen(true);
-    } else {
-      mainWindow.maximize();
-    }
-  } else { // 'windowed'
-    mainWindow.setFullScreen(false);
-    if (process.platform === 'darwin') mainWindow.setSimpleFullScreen(false);
-    mainWindow.setResizable(true);
-    mainWindow.setSize(1600, 900);
-    mainWindow.center();
-  }
-});
-
 function registerUpdaterHandlers() {
   ipcMain.handle('updater:get-status', () => {
     if (updaterService) {
