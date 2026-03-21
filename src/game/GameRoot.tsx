@@ -11,7 +11,8 @@ import { toast } from "sonner";
 import { type AudioVolumeSettings } from "./Audio";
 import { getCharacterById } from "./characters";
 import { ExperienceMenuOverlay } from "./ExperienceMenuOverlay";
-import { PerfHUD } from "./PerfHUD";
+import { MinimalStatsBar } from "./hud/MinimalStatsBar";
+import { PubgHud } from "./hud/PubgHud";
 import {
   type AimingState,
   type HitMarkerKind,
@@ -28,28 +29,29 @@ import {
   formatKeyCode,
   menuTitle,
 } from "./SettingsPanels";
-import { PubgHud } from "./hud/PubgHud";
 import { PubgInventoryOverlay } from "./inventory/PubgInventoryOverlay";
 import type { SniperRechamberState, WeaponKind } from "./Weapon";
 import {
-  DEFAULT_MOVEMENT_SETTINGS,
   DEFAULT_PERF_METRICS,
   DEFAULT_PLAYER_SNAPSHOT,
   DEFAULT_WEAPON_RECOIL_PROFILES,
-  DEFAULT_WEAPON_ALIGNMENT,
   type CrosshairColor,
-  type EnemyOutlineColor,
   type ExperiencePhase,
   type GameSettings,
   type HudOverlayToggles,
   type InventoryMoveLocation,
   type InventoryMoveRequest,
   type InventoryMoveResult,
+  type MapId,
   type PerfMetrics,
   type PlayerSnapshot,
   type ScenePresentation,
   type StressModeCount,
 } from "./types";
+import {
+  getPracticeMapById,
+  PRACTICE_MAP_OPTIONS,
+} from "./scene/practice-maps";
 import {
   type BindingKey,
   type PauseMenuTab,
@@ -88,29 +90,12 @@ const CROSSHAIR_COLOR_HEX: Record<CrosshairColor, string> = {
   magenta: "#ff63df",
 };
 
-const ENEMY_OUTLINE_COLOR_HEX: Record<EnemyOutlineColor, string> = {
-  red: "#ff4d4d",
-  yellow: "#facc15",
-  cyan: "#38d9ff",
-  magenta: "#ff4dc4",
-};
-
 const CROSSHAIR_COLOR_OPTIONS: Array<{
   id: CrosshairColor;
   label: string;
 }> = [
   { id: "white", label: "White" },
   { id: "green", label: "Green" },
-  { id: "red", label: "Red" },
-  { id: "yellow", label: "Yellow" },
-  { id: "cyan", label: "Cyan" },
-  { id: "magenta", label: "Magenta" },
-];
-
-const ENEMY_OUTLINE_COLOR_OPTIONS: Array<{
-  id: EnemyOutlineColor;
-  label: string;
-}> = [
   { id: "red", label: "Red" },
   { id: "yellow", label: "Yellow" },
   { id: "cyan", label: "Cyan" },
@@ -197,8 +182,6 @@ export function GameRoot({
   const persistedSettings = useMemo(loadPersistedSettings, []);
   const sceneRef = useRef<SceneHandle | null>(null);
   const settingsModalRef = useRef<HTMLDivElement | null>(null);
-  const pointerLockResumeTimerRef = useRef<number | null>(null);
-  const pointerLockResumePendingRef = useRef(false);
   const [settings, setSettings] = useState<GameSettings>(
     persistedSettings.settings,
   );
@@ -207,6 +190,7 @@ export function GameRoot({
   );
   const [menuTab, setMenuTab] = useState<PauseMenuTab>("gameplay");
   const [bindingCapture, setBindingCapture] = useState<BindingKey | null>(null);
+  const bindingCaptureRef = useRef<BindingKey | null>(null);
   const [stressCount, setStressCount] = useState<StressModeCount>(
     persistedSettings.stressCount,
   );
@@ -215,6 +199,13 @@ export function GameRoot({
   );
   const [selectedCharacterId, setSelectedCharacterId] = useState<string>(
     persistedSettings.selectedCharacterId,
+  );
+  const [selectedMapId, setSelectedMapId] = useState<MapId>(
+    persistedSettings.selectedMapId,
+  );
+  const selectedMap = useMemo(
+    () => getPracticeMapById(selectedMapId),
+    [selectedMapId],
   );
   const characterOverride = useMemo(() => {
     const def = getCharacterById(selectedCharacterId);
@@ -254,6 +245,7 @@ export function GameRoot({
   const [phaseProgress, setPhaseProgress] = useState(0);
   const [menuSettingsOpen, setMenuSettingsOpen] = useState(false);
   const [pauseMenuOpen, setPauseMenuOpen] = useState(false);
+  const pauseMenuOpenRef = useRef(false);
   const [killPulseToken, setKillPulseToken] = useState(0);
   const [killPulseAmount, setKillPulseAmount] = useState(0);
   const [hitMarker, setHitMarker] = useState<
@@ -262,6 +254,11 @@ export function GameRoot({
     until: 0,
     kind: "body",
   });
+  const [damageNumbers, setDamageNumbers] = useState<
+    Array<{ id: number; targetId: string; damage: number; kind: HitMarkerKind; until: number }>
+  >([]);
+  const damageNumberIdRef = useRef(0);
+  const damageNumberTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const [shotBloom, setShotBloom] = useState(0);
   const shotBloomRef = useRef(0);
   const shotBloomFrameRef = useRef<number | null>(null);
@@ -276,12 +273,24 @@ export function GameRoot({
   const updaterApi = window.electronAPI?.updater;
   const updaterAvailable = Boolean(updaterApi);
   const inventoryOpen = phase === "playing" && player.inventoryPanelOpen;
-  const isPaused = booting || phase !== "playing" ||
-    (!player.pointerLocked && !inventoryOpen);
   const [hasBeenLocked, setHasBeenLocked] = useState(false);
   const returnResetDoneRef = useRef(false);
   const enteredPlayingAtRef = useRef(0);
   const [needsPointerLock, setNeedsPointerLock] = useState(false);
+  const isGameplayPaused =
+    booting ||
+    phase !== "playing" ||
+    pauseMenuOpen ||
+    (phase === "playing" && needsPointerLock && !inventoryOpen);
+
+  useEffect(() => {
+    pauseMenuOpenRef.current = pauseMenuOpen;
+  }, [pauseMenuOpen]);
+
+  useEffect(() => {
+    bindingCaptureRef.current = bindingCapture;
+  }, [bindingCapture]);
+
   const previousUpdaterPhaseRef = useRef<UpdaterPhase | null>(null);
   const lastMenuAutoCheckAtRef = useRef(0);
 
@@ -400,32 +409,35 @@ export function GameRoot({
     return () => window.cancelAnimationFrame(rafId);
   }, [killPulseToken]);
 
-  const showPauseMenu = phase === "playing" && hasBeenLocked && isPaused &&
-    pauseMenuOpen &&
-    (performance.now() - enteredPlayingAtRef.current > 600);
+  const showPauseMenu = phase === "playing" && pauseMenuOpen;
   const inLobbyPhase = phase === "menu" || phase === "entering" ||
     phase === "returning";
   const showSettingsModal = menuSettingsOpen || showPauseMenu;
-
-  const requestGameplayPointerLock = useCallback(() => {
-    pointerLockResumePendingRef.current = true;
-    if (pointerLockResumeTimerRef.current !== null) {
-      window.clearTimeout(pointerLockResumeTimerRef.current);
-    }
-    pointerLockResumeTimerRef.current = window.setTimeout(() => {
-      pointerLockResumePendingRef.current = false;
-      pointerLockResumeTimerRef.current = null;
-    }, 800);
-    sceneRef.current?.requestPointerLock();
-  }, []);
+  const showClickToContinueOverlay =
+    phase === "playing" && needsPointerLock && !showSettingsModal;
 
   const handleCloseMenuAndResume = useCallback(() => {
     setBindingCapture(null);
     setMenuSettingsOpen(false);
     setPauseMenuOpen(false);
     window.focus();
-    requestGameplayPointerLock();
-  }, [requestGameplayPointerLock]);
+    setNeedsPointerLock(true);
+  }, []);
+
+  const handlePauseMenuToggle = useCallback(() => {
+    if (bindingCaptureRef.current) {
+      return;
+    }
+    if (pauseMenuOpenRef.current) {
+      handleCloseMenuAndResume();
+      return;
+    }
+    setNeedsPointerLock(false);
+    setBindingCapture(null);
+    setMenuSettingsOpen(false);
+    setPauseMenuOpen(true);
+    sceneRef.current?.releasePointerLock();
+  }, [handleCloseMenuAndResume]);
 
   const handleCloseSettingsModal = useCallback(() => {
     setBindingCapture(null);
@@ -455,8 +467,6 @@ export function GameRoot({
   }, [showSettingsModal]);
 
   const handleEnterPractice = useCallback(() => {
-    // Commit the phase swap inside the click handler so the canvas is visible
-    // before we ask Chromium for pointer lock.
     flushSync(() => {
       setMenuSettingsOpen(false);
       setPauseMenuOpen(false);
@@ -466,11 +476,11 @@ export function GameRoot({
       setPhase("playing");
     });
     window.focus();
-    sceneRef.current?.requestPointerLock();
     setNeedsPointerLock(true);
   }, []);
 
   const handleReturnToLobby = useCallback(() => {
+    setNeedsPointerLock(false);
     setBindingCapture(null);
     setMenuSettingsOpen(false);
     setPauseMenuOpen(false);
@@ -509,17 +519,45 @@ export function GameRoot({
     return result;
   }, [reportInventoryResult]);
 
-  const handleHitMarker = useCallback((kind: HitMarkerKind) => {
-    setHitMarker({
-      kind,
-      until: performance.now() +
-        (kind === "kill" ? 170 : kind === "head" ? 120 : 90),
-    });
-    if (kind === "kill" && phase === "playing") {
-      setKillPulseAmount(0);
-      setKillPulseToken((previous) => previous + 1);
-    }
-  }, [phase]);
+  const handleHitMarker = useCallback(
+    (kind: HitMarkerKind, damage: number, targetId: string) => {
+      const now = performance.now();
+      setHitMarker({
+        kind,
+        until: now + (kind === "kill" ? 170 : kind === "head" ? 120 : 90),
+      });
+
+      // Clear existing cleanup timer so accumulation isn't cut short
+      const existingTimer = damageNumberTimersRef.current.get(targetId);
+      if (existingTimer !== undefined) clearTimeout(existingTimer);
+
+      setDamageNumbers((prev) => {
+        const cleaned = prev.filter((d) => d.until > now);
+        const existing = cleaned.find((d) => d.targetId === targetId);
+        if (existing) {
+          return cleaned.map((d) =>
+            d.targetId === targetId
+              ? { ...d, damage: d.damage + damage, kind, until: now + 800 }
+              : d
+          );
+        }
+        const id = ++damageNumberIdRef.current;
+        return [...cleaned, { id, targetId, damage, kind, until: now + 800 }];
+      });
+
+      const timer = setTimeout(() => {
+        damageNumberTimersRef.current.delete(targetId);
+        setDamageNumbers((prev) => prev.filter((d) => d.targetId !== targetId));
+      }, 820);
+      damageNumberTimersRef.current.set(targetId, timer);
+
+      if (kind === "kill" && phase === "playing") {
+        setKillPulseAmount(0);
+        setKillPulseToken((previous) => previous + 1);
+      }
+    },
+    [phase],
+  );
 
   const handleShotFired = useCallback((state: ShotFiredState) => {
     if (phase !== "playing") {
@@ -548,11 +586,20 @@ export function GameRoot({
           hudPanels,
           stressCount,
           audioVolumes,
+          selectedCharacterId,
+          selectedMapId,
         },
         null,
         2,
       ),
-    [settings, hudPanels, stressCount, audioVolumes],
+    [
+      settings,
+      hudPanels,
+      stressCount,
+      audioVolumes,
+      selectedCharacterId,
+      selectedMapId,
+    ],
   );
 
   const handleCopySettingsProfile = useCallback(async () => {
@@ -588,6 +635,8 @@ export function GameRoot({
       setHudPanels(next.hudPanels);
       setStressCount(next.stressCount);
       setAudioVolumes(next.audioVolumes);
+      setSelectedCharacterId(next.selectedCharacterId);
+      setSelectedMapId(next.selectedMapId);
       toast.success("Settings profile imported.");
     } catch (error) {
       toast.error("Invalid settings profile JSON.", {
@@ -778,7 +827,7 @@ export function GameRoot({
 
       setHudPanels((prev) => ({
         ...prev,
-        performance: !prev.performance,
+        statsBar: !prev.statsBar,
       }));
     };
 
@@ -793,8 +842,16 @@ export function GameRoot({
       stressCount,
       audioVolumes,
       selectedCharacterId,
+      selectedMapId,
     });
-  }, [settings, hudPanels, stressCount, audioVolumes, selectedCharacterId]);
+  }, [
+    settings,
+    hudPanels,
+    stressCount,
+    audioVolumes,
+    selectedCharacterId,
+    selectedMapId,
+  ]);
 
   useEffect(() => {
     if (!bindingCapture) {
@@ -826,10 +883,10 @@ export function GameRoot({
   }, [bindingCapture]);
 
   useEffect(() => {
-    if (!isPaused && bindingCapture) {
+    if (!isGameplayPaused && bindingCapture) {
       setBindingCapture(null);
     }
-  }, [bindingCapture, isPaused]);
+  }, [bindingCapture, isGameplayPaused]);
 
   useEffect(() => {
     if (phase !== "playing" && pauseMenuOpen) {
@@ -838,71 +895,11 @@ export function GameRoot({
   }, [phase, pauseMenuOpen]);
 
   useEffect(() => {
-    if (player.pointerLocked && pointerLockResumePendingRef.current) {
-      pointerLockResumePendingRef.current = false;
-      if (pointerLockResumeTimerRef.current !== null) {
-        window.clearTimeout(pointerLockResumeTimerRef.current);
-        pointerLockResumeTimerRef.current = null;
-      }
-    }
-  }, [player.pointerLocked]);
-
-  useEffect(() => {
-    if (phase !== "playing" || !hasBeenLocked || inventoryOpen) {
+    if (phase === "playing") {
       return;
     }
-    if (player.pointerLocked || pauseMenuOpen || pointerLockResumePendingRef.current) {
-      return;
-    }
-
-    setBindingCapture(null);
-    setMenuSettingsOpen(false);
-    setPauseMenuOpen(true);
-  }, [
-    hasBeenLocked,
-    inventoryOpen,
-    pauseMenuOpen,
-    phase,
-    player.pointerLocked,
-  ]);
-
-  useEffect(() => {
-    if (phase !== "playing" || !hasBeenLocked) return;
-    if (bindingCapture) return;
-
-    const onEscTogglePause = (event: KeyboardEvent) => {
-      if (event.code !== "Escape" || event.repeat) return;
-      event.preventDefault();
-      if (pauseMenuOpen) {
-        handleCloseMenuAndResume();
-        return;
-      }
-
-      setBindingCapture(null);
-      setMenuSettingsOpen(false);
-      setPauseMenuOpen(true);
-      sceneRef.current?.releasePointerLock();
-    };
-
-    window.addEventListener("keydown", onEscTogglePause);
-    return () => {
-      window.removeEventListener("keydown", onEscTogglePause);
-    };
-  }, [
-    handleCloseMenuAndResume,
-    phase,
-    hasBeenLocked,
-    bindingCapture,
-    pauseMenuOpen,
-  ]);
-
-  useEffect(() => {
-    return () => {
-      if (pointerLockResumeTimerRef.current !== null) {
-        window.clearTimeout(pointerLockResumeTimerRef.current);
-      }
-    };
-  }, []);
+    setNeedsPointerLock(false);
+  }, [phase]);
 
   useEffect(() => {
     if (phase !== "playing") {
@@ -927,7 +924,7 @@ export function GameRoot({
   }, [settings.crosshair.dynamic.enabled]);
 
   useEffect(() => {
-    if (phase !== "playing" || isPaused) {
+    if (phase !== "playing" || isGameplayPaused) {
       if (shotBloomFrameRef.current !== null) {
         window.cancelAnimationFrame(shotBloomFrameRef.current);
         shotBloomFrameRef.current = null;
@@ -964,7 +961,7 @@ export function GameRoot({
         shotBloomFrameRef.current = null;
       }
     };
-  }, [isPaused, phase, settings.crosshair.dynamic.enabled, settings.crosshair.dynamic.recoveryPerSecond]);
+  }, [isGameplayPaused, phase, settings.crosshair.dynamic.enabled, settings.crosshair.dynamic.recoveryPerSecond]);
 
   const scenePresentation = useMemo<ScenePresentation>(() => {
     const progress = clamp01(phaseProgress);
@@ -1016,17 +1013,13 @@ export function GameRoot({
   const renderedPresentation = booting ? BOOT_PRESENTATION : scenePresentation;
 
   const hitMarkerVisible = hitMarker.until > performance.now();
-  const isAimingDownSight = aimingState.ads && phase === "playing" && !isPaused;
+  const isAimingDownSight = aimingState.ads && phase === "playing" && !isGameplayPaused;
   const sniperRechamberProgress =
     activeWeapon === "sniper" && sniperRechamber.active
       ? sniperRechamber.progress
       : 1;
-  const stressLabel = stressCount === 0 ? "Off" : `${stressCount} boxes`;
-  const lockLabel = player.pointerLocked
-    ? "Live look mode"
-    : inventoryOpen
-    ? "Inventory cursor mode"
-    : "Paused / cursor shown";
+  const sceneStressCount = selectedMap.supportsStressMode ? stressCount : 0;
+  const practiceMapLocked = phase !== "menu";
   const movementSpread = !settings.crosshair.dynamic.enabled
     ? 0
     : player.grounded && player.moving
@@ -1059,15 +1052,6 @@ export function GameRoot({
     ["--ch-outer-gap" as string]: `${outerGap}`,
     ["--sniper-cycle-progress" as string]: `${sniperRechamberProgress}`,
   } as CSSProperties);
-  const playerSummary = useMemo(() => {
-    return {
-      x: player.x.toFixed(1),
-      y: player.y.toFixed(1),
-      z: player.z.toFixed(1),
-      speed: player.speed.toFixed(2),
-    };
-  }, [player.speed, player.x, player.y, player.z]);
-
   const duplicateBindingCodes = useMemo(() => {
     const codeCounts = new Map<string, number>();
     for (const code of Object.values(settings.keybinds)) {
@@ -1089,12 +1073,6 @@ export function GameRoot({
     : player.movementTier === "walk"
     ? "Walk"
     : "Jog";
-  const rifleSlot = player.weaponLoadout.slotA;
-  const sniperSlot = player.weaponLoadout.slotB;
-  const activeSlotLabel = player.weaponLoadout.activeSlot === "slotA"
-    ? "Slot 1 (Rifle)"
-    : "Slot 2 (Sniper)";
-  const anyWeaponEquipped = rifleSlot.hasWeapon || sniperSlot.hasWeapon;
   const interactItemLabel = player.interactWeaponKind === "sniper"
     ? "Sniper"
     : player.interactWeaponKind === "rifle"
@@ -1110,24 +1088,23 @@ export function GameRoot({
   const installUpdateInProgress = updaterBusyAction === "install";
   const gameplayHudVisible = phase === "playing";
   const showInventoryOverlay = gameplayHudVisible && player.inventoryPanelOpen;
-  const showInteractPrompt = gameplayHudVisible && !isPaused &&
+  const showInteractPrompt = gameplayHudVisible && !isGameplayPaused &&
     !showInventoryOverlay &&
     player.canInteract;
   const combatHudVisible = gameplayHudVisible && !showInventoryOverlay;
-  const uiOverlayClassName = gameplayHudVisible
-    ? "ui-overlay ui-overlay--practice"
-    : "ui-overlay";
+  const uiOverlayClassName = "ui-overlay";
   return (
     <div
       className={`app-shell ${
-        showInventoryOverlay ? "inventory-open" : isPaused ? "paused" : "playing"
+        showInventoryOverlay ? "inventory-open" : isGameplayPaused ? "paused" : "playing"
       } phase-${phase}`}
     >
       <Scene
         ref={sceneRef}
         settings={settings}
         audioVolumes={audioVolumes}
-        stressCount={stressCount}
+        stressCount={sceneStressCount}
+        practiceMap={selectedMap}
         booting={booting}
         deferredAssetsEnabled={deferredAssetsEnabled}
         presentation={renderedPresentation}
@@ -1141,6 +1118,7 @@ export function GameRoot({
         onAimingStateChange={setAimingState}
         onBootReady={onSceneBootReady}
         characterOverride={characterOverride}
+        onPauseMenuToggle={handlePauseMenuToggle}
       />
 
       {phase === "menu"
@@ -1154,6 +1132,8 @@ export function GameRoot({
             onInstallUpdate={() => { void handleInstallUpdate(); }}
             selectedCharacterId={selectedCharacterId}
             onCharacterSelect={setSelectedCharacterId}
+            selectedMapId={selectedMapId}
+            onMapSelect={setSelectedMapId}
             updaterStatus={updaterStatus}
             updaterBusyAction={updaterBusyAction}
             updaterAvailable={updaterAvailable}
@@ -1163,67 +1143,16 @@ export function GameRoot({
         : null}
 
       <div className={uiOverlayClassName}>
-        {combatHudVisible && hudPanels.practice
-          ? (
-            <div className="corner-top-left panel tactical-panel practice-panel">
-              <div className="panel-eyebrow">GreyTrace / Practice Range</div>
-              <div className="panel-title-row">
-                <div className="brand-lockup" aria-label="GreyTrace logo">
-                  <span className="brand-word">GreyTrace</span>
-                </div>
-                <div className="status-pill">
-                  <span
-                    className={`status-dot ${
-                      player.pointerLocked ? "locked" : ""
-                    }`}
-                  />
-                  <span>{lockLabel}</span>
-                </div>
-              </div>
-              <dl className="stat-grid stat-grid-wide">
-                <dt>Player</dt>
-                <dd>
-                  {playerSummary.x}, {playerSummary.y}, {playerSummary.z}
-                </dd>
-                <dt>Speed</dt>
-                <dd>{playerSummary.speed} u/s</dd>
-                <dt>State</dt>
-                <dd>
-                  {player.grounded
-                    ? player.moving
-                      ? movementTierLabel
-                      : "Idle"
-                    : "Jump / Air"}
-                </dd>
-                <dt>Interact</dt>
-                <dd>
-                  {player.canInteract
-                    ? `${interactItemLabel} nearby`
-                    : "-"}
-                </dd>
-                <dt>Weapon</dt>
-                <dd>
-                  {anyWeaponEquipped
-                    ? activeSlotLabel
-                    : "None"}
-                </dd>
-                <dt>Range Load</dt>
-                <dd>{stressLabel}</dd>
-              </dl>
-            </div>
-          )
-          : null}
-
-        {combatHudVisible && hudPanels.performance
+        {combatHudVisible && hudPanels.statsBar
           ? (
             <div className="corner-top-right">
-              <PerfHUD metrics={perfMetrics} visible />
+              <MinimalStatsBar metrics={perfMetrics} visible />
             </div>
           )
           : null}
 
         <div className="center-stack">
-          {combatHudVisible && !isPaused && !isAimingDownSight
+          {combatHudVisible && !isGameplayPaused && (!isAimingDownSight || activeWeapon === "rifle")
             ? (
               <div
                 className={`crosshair ${
@@ -1273,27 +1202,6 @@ export function GameRoot({
               </div>
             )
             : null}
-          {isAimingDownSight && activeWeapon === "rifle" && combatHudVisible
-            ? (
-              <div
-                className="rifle-ads-overlay"
-                style={
-                  {
-                    "--ads-dot-size": `${settings.crosshair.ads.rifleDotSize}`,
-                    "--ads-dot-color":
-                      CROSSHAIR_COLOR_HEX[settings.crosshair.ads.rifleDotColor],
-                    "--ch-outline-enabled": settings.crosshair.outline.enabled
-                      ? "1"
-                      : "0",
-                    "--ch-outline-thickness": `${settings.crosshair.outline.thickness}`,
-                    "--ch-outline-opacity": `${settings.crosshair.outline.opacity}`,
-                  } as React.CSSProperties
-                }
-              >
-                <div className="rifle-ads-dot" />
-              </div>
-            )
-            : null}
           {isAimingDownSight && activeWeapon === "sniper" && combatHudVisible
             ? (
               <div
@@ -1330,13 +1238,36 @@ export function GameRoot({
               </div>
             )
             : null}
-          {combatHudVisible && !isPaused
+          {combatHudVisible && !isGameplayPaused
             ? (
               <div
                 className={`hit-marker ${
                   hitMarkerVisible ? "visible" : ""
                 } ${hitMarker.kind}`}
               />
+            )
+            : null}
+          {combatHudVisible && !isGameplayPaused && damageNumbers.length > 0
+            ? (
+              <div className="damage-numbers-container">
+                {damageNumbers.map((dn) => {
+                  const fontSize = Math.min(
+                    48,
+                    18 + dn.damage * 0.2,
+                  );
+                  return (
+                    <div
+                      key={dn.id}
+                      className={`damage-number ${dn.kind}`}
+                      style={
+                        { "--dmg-font-size": `${fontSize}px` } as CSSProperties
+                      }
+                    >
+                      {Math.round(dn.damage)}
+                    </div>
+                  );
+                })}
+              </div>
             )
             : null}
           {showInteractPrompt
@@ -1462,30 +1393,70 @@ export function GameRoot({
                       ? (
                         <div className="menu-sections">
                           <MenuSection
-                            title="Range Load"
-                            blurb="Stress mode scales target-box clutter and draw-call pain."
+                            title="Map"
+                            blurb="Choose the practice map before you drop into the run."
                           >
                             <div className="segmented-row">
-                              {STRESS_STEPS.map((value) => (
+                              {PRACTICE_MAP_OPTIONS.map((option) => (
                                 <button
-                                  key={value}
+                                  key={option.id}
                                   type="button"
                                   className={`chip-btn ${
-                                    stressCount === value ? "active" : ""
+                                    selectedMapId === option.id ? "active" : ""
                                   }`}
-                                  onClick={() => setStressCount(value)}
+                                  onClick={() => setSelectedMapId(option.id)}
+                                  disabled={practiceMapLocked}
                                 >
-                                  {value === 0 ? "Off" : `${value} boxes`}
+                                  {option.label}
                                 </button>
                               ))}
                             </div>
                             <p className="muted compact-note">
-                              Reset targets uses your bound key:{" "}
-                              <code>
-                                {formatKeyCode(settings.keybinds.reset)}
-                              </code>
+                              {selectedMap.description}
                             </p>
+                            {practiceMapLocked ? (
+                              <p className="muted compact-note">
+                                Map changes are locked during a run. Return to the lobby to switch.
+                              </p>
+                            ) : null}
                           </MenuSection>
+
+                          {selectedMap.supportsStressMode ? (
+                            <MenuSection
+                              title="Range Load"
+                              blurb="Stress mode scales target-box clutter and draw-call pain."
+                            >
+                              <div className="segmented-row">
+                                {STRESS_STEPS.map((value) => (
+                                  <button
+                                    key={value}
+                                    type="button"
+                                    className={`chip-btn ${
+                                      stressCount === value ? "active" : ""
+                                    }`}
+                                    onClick={() => setStressCount(value)}
+                                  >
+                                    {value === 0 ? "Off" : `${value} boxes`}
+                                  </button>
+                                ))}
+                              </div>
+                              <p className="muted compact-note">
+                                Reset targets uses your bound key:{" "}
+                                <code>
+                                  {formatKeyCode(settings.keybinds.reset)}
+                                </code>
+                              </p>
+                            </MenuSection>
+                          ) : (
+                            <MenuSection
+                              title="Traversal"
+                              blurb="School is a clean movement sandbox while you block out the map."
+                            >
+                              <p className="muted compact-note">
+                                No bots, no weapon spawns, and no stress boxes. This lane is movement-only for now.
+                              </p>
+                            </MenuSection>
+                          )}
 
                           <MenuSection
                             title="Combat Snapshot"
@@ -1519,52 +1490,6 @@ export function GameRoot({
                             </div>
                           </MenuSection>
 
-                          <MenuSection
-                            title="HUD Preset"
-                            blurb="Starting point for cleaner screen recording or debugging."
-                          >
-                            <div className="preset-grid">
-                              <button
-                                type="button"
-                                className="btn btn-wide"
-                                onClick={() =>
-                                  setHudPanels({
-                                    practice: false,
-                                    controls: false,
-                                    settings: false,
-                                    performance: true,
-                                  })}
-                              >
-                                Perf Only
-                              </button>
-                              <button
-                                type="button"
-                                className="btn btn-wide"
-                                onClick={() =>
-                                  setHudPanels({
-                                    practice: true,
-                                    controls: true,
-                                    settings: true,
-                                    performance: true,
-                                  })}
-                              >
-                                Show All Panels
-                              </button>
-                              <button
-                                type="button"
-                                className="btn btn-wide"
-                                onClick={() =>
-                                  setHudPanels({
-                                    practice: false,
-                                    controls: false,
-                                    settings: false,
-                                    performance: false,
-                                  })}
-                              >
-                                Clean Screen
-                              </button>
-                            </div>
-                          </MenuSection>
                         </div>
                       )
                       : null}
@@ -1649,275 +1574,6 @@ export function GameRoot({
                             </div>
                           </MenuSection>
 
-                          <MenuSection
-                            title="Field of View"
-                            blurb="PUBG-style FOV: wider = more peripheral vision but smaller targets. Applies to both FPP and TPP."
-                          >
-                            <RangeField
-                              label="Base FOV"
-                              value={settings.fov}
-                              min={40}
-                              max={120}
-                              step={1}
-                              suffix="°"
-                              onChange={(value) =>
-                                setSettings((prev) => ({
-                                  ...prev,
-                                  fov: value,
-                                }))}
-                            />
-                            <div className="settings-chip-wrap">
-                              <span className="pill-chip">
-                                Low (40-55): Zoomed, sniper-friendly
-                              </span>
-                              <span className="pill-chip">
-                                Normal (60-75): Balanced
-                              </span>
-                              <span className="pill-chip">
-                                Wide (80-120): Max awareness
-                              </span>
-                            </div>
-                          </MenuSection>
-
-                          <MenuSection
-                            title="Weapon Alignment (Debug)"
-                            blurb="Tweak weapon position and rotation on the hand bone. Values are saved. Hit Reset to start over."
-                          >
-                            <RangeField
-                              label="Offset X (left/right)"
-                              value={settings.weaponAlignment.posX}
-                              min={-0.5}
-                              max={0.5}
-                              step={0.005}
-                              onChange={(value) =>
-                                setSettings((prev) => ({
-                                  ...prev,
-                                  weaponAlignment: {
-                                    ...prev.weaponAlignment,
-                                    posX: value,
-                                  },
-                                }))}
-                            />
-                            <RangeField
-                              label="Offset Y (up/down)"
-                              value={settings.weaponAlignment.posY}
-                              min={-0.5}
-                              max={0.5}
-                              step={0.005}
-                              onChange={(value) =>
-                                setSettings((prev) => ({
-                                  ...prev,
-                                  weaponAlignment: {
-                                    ...prev.weaponAlignment,
-                                    posY: value,
-                                  },
-                                }))}
-                            />
-                            <RangeField
-                              label="Offset Z (forward/back)"
-                              value={settings.weaponAlignment.posZ}
-                              min={-0.5}
-                              max={0.5}
-                              step={0.005}
-                              onChange={(value) =>
-                                setSettings((prev) => ({
-                                  ...prev,
-                                  weaponAlignment: {
-                                    ...prev.weaponAlignment,
-                                    posZ: value,
-                                  },
-                                }))}
-                            />
-                            <RangeField
-                              label="Rotation X (pitch)"
-                              value={settings.weaponAlignment.rotX}
-                              min={-3.14}
-                              max={3.14}
-                              step={0.01}
-                              suffix=" rad"
-                              onChange={(value) =>
-                                setSettings((prev) => ({
-                                  ...prev,
-                                  weaponAlignment: {
-                                    ...prev.weaponAlignment,
-                                    rotX: value,
-                                  },
-                                }))}
-                            />
-                            <RangeField
-                              label="Rotation Y (yaw)"
-                              value={settings.weaponAlignment.rotY}
-                              min={-3.14}
-                              max={3.14}
-                              step={0.01}
-                              suffix=" rad"
-                              onChange={(value) =>
-                                setSettings((prev) => ({
-                                  ...prev,
-                                  weaponAlignment: {
-                                    ...prev.weaponAlignment,
-                                    rotY: value,
-                                  },
-                                }))}
-                            />
-                            <RangeField
-                              label="Rotation Z (roll)"
-                              value={settings.weaponAlignment.rotZ}
-                              min={-3.14}
-                              max={3.14}
-                              step={0.01}
-                              suffix=" rad"
-                              onChange={(value) =>
-                                setSettings((prev) => ({
-                                  ...prev,
-                                  weaponAlignment: {
-                                    ...prev.weaponAlignment,
-                                    rotZ: value,
-                                  },
-                                }))}
-                            />
-                            <div className="settings-chip-wrap">
-                              <button
-                                type="button"
-                                className="btn"
-                                onClick={() =>
-                                  setSettings((prev) => ({
-                                    ...prev,
-                                    weaponAlignment: {
-                                      ...DEFAULT_WEAPON_ALIGNMENT,
-                                    },
-                                  }))}
-                              >
-                                Reset Alignment
-                              </button>
-                            </div>
-                          </MenuSection>
-
-                          <MenuSection
-                            title="Rifle Movement Tuning"
-                            blurb="Change walk/jog/run feel live. This controls speed scales and slide gating for forward-biased sprinting."
-                          >
-                            <RangeField
-                              label="Rifle Walk Speed Scale"
-                              value={settings.movement.rifleWalkSpeedScale}
-                              min={0.2}
-                              max={1.2}
-                              step={0.01}
-                              onChange={(value) =>
-                                setSettings((prev) => ({
-                                  ...prev,
-                                  movement: {
-                                    ...prev.movement,
-                                    rifleWalkSpeedScale: value,
-                                  },
-                                }))}
-                            />
-                            <RangeField
-                              label="Rifle Jog Speed Scale"
-                              value={settings.movement.rifleJogSpeedScale}
-                              min={0.2}
-                              max={2}
-                              step={0.01}
-                              onChange={(value) =>
-                                setSettings((prev) => ({
-                                  ...prev,
-                                  movement: {
-                                    ...prev.movement,
-                                    rifleJogSpeedScale: value,
-                                  },
-                                }))}
-                            />
-                            <RangeField
-                              label="Rifle Run Speed Scale"
-                              value={settings.movement.rifleRunSpeedScale}
-                              min={0.2}
-                              max={3}
-                              step={0.01}
-                              onChange={(value) =>
-                                setSettings((prev) => ({
-                                  ...prev,
-                                  movement: {
-                                    ...prev.movement,
-                                    rifleRunSpeedScale: value,
-                                  },
-                                }))}
-                            />
-                            <RangeField
-                              label="Rifle Fire Prep Speed Scale"
-                              value={settings.movement.rifleFirePrepSpeedScale}
-                              min={0.1}
-                              max={1}
-                              step={0.01}
-                              onChange={(value) =>
-                                setSettings((prev) => ({
-                                  ...prev,
-                                  movement: {
-                                    ...prev.movement,
-                                    rifleFirePrepSpeedScale: value,
-                                  },
-                                }))}
-                            />
-                            <RangeField
-                              label="Crouch Speed Scale"
-                              value={settings.movement.crouchSpeedScale}
-                              min={0.2}
-                              max={1.2}
-                              step={0.01}
-                              onChange={(value) =>
-                                setSettings((prev) => ({
-                                  ...prev,
-                                  movement: {
-                                    ...prev.movement,
-                                    crouchSpeedScale: value,
-                                  },
-                                }))}
-                            />
-                            <RangeField
-                              label="Slide Forward Threshold"
-                              value={settings.movement.rifleRunForwardThreshold}
-                              min={0.05}
-                              max={1}
-                              step={0.01}
-                              onChange={(value) =>
-                                setSettings((prev) => ({
-                                  ...prev,
-                                  movement: {
-                                    ...prev.movement,
-                                    rifleRunForwardThreshold: value,
-                                  },
-                                }))}
-                            />
-                            <RangeField
-                              label="Slide Lateral Threshold"
-                              value={settings.movement.rifleRunLateralThreshold}
-                              min={0}
-                              max={1}
-                              step={0.01}
-                              onChange={(value) =>
-                                setSettings((prev) => ({
-                                  ...prev,
-                                  movement: {
-                                    ...prev.movement,
-                                    rifleRunLateralThreshold: value,
-                                  },
-                                }))}
-                            />
-                            <div className="settings-chip-wrap">
-                              <button
-                                type="button"
-                                className="btn"
-                                onClick={() =>
-                                  setSettings((prev) => ({
-                                    ...prev,
-                                    movement: {
-                                      ...DEFAULT_MOVEMENT_SETTINGS,
-                                    },
-                                  }))}
-                              >
-                                Reset Movement Tuning
-                              </button>
-                            </div>
-                          </MenuSection>
 
                           <MenuSection
                             title="Weapon Recoil Tuning"
@@ -2483,8 +2139,8 @@ export function GameRoot({
                       ? (
                         <div className="menu-sections">
                           <MenuSection
-                            title="Overlay Panels"
-                            blurb="Toggle corner debug panels independently."
+                            title="In-game overlay"
+                            blurb="Top-right network and performance readout."
                           >
                             {OVERLAY_ROWS.map((row) => (
                               <SwitchRow
@@ -2944,70 +2600,9 @@ export function GameRoot({
                           </MenuSection>
 
                           <MenuSection
-                            title="ADS Basics"
-                            blurb="Red Dot Reticle (2 MOA emitter dot) and sniper scope center-dot tuning."
+                            title="Sniper Scope"
+                            blurb="Sniper scope center-dot tuning."
                           >
-                            <RangeField
-                              label="Red Dot Reticle Size"
-                              value={settings.crosshair.ads.rifleDotSize}
-                              min={1}
-                              max={16}
-                              step={0.5}
-                              onChange={(value) =>
-                                setSettings((prev) => ({
-                                  ...prev,
-                                  crosshair: {
-                                    ...prev.crosshair,
-                                    ads: {
-                                      ...prev.crosshair.ads,
-                                      rifleDotSize: value,
-                                    },
-                                  },
-                                }))}
-                            />
-                            <div className="field-row">
-                              <div>
-                                <div className="field-label">Red Dot Reticle Color</div>
-                                <div className="field-hint">
-                                  2 MOA emitter dot tint
-                                </div>
-                              </div>
-                              <div className="color-chip-row">
-                                {CROSSHAIR_COLOR_OPTIONS.map((option) => (
-                                  <button
-                                    key={`rifle-dot-${option.id}`}
-                                    type="button"
-                                    className={`color-chip ${
-                                      settings.crosshair.ads.rifleDotColor ===
-                                        option.id
-                                        ? "active"
-                                        : ""
-                                    }`}
-                                    onClick={() =>
-                                      setSettings((prev) => ({
-                                        ...prev,
-                                        crosshair: {
-                                          ...prev.crosshair,
-                                          ads: {
-                                            ...prev.crosshair.ads,
-                                            rifleDotColor: option.id,
-                                          },
-                                        },
-                                      }))}
-                                  >
-                                    <span
-                                      className="color-chip-swatch"
-                                      style={{
-                                        backgroundColor:
-                                          CROSSHAIR_COLOR_HEX[option.id],
-                                      }}
-                                    />
-                                    {option.label}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-
                             <RangeField
                               label="Sniper Dot Size"
                               value={settings.crosshair.ads.sniperDotSize}
@@ -3071,93 +2666,6 @@ export function GameRoot({
                               </div>
                             </div>
                           </MenuSection>
-
-                          <MenuSection
-                            title="Enemy Visibility"
-                            blurb="Visible-only silhouette outline for bots."
-                          >
-                            <SwitchRow
-                              label="Enemy Outline"
-                              hint="Enable target silhouette"
-                              checked={settings.enemyOutline.enabled}
-                              onChange={(checked) =>
-                                setSettings((prev) => ({
-                                  ...prev,
-                                  enemyOutline: {
-                                    ...prev.enemyOutline,
-                                    enabled: checked,
-                                  },
-                                }))}
-                            />
-                            <div className="field-row">
-                              <div>
-                                <div className="field-label">Outline Color</div>
-                                <div className="field-hint">
-                                  Visible palette for fast acquisition
-                                </div>
-                              </div>
-                              <div className="color-chip-row">
-                                {ENEMY_OUTLINE_COLOR_OPTIONS.map((option) => (
-                                  <button
-                                    key={option.id}
-                                    type="button"
-                                    className={`color-chip ${
-                                      settings.enemyOutline.color === option.id
-                                        ? "active"
-                                        : ""
-                                    }`}
-                                    onClick={() =>
-                                      setSettings((prev) => ({
-                                        ...prev,
-                                        enemyOutline: {
-                                          ...prev.enemyOutline,
-                                          color: option.id,
-                                        },
-                                      }))}
-                                  >
-                                    <span
-                                      className="color-chip-swatch"
-                                      style={{
-                                        backgroundColor:
-                                          ENEMY_OUTLINE_COLOR_HEX[option.id],
-                                      }}
-                                    />
-                                    {option.label}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                            <RangeField
-                              label="Outline Thickness"
-                              value={settings.enemyOutline.thickness}
-                              min={0}
-                              max={8}
-                              step={0.1}
-                              onChange={(value) =>
-                                setSettings((prev) => ({
-                                  ...prev,
-                                  enemyOutline: {
-                                    ...prev.enemyOutline,
-                                    thickness: value,
-                                  },
-                                }))}
-                            />
-                            <RangeField
-                              label="Outline Opacity"
-                              value={settings.enemyOutline.opacity}
-                              min={0}
-                              max={1}
-                              step={0.01}
-                              onChange={(value) =>
-                                setSettings((prev) => ({
-                                  ...prev,
-                                  enemyOutline: {
-                                    ...prev.enemyOutline,
-                                    opacity: value,
-                                  },
-                                }))}
-                            />
-                          </MenuSection>
                         </div>
                       )
                       : null}
@@ -3201,10 +2709,21 @@ export function GameRoot({
             : null}
         </div>
 
-        {combatHudVisible && !isPaused
-          ? <PubgHud player={player} visible={true} />
-          : null}
+        {combatHudVisible && !isGameplayPaused ? (
+          <PubgHud player={player} visible />
+        ) : null}
+
       </div>
+      {showClickToContinueOverlay ? (
+        <div
+          className="click-to-continue-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Click to continue"
+        >
+          <p className="click-to-continue-label">Click to continue</p>
+        </div>
+      ) : null}
       <div
         className="kill-pulse-overlay"
         style={{

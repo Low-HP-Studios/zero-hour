@@ -1,20 +1,23 @@
 import { type AudioVolumeSettings, DEFAULT_AUDIO_VOLUMES } from "../Audio";
 import {
+  DEFAULT_PRACTICE_MAP_ID,
   DEFAULT_AIM_SENSITIVITY_SETTINGS,
   DEFAULT_CROUCH_MODE,
   DEFAULT_CONTROL_BINDINGS,
   DEFAULT_CROSSHAIR_SETTINGS,
-  DEFAULT_ENEMY_OUTLINE_SETTINGS,
   DEFAULT_HUD_OVERLAY_TOGGLES,
   DEFAULT_INVENTORY_OPEN_MODE,
   DEFAULT_WEAPON_ALIGNMENT,
   DEFAULT_MOVEMENT_SETTINGS,
   DEFAULT_WEAPON_RECOIL_PROFILES,
+  PRACTICE_MAP_IDS,
   type CrouchMode,
   type CrosshairColor,
-  type EnemyOutlineColor,
+  type FpsCap,
   type InventoryOpenMode,
+  type MapId,
   type WeaponRecoilProfiles,
+  type WindowMode,
   type GameSettings,
   type HudOverlayToggles,
   type PixelRatioScale,
@@ -42,20 +45,9 @@ function cloneDefaultCrosshairSettings() {
   };
 }
 
-function cloneDefaultEnemyOutlineSettings() {
-  return { ...DEFAULT_ENEMY_OUTLINE_SETTINGS };
-}
-
 const CROSSHAIR_COLORS: CrosshairColor[] = [
   "white",
   "green",
-  "red",
-  "yellow",
-  "cyan",
-  "magenta",
-];
-
-const ENEMY_OUTLINE_COLORS: EnemyOutlineColor[] = [
   "red",
   "yellow",
   "cyan",
@@ -76,12 +68,13 @@ export const DEFAULT_GAME_SETTINGS: GameSettings = {
   fov: 50,
   weaponAlignment: { ...DEFAULT_WEAPON_ALIGNMENT },
   crosshair: cloneDefaultCrosshairSettings(),
-  enemyOutline: cloneDefaultEnemyOutlineSettings(),
   movement: { ...DEFAULT_MOVEMENT_SETTINGS },
   weaponRecoilProfiles: {
     rifle: { ...DEFAULT_WEAPON_RECOIL_PROFILES.rifle },
     sniper: { ...DEFAULT_WEAPON_RECOIL_PROFILES.sniper },
   },
+  fpsCap: 60,
+  windowMode: "fullscreen",
 };
 
 export type PersistedSettings = {
@@ -90,6 +83,7 @@ export type PersistedSettings = {
   stressCount: StressModeCount;
   audioVolumes: AudioVolumeSettings;
   selectedCharacterId: string;
+  selectedMapId: MapId;
 };
 
 export function createDefaultPersistedSettings(): PersistedSettings {
@@ -100,7 +94,6 @@ export function createDefaultPersistedSettings(): PersistedSettings {
       keybinds: { ...DEFAULT_CONTROL_BINDINGS },
       weaponAlignment: { ...DEFAULT_WEAPON_ALIGNMENT },
       crosshair: cloneDefaultCrosshairSettings(),
-      enemyOutline: cloneDefaultEnemyOutlineSettings(),
       movement: { ...DEFAULT_MOVEMENT_SETTINGS },
       weaponRecoilProfiles: {
         rifle: { ...DEFAULT_WEAPON_RECOIL_PROFILES.rifle },
@@ -111,6 +104,7 @@ export function createDefaultPersistedSettings(): PersistedSettings {
     stressCount: 0,
     audioVolumes: { ...DEFAULT_AUDIO_VOLUMES },
     selectedCharacterId: "trooper",
+    selectedMapId: DEFAULT_PRACTICE_MAP_ID,
   };
 }
 
@@ -122,8 +116,28 @@ function readBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback;
 }
 
+function readHudOverlayToggles(
+  raw: unknown,
+  defaults: HudOverlayToggles,
+): HudOverlayToggles {
+  const hud = isRecord(raw) ? raw : {};
+  if (typeof hud.statsBar === "boolean") {
+    return { statsBar: hud.statsBar };
+  }
+  if (typeof hud.performance === "boolean") {
+    return { statsBar: hud.performance };
+  }
+  return { ...defaults };
+}
+
 function readString(value: unknown, fallback: string): string {
   return typeof value === "string" && value.length > 0 ? value : fallback;
+}
+
+function readMapId(value: unknown, fallback: MapId): MapId {
+  return PRACTICE_MAP_IDS.includes(value as MapId)
+    ? (value as MapId)
+    : fallback;
 }
 
 function readClampedNumber(
@@ -175,15 +189,6 @@ function readCrosshairColor(
     : fallback;
 }
 
-function readEnemyOutlineColor(
-  value: unknown,
-  fallback: EnemyOutlineColor,
-): EnemyOutlineColor {
-  return ENEMY_OUTLINE_COLORS.includes(value as EnemyOutlineColor)
-    ? (value as EnemyOutlineColor)
-    : fallback;
-}
-
 function readCrouchMode(
   value: unknown,
   fallback: CrouchMode,
@@ -199,6 +204,19 @@ function readInventoryOpenMode(
 ): InventoryOpenMode {
   return INVENTORY_OPEN_MODES.includes(value as InventoryOpenMode)
     ? (value as InventoryOpenMode)
+    : fallback;
+}
+
+const FPS_CAP_VALUES: FpsCap[] = [0, 30, 60, 120, 144, 240];
+const WINDOW_MODE_VALUES: WindowMode[] = ["windowed", "fullscreen", "borderless"];
+
+function readFpsCap(value: unknown, fallback: FpsCap): FpsCap {
+  return FPS_CAP_VALUES.includes(value as FpsCap) ? (value as FpsCap) : fallback;
+}
+
+function readWindowMode(value: unknown, fallback: WindowMode): WindowMode {
+  return WINDOW_MODE_VALUES.includes(value as WindowMode)
+    ? (value as WindowMode)
     : fallback;
 }
 
@@ -226,9 +244,6 @@ export function parsePersistedSettings(value: unknown): PersistedSettings {
     ? crosshair.weaponModifiers
     : {};
   const crosshairAds = isRecord(crosshair.ads) ? crosshair.ads : {};
-  const enemyOutline = isRecord(settings.enemyOutline)
-    ? settings.enemyOutline
-    : {};
   const movement = isRecord(settings.movement) ? settings.movement : {};
   const weaponRecoilProfiles = isRecord(settings.weaponRecoilProfiles)
     ? settings.weaponRecoilProfiles
@@ -239,7 +254,6 @@ export function parsePersistedSettings(value: unknown): PersistedSettings {
   const sniperRecoilProfile = isRecord(weaponRecoilProfiles.sniper)
     ? weaponRecoilProfiles.sniper
     : {};
-  const hudPanels = isRecord(value.hudPanels) ? value.hudPanels : {};
   const audioVolumes = isRecord(value.audioVolumes) ? value.audioVolumes : {};
   const hasExplicitReloadBinding = typeof keybinds.reload === "string" &&
     keybinds.reload.length > 0;
@@ -563,28 +577,6 @@ export function parsePersistedSettings(value: unknown): PersistedSettings {
           ),
         },
       },
-      enemyOutline: {
-        enabled: readBoolean(
-          enemyOutline.enabled,
-          defaults.settings.enemyOutline.enabled,
-        ),
-        color: readEnemyOutlineColor(
-          enemyOutline.color,
-          defaults.settings.enemyOutline.color,
-        ),
-        thickness: readClampedNumber(
-          enemyOutline.thickness,
-          0,
-          8,
-          defaults.settings.enemyOutline.thickness,
-        ),
-        opacity: readClampedNumber(
-          enemyOutline.opacity,
-          0,
-          1,
-          defaults.settings.enemyOutline.opacity,
-        ),
-      },
       movement: {
         rifleWalkSpeedScale: readClampedNumber(
           movement.rifleWalkSpeedScale,
@@ -707,21 +699,16 @@ export function parsePersistedSettings(value: unknown): PersistedSettings {
           ),
         },
       } as WeaponRecoilProfiles,
+      fpsCap: readFpsCap(settings.fpsCap, defaults.settings.fpsCap),
+      windowMode: readWindowMode(settings.windowMode, defaults.settings.windowMode),
     },
-    hudPanels: {
-      practice: readBoolean(hudPanels.practice, defaults.hudPanels.practice),
-      controls: readBoolean(hudPanels.controls, defaults.hudPanels.controls),
-      settings: readBoolean(hudPanels.settings, defaults.hudPanels.settings),
-      performance: readBoolean(
-        hudPanels.performance,
-        defaults.hudPanels.performance,
-      ),
-    },
+    hudPanels: readHudOverlayToggles(value.hudPanels, defaults.hudPanels),
     stressCount: readStressModeCount(value.stressCount, defaults.stressCount),
     selectedCharacterId: readString(
       value.selectedCharacterId,
       defaults.selectedCharacterId,
     ),
+    selectedMapId: readMapId(value.selectedMapId, defaults.selectedMapId),
     audioVolumes: {
       master: readClampedNumber(
         audioVolumes.master,

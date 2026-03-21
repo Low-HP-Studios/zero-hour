@@ -32,7 +32,7 @@ export type InventoryItemDefinition = {
 export const INVENTORY_ITEM_DEFS: Record<InventoryItemId, InventoryItemDefinition> = {
   weapon_rifle: {
     id: "weapon_rifle",
-    name: "M416 Rifle",
+    name: "AKM",
     icon: "AR",
     category: "weapon",
     maxStack: 1,
@@ -69,19 +69,6 @@ export type StaticGroundSpawn = {
   quantity: number;
   position: [number, number, number];
 };
-
-export const PRACTICE_AMMO_SPAWNS = {
-  rifle: [0.95, 0.14, 3.85] as [number, number, number],
-  sniper: [2.35, 0.14, 3.85] as [number, number, number],
-};
-
-// Spawn weapons plus basic rifle/sniper ammo pickups.
-export const STATIC_GROUND_SPAWNS: StaticGroundSpawn[] = [
-  { itemId: "weapon_rifle", quantity: 1, position: [1.4, 0.05, 3.5] },
-  { itemId: "weapon_sniper", quantity: 1, position: [1.9, 0.05, 3.5] },
-  { itemId: "ammo_rifle", quantity: 150, position: PRACTICE_AMMO_SPAWNS.rifle },
-  { itemId: "ammo_sniper", quantity: 30, position: PRACTICE_AMMO_SPAWNS.sniper },
-];
 
 export const BACKPACK_CAPACITY = 24;
 

@@ -1,7 +1,6 @@
 import {
   loadFbxAnimation,
   loadFbxAsset,
-  loadGlbWithAnimations,
   preloadTextureAsset,
   type PreloadManifestEntry,
 } from "./AssetLoader";
@@ -13,7 +12,7 @@ import {
 } from "./scene/scene-constants";
 
 export const TARGET_CHARACTER_MODEL_URL =
-  "/assets/models/character/robot/robot.gltf";
+  "/assets/models/character/Trooper/tactical guy.fbx";
 export const TARGET_IDLE_ANIMATION_URL =
   "/assets/animations/movement/standing/idle.fbx";
 
@@ -81,11 +80,11 @@ export function createDeferredBootPreloadManifest(
         load: () => preloadTextureAsset(SIGHT_TEXTURE_BASE + file),
       })),
     {
-      id: "target:robot",
-      label: "Target robot",
+      id: "target:character",
+      label: "Target character",
       weight: 6,
       bucket: "asset",
-      load: () => loadGlbWithAnimations(TARGET_CHARACTER_MODEL_URL),
+      load: () => loadFbxAsset(TARGET_CHARACTER_MODEL_URL),
     },
     {
       id: "target:idle",

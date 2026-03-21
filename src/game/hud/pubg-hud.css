@@ -1,7 +1,5 @@
-/* PUBG-style HUD — isolated from App.css */
-
 .pubg-hud {
-  --pubg-bg: rgba(0, 0, 0, 0.90);
+  --pubg-bg: rgba(0, 0, 0, 0.9);
   --pubg-bg-active: rgba(0, 0, 0, 0.95);
   --pubg-text: rgba(255, 255, 255, 0.92);
   --pubg-text-dim: rgba(255, 255, 255, 0.48);
@@ -17,7 +15,7 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-family: 'Rajdhani', sans-serif;
+  font-family: "Rajdhani", sans-serif;
   z-index: 10000;
   pointer-events: none;
   user-select: none;
@@ -33,8 +31,6 @@
   transform: translateX(-50%);
   align-items: center;
 }
-
-/* ── Weapon Slots Row ── */
 
 .pubg-weapon-slots {
   display: flex;
@@ -142,8 +138,6 @@
   color: var(--pubg-text-dim);
 }
 
-/* ── Ammo Display ── */
-
 .pubg-ammo-display {
   display: flex;
   align-items: baseline;
@@ -187,8 +181,6 @@
   transition: width 0.08s linear;
   border-radius: 1px;
 }
-
-/* ── Health Bar ── */
 
 .pubg-health-bar {
   width: 268px;

@@ -10,6 +10,7 @@
     "app": "concurrently -k \"vite\" \"wait-on http://localhost:1420 && electron .\"",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
+    "export:school-map": "node scripts/export-school-blockout.mjs",
     "build": "tsc && vite build",
     "build:electron": "tsc && vite build && electron-builder",
     "build:mac": "tsc && vite build && electron-builder --mac --publish never",

@@ -112,10 +112,18 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
   const [hudPanels] = useState<HudOverlayToggles>(persisted.hudPanels);
   const [audioVolumes, setAudioVolumes] = useState<AudioVolumeSettings>(persisted.audioVolumes);
   const [selectedCharacterId, setSelectedCharacterId] = useState<string>(persisted.selectedCharacterId);
+  const selectedMapId = persisted.selectedMapId;
 
   useEffect(() => {
-    savePersistedSettings({ settings, hudPanels, audioVolumes, stressCount: 0, selectedCharacterId });
-  }, [settings, hudPanels, audioVolumes, selectedCharacterId]);
+    savePersistedSettings({
+      settings,
+      hudPanels,
+      audioVolumes,
+      stressCount: 0,
+      selectedCharacterId,
+      selectedMapId,
+    });
+  }, [settings, hudPanels, audioVolumes, selectedCharacterId, selectedMapId]);
 
   useEffect(() => {
     if (!bindingCapture) return;
@@ -174,7 +182,7 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
   const showOnlineToast = useCallback(() => {
     toast.warning("Online Deployment is in alpha", {
       description:
-        "This lane is still under development. Practice Range is the only live module in the current build.",
+        "This lane is still under development. Practice is the only live module in the current build.",
       duration: 4200,
     });
   }, []);

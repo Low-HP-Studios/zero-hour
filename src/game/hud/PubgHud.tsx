@@ -24,7 +24,6 @@ function PubgHudInner({ player, visible }: PubgHudProps) {
     sniper: null,
   });
 
-  // Load weapon models (cache-hitting — already loaded by the game scene)
   useEffect(() => {
     let disposed = false;
 
@@ -35,9 +34,7 @@ function PubgHudInner({ player, visible }: PubgHudProps) {
       .then(([rifle, sniper]) => {
         if (!disposed) setModels({ rifle, sniper });
       })
-      .catch(() => {
-        // Models may not be available — thumbnails will use fallback text
-      });
+      .catch(() => {});
 
     return () => {
       disposed = true;
@@ -54,7 +51,6 @@ function PubgHudInner({ player, visible }: PubgHudProps) {
 
   return (
     <>
-      {/* Weapon slots — bottom right */}
       <div className="pubg-hud pubg-hud--right">
         <div className="pubg-weapon-slots">
           <WeaponSlotCard
@@ -72,7 +68,6 @@ function PubgHudInner({ player, visible }: PubgHudProps) {
         </div>
       </div>
 
-      {/* Ammo + health bar — bottom center */}
       <div className="pubg-hud pubg-hud--center">
         {activeSlot.hasWeapon ? (
           <AmmoDisplay

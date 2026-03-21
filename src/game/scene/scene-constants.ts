@@ -81,6 +81,7 @@ export const PATH_POINTS: [number, number][] = [
 export const CHARACTER_MODEL_URL =
   '/assets/models/character/Trooper/tactical guy.fbx';
 export const CHARACTER_TARGET_HEIGHT = 1.65;
+export const PRACTICE_TARGET_HEIGHT = CHARACTER_TARGET_HEIGHT;
 export const CHARACTER_YAW_OFFSET = Math.PI;
 export const CHARACTER_TEXTURE_BASE =
   '/assets/models/character/Trooper/tactical guy.fbm/';

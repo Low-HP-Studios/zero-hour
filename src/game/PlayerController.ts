@@ -1,6 +1,11 @@
 import { useEffect, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
+import {
+  sampleWalkableSurfaceHeight,
+  type BlockingVolume,
+  type WalkableSurface,
+} from './map-layout';
 import type { WeaponKind } from './Weapon';
 import {
   type AimSensitivitySettings,
@@ -19,10 +24,6 @@ import {
   isSprintInputEligible,
   rotatePlanarVelocityTowards,
 } from './movement';
-import {
-  PLAYER_SPAWN_PITCH,
-  PLAYER_SPAWN_POSITION,
-} from './scene/scene-constants';
 
 type PlayerAction =
   | 'pickup'
@@ -42,7 +43,13 @@ type MovementProfile = {
 type UsePlayerControllerOptions = {
   collisionRects: CollisionRect[];
   collisionCircles: CollisionCircle[];
+  blockingVolumes?: readonly BlockingVolume[];
   worldBounds: WorldBounds;
+  spawnPosition: [number, number, number];
+  groundLevelY?: number;
+  walkableSurfaces?: readonly WalkableSurface[];
+  spawnYaw: number;
+  spawnPitch: number;
   sensitivity: AimSensitivitySettings;
   keybinds: ControlBindings;
   crouchMode: CrouchMode;
@@ -56,6 +63,8 @@ type UsePlayerControllerOptions = {
   onUserGesture: () => void;
   getWeaponEquipped: () => boolean;
   getActiveWeapon: () => WeaponKind;
+  getIsWeaponBusy: () => boolean;
+  onPauseMenuToggle?: () => void;
 };
 
 export type RunFacingPhase = 'off' | 'start' | 'running' | 'stop';
@@ -76,6 +85,7 @@ export type PlayerControllerApi = {
   getViewModeLerp: () => number;
   isADS: () => boolean;
   getAdsLerp: () => number;
+  getSniperZoom: () => number;
   isSprinting: () => boolean;
   isSprintPressed: () => boolean;
   isWalkPressed: () => boolean;
@@ -98,7 +108,6 @@ export type PlayerControllerApi = {
 type KeyState = Record<string, boolean>;
 
 const PLAYER_RADIUS = 0.35;
-const GROUND_Y = 0;
 const WALK_SPEED = 5.3;
 const SPRINT_SPEED = 8.2;
 const LOOK_SENSITIVITY = 0.0022;
@@ -112,16 +121,21 @@ const JUMP_SPEED = 7.8;
 const JUMP_PENALTY_PER_CONSECUTIVE = 0.12;
 const MAX_CONSECUTIVE_JUMP_PENALTY = 0.4;
 const CONSECUTIVE_JUMP_RESET_MS = 800;
+const PLAYER_STAND_HEIGHT = 1.78;
+const PLAYER_CROUCH_HEIGHT = 1.16;
 const GROUND_ACCEL_RATE = 18;
 const GROUND_DECEL_RATE = 22;
 const DIRECTION_REVERSAL_DECEL_RATE = 30;
+const GROUND_STEP_UP_HEIGHT = 0.9;
+const GROUND_STEP_DOWN_HEIGHT = 1.8;
 
 const CAMERA_ARM_LENGTH = 2.25;
 const CAMERA_ARM_LENGTH_ADS = 0.0;
 const CAMERA_ARM_LENGTH_SNIPER_ADS = 0.78;
-const CAMERA_DEFAULT_ELEVATION = 0.23;
-const CAMERA_MIN_ELEVATION = 0.05;
-const CAMERA_MAX_ELEVATION = 1.2;
+const CAMERA_HEIGHT_BIAS = 0.55;
+const CAMERA_ARM_PITCH_SHORTEN = 0.3;
+const CAMERA_MIN_ARM_SCALE = 0.55;
+const CAMERA_MIN_Y_ABOVE_FEET = 0.5;
 const LOOK_AT_HEIGHT = 1.2;
 const SHOULDER_OFFSET = 0.2;
 const SHOULDER_OFFSET_ADS = 0.2;
@@ -145,7 +159,98 @@ const RUN_TRANSITION_BODY_YAW_DAMP = 16;
 const ADS_BODY_YAW_DAMP = 22;
 const SHOOT_BODY_YAW_DAMP = 34;
 const SHOOT_ALIGN_WINDOW_MS = 180;
+const CAMERA_BLOCKING_MARGIN = 0.38;
 const HEAD_TURN_DEAD_ZONE = THREE.MathUtils.degToRad(45);
+
+const cameraClipDir = new THREE.Vector3();
+const cameraClipBoxMin = new THREE.Vector3();
+const cameraClipBoxMax = new THREE.Vector3();
+
+function rayAabbIntersectEnterDistance(
+  origin: THREE.Vector3,
+  dir: THREE.Vector3,
+  maxT: number,
+  boxMin: THREE.Vector3,
+  boxMax: THREE.Vector3,
+): number | null {
+  let tMin = 0;
+  let tMax = maxT;
+  for (let i = 0; i < 3; i++) {
+    const o = origin.getComponent(i);
+    const d = dir.getComponent(i);
+    const mn = boxMin.getComponent(i);
+    const mx = boxMax.getComponent(i);
+    if (Math.abs(d) < 1e-8) {
+      if (o < mn || o > mx) return null;
+      continue;
+    }
+    const invD = 1 / d;
+    let t0 = (mn - o) * invD;
+    let t1 = (mx - o) * invD;
+    if (t0 > t1) {
+      const s = t0;
+      t0 = t1;
+      t1 = s;
+    }
+    tMin = Math.max(tMin, t0);
+    tMax = Math.min(tMax, t1);
+    if (tMin > tMax) return null;
+  }
+  if (tMin > maxT) return null;
+  if (tMin < 0) {
+    if (tMax < 0 || tMax > maxT) return null;
+    return 0;
+  }
+  return tMin;
+}
+
+function clipThirdPersonCameraToVolumes(
+  origin: THREE.Vector3,
+  target: THREE.Vector3,
+  volumes: readonly BlockingVolume[],
+  margin: number,
+  out: THREE.Vector3,
+): void {
+  cameraClipDir.subVectors(target, origin);
+  const maxDist = cameraClipDir.length();
+  if (maxDist < 1e-4) {
+    out.copy(target);
+    return;
+  }
+  cameraClipDir.normalize();
+  let minHit = maxDist;
+  for (const volume of volumes) {
+    const hx = volume.size[0] / 2;
+    const hy = volume.size[1] / 2;
+    const hz = volume.size[2] / 2;
+    cameraClipBoxMin.set(
+      volume.center[0] - hx,
+      volume.center[1] - hy,
+      volume.center[2] - hz,
+    );
+    cameraClipBoxMax.set(
+      volume.center[0] + hx,
+      volume.center[1] + hy,
+      volume.center[2] + hz,
+    );
+    const t = rayAabbIntersectEnterDistance(
+      origin,
+      cameraClipDir,
+      maxDist,
+      cameraClipBoxMin,
+      cameraClipBoxMax,
+    );
+    if (t !== null && t > 0.02 && t < minHit) {
+      minHit = t;
+    }
+  }
+  if (minHit >= maxDist - 1e-3) {
+    out.copy(target);
+    return;
+  }
+  const dist = Math.max(0.12, minHit - margin);
+  out.copy(origin).addScaledVector(cameraClipDir, Math.min(dist, maxDist));
+}
 const MAX_FREE_LOOK_YAW_OFFSET = THREE.MathUtils.degToRad(120);
 const FORWARD_DIAGONAL_BODY_YAW_THRESHOLD = 0.35;
 const DIAGONAL_BODY_YAW_OFFSET = THREE.MathUtils.degToRad(30);
@@ -159,7 +264,13 @@ const FPP_EXIT_VISUAL_THRESHOLD = 0.75;
 export function usePlayerController({
   collisionRects,
   collisionCircles,
+  blockingVolumes,
   worldBounds,
+  spawnPosition,
+  groundLevelY,
+  walkableSurfaces,
+  spawnYaw,
+  spawnPitch,
   sensitivity,
   keybinds,
   crouchMode,
@@ -173,19 +284,24 @@ export function usePlayerController({
   onUserGesture,
   getWeaponEquipped,
   getActiveWeapon,
+  getIsWeaponBusy,
+  onPauseMenuToggle,
 }: UsePlayerControllerOptions): PlayerControllerApi {
   const camera = useThree((state) => state.camera);
   const gl = useThree((state) => state.gl);
+  const initialGroundY = groundLevelY ?? spawnPosition[1];
 
   const keyStateRef = useRef<KeyState>({});
-  const positionRef = useRef(PLAYER_SPAWN_POSITION.clone());
+  const positionRef = useRef(
+    new THREE.Vector3(spawnPosition[0], spawnPosition[1], spawnPosition[2]),
+  );
   const velocityRef = useRef(new THREE.Vector2(0, 0));
   const moveInputRef = useRef(new THREE.Vector2(0, 0));
   const sprintPressedRef = useRef(false);
   const walkPressedRef = useRef(false);
   const crouchedRef = useRef(false);
   const resolvedXZRef = useRef(
-    new THREE.Vector2(positionRef.current.x, positionRef.current.z),
+    new THREE.Vector2(spawnPosition[0], spawnPosition[2]),
   );
   const pointerLockedRef = useRef(false);
   const triggerHeldRef = useRef(false);
@@ -205,14 +321,14 @@ export function usePlayerController({
   const jumpQueuedRef = useRef(false);
   const lastLandedAtRef = useRef(0);
   const consecutiveJumpsRef = useRef(0);
-  const yawRef = useRef(0);
-  const bodyYawRef = useRef(0);
-  const pitchRef = useRef(0);
-  const targetYawRef = useRef(0);
-  const targetBodyYawRef = useRef(0);
+  const yawRef = useRef(spawnYaw);
+  const bodyYawRef = useRef(spawnYaw);
+  const pitchRef = useRef(spawnPitch);
+  const targetYawRef = useRef(spawnYaw);
+  const targetBodyYawRef = useRef(spawnYaw);
   const shootAlignUntilRef = useRef(0);
   const runFacingPhaseRef = useRef<RunFacingPhase>('off');
-  const runFacingYawRef = useRef(0);
+  const runFacingYawRef = useRef(spawnYaw);
   const headYawOffsetRef = useRef(0);
   const targetPitchRef = useRef(0);
   const pendingMouseRef = useRef(new THREE.Vector2(0, 0));
@@ -230,10 +346,13 @@ export function usePlayerController({
   const inventoryOpenModeRef = useRef<InventoryOpenMode>(inventoryOpenMode);
   const leanTargetRef = useRef(0);
   const leanLerpRef = useRef(0);
+  const sniperZoomRef = useRef(1); // 1 = default, 2 = 2x zoom
   const tempLookAtRef = useRef(new THREE.Vector3());
   const tempAimDirRef = useRef(new THREE.Vector3());
   const tempFirstPersonCameraPosRef = useRef(new THREE.Vector3());
   const tempThirdPersonCameraPosRef = useRef(new THREE.Vector3());
+  const cameraClipEyeRef = useRef(new THREE.Vector3());
+  const cameraClipOutRef = useRef(new THREE.Vector3());
   const snapshotAccumulatorRef = useRef(0);
   const snapshotObjectRef = useRef<PlayerSnapshot>({
     ...DEFAULT_PLAYER_SNAPSHOT,
@@ -244,6 +363,7 @@ export function usePlayerController({
   const userGestureCallbackRef = useRef(onUserGesture);
   const weaponEquippedGetterRef = useRef(getWeaponEquipped);
   const activeWeaponGetterRef = useRef(getActiveWeapon);
+  const weaponBusyGetterRef = useRef(getIsWeaponBusy);
   const sensitivityRef = useRef(sensitivity);
   const keybindsRef = useRef(keybinds);
   const crouchModeSettingRef = useRef(crouchMode);
@@ -251,6 +371,14 @@ export function usePlayerController({
   const fovRef = useRef(fov);
   const inputEnabledRef = useRef(inputEnabled);
   const cameraEnabledRef = useRef(cameraEnabled);
+  const groundLevelYRef = useRef(initialGroundY);
+  const walkableSurfacesRef = useRef(walkableSurfaces ?? []);
+  const blockingVolumesRef = useRef(blockingVolumes ?? []);
+  const onPauseMenuToggleRef = useRef(onPauseMenuToggle);
+
+  useEffect(() => {
+    onPauseMenuToggleRef.current = onPauseMenuToggle;
+  }, [onPauseMenuToggle]);
 
   useEffect(() => {
     actionCallbackRef.current = onAction;
@@ -275,6 +403,10 @@ export function usePlayerController({
   useEffect(() => {
     activeWeaponGetterRef.current = getActiveWeapon;
   }, [getActiveWeapon]);
+
+  useEffect(() => {
+    weaponBusyGetterRef.current = getIsWeaponBusy;
+  }, [getIsWeaponBusy]);
 
   useEffect(() => {
     sensitivityRef.current = sensitivity;
@@ -336,6 +468,18 @@ export function usePlayerController({
   useEffect(() => {
     cameraEnabledRef.current = cameraEnabled;
   }, [cameraEnabled]);
+
+  useEffect(() => {
+    groundLevelYRef.current = groundLevelY ?? spawnPosition[1];
+  }, [groundLevelY, spawnPosition]);
+
+  useEffect(() => {
+    walkableSurfacesRef.current = walkableSurfaces ?? [];
+  }, [walkableSurfaces]);
+
+  useEffect(() => {
+    blockingVolumesRef.current = blockingVolumes ?? [];
+  }, [blockingVolumes]);
 
   useEffect(() => {
     const element = gl.domElement;
@@ -421,6 +565,11 @@ export function usePlayerController({
         }
       }
 
+      if (event.code === 'Escape' && !event.repeat && onPauseMenuToggleRef.current) {
+        event.preventDefault();
+        onPauseMenuToggleRef.current();
+      }
+
       if (
         event.code === crouchBinding &&
         (pointerLockedRef.current || inventoryPanelOpenRef.current)
@@ -479,7 +628,9 @@ export function usePlayerController({
       }
       if (event.button === 2) {
         adsRef.current =
-          pointerLockedRef.current && weaponEquippedGetterRef.current();
+          pointerLockedRef.current &&
+          weaponEquippedGetterRef.current() &&
+          !weaponBusyGetterRef.current();
         return;
       }
 
@@ -518,6 +669,19 @@ export function usePlayerController({
 
     const onContextMenu = (event: Event) => {
       event.preventDefault();
+    };
+
+    const onWheel = (event: WheelEvent) => {
+      if (!pointerLockedRef.current || !inputEnabledRef.current) return;
+      if (!adsRef.current || activeWeaponGetterRef.current() !== 'sniper') return;
+      event.preventDefault();
+      if (event.deltaY < 0) {
+        // Scroll up → zoom in
+        sniperZoomRef.current = Math.min(2, sniperZoomRef.current + 0.25);
+      } else if (event.deltaY > 0) {
+        // Scroll down → zoom out
+        sniperZoomRef.current = Math.max(1, sniperZoomRef.current - 0.25);
+      }
     };
 
     const onMouseMove = (event: MouseEvent) => {
@@ -564,6 +728,7 @@ export function usePlayerController({
     window.addEventListener('mouseup', onMouseUp);
     window.addEventListener('mousemove', onMouseMove);
     element.addEventListener('contextmenu', onContextMenu);
+    element.addEventListener('wheel', onWheel, { passive: false });
     document.addEventListener('pointerlockchange', onPointerLockChange);
 
     return () => {
@@ -573,6 +738,7 @@ export function usePlayerController({
       window.removeEventListener('mouseup', onMouseUp);
       window.removeEventListener('mousemove', onMouseMove);
       element.removeEventListener('contextmenu', onContextMenu);
+      element.removeEventListener('wheel', onWheel);
       document.removeEventListener('pointerlockchange', onPointerLockChange);
     };
   }, [gl.domElement]);
@@ -588,7 +754,7 @@ export function usePlayerController({
       inputEnabledRef.current && pointerLockedRef.current && !inventoryOpen;
     const weaponEquipped = weaponEquippedGetterRef.current();
     const activeWeapon = activeWeaponGetterRef.current();
-    if (!weaponEquipped && adsRef.current) {
+    if ((!weaponEquipped || weaponBusyGetterRef.current()) && adsRef.current) {
       adsRef.current = false;
     }
     const lookSensitivity = resolveLookSensitivity(
@@ -839,6 +1005,13 @@ export function usePlayerController({
       PLAYER_RADIUS,
       collisionCircles,
     );
+    resolveBlockingVolumeCollisions(
+      resolvedXZRef.current,
+      PLAYER_RADIUS,
+      positionRef.current.y,
+      crouchedRef.current ? PLAYER_CROUCH_HEIGHT : PLAYER_STAND_HEIGHT,
+      blockingVolumesRef.current,
+    );
 
     resolvedXZRef.current.y += velocityRef.current.y * delta;
     resolvedXZRef.current.y = clamp(
@@ -852,12 +1025,34 @@ export function usePlayerController({
       PLAYER_RADIUS,
       collisionCircles,
     );
+    resolveBlockingVolumeCollisions(
+      resolvedXZRef.current,
+      PLAYER_RADIUS,
+      positionRef.current.y,
+      crouchedRef.current ? PLAYER_CROUCH_HEIGHT : PLAYER_STAND_HEIGHT,
+      blockingVolumesRef.current,
+    );
 
     positionRef.current.set(
       resolvedXZRef.current.x,
       positionRef.current.y,
       resolvedXZRef.current.y,
     );
+
+    const readGroundSample = () => {
+      const surfaces = walkableSurfacesRef.current;
+      if (surfaces.length === 0) {
+        return undefined;
+      }
+
+      return sampleWalkableSurfaceHeight(
+        surfaces,
+        positionRef.current.x,
+        positionRef.current.z,
+        positionRef.current.y,
+        GROUND_STEP_UP_HEIGHT,
+      );
+    };
 
     const nowJumpMs = performance.now();
     if (
@@ -894,18 +1089,50 @@ export function usePlayerController({
             : GRAVITY_DOWN;
       verticalVelocityRef.current += gravity * delta;
       positionRef.current.y += verticalVelocityRef.current * delta;
+      const groundSample = readGroundSample();
 
-      if (positionRef.current.y <= GROUND_Y) {
-        positionRef.current.y = GROUND_Y;
+      if (
+        typeof groundSample === 'number' &&
+        verticalVelocityRef.current <= 0 &&
+        positionRef.current.y <= groundSample
+      ) {
+        positionRef.current.y = groundSample;
+        verticalVelocityRef.current = 0;
+        groundedRef.current = true;
+        airborneMomentumSpeedRef.current = 0;
+        lastLandedAtRef.current = nowJumpMs;
+      } else if (
+        walkableSurfacesRef.current.length === 0 &&
+        positionRef.current.y <= groundLevelYRef.current
+      ) {
+        positionRef.current.y = groundLevelYRef.current;
         verticalVelocityRef.current = 0;
         groundedRef.current = true;
         airborneMomentumSpeedRef.current = 0;
         lastLandedAtRef.current = nowJumpMs;
       }
     } else {
-      groundedRef.current = true;
-      positionRef.current.y = GROUND_Y;
-      airborneMomentumSpeedRef.current = 0;
+      const groundSample = readGroundSample();
+
+      if (typeof groundSample === 'number') {
+        const deltaToGround = groundSample - positionRef.current.y;
+        if (
+          deltaToGround <= GROUND_STEP_UP_HEIGHT &&
+          deltaToGround >= -GROUND_STEP_DOWN_HEIGHT
+        ) {
+          groundedRef.current = true;
+          positionRef.current.y = groundSample;
+          airborneMomentumSpeedRef.current = 0;
+        } else if (deltaToGround < -GROUND_STEP_DOWN_HEIGHT) {
+          groundedRef.current = false;
+        }
+      } else if (walkableSurfacesRef.current.length > 0) {
+        groundedRef.current = false;
+      } else {
+        groundedRef.current = true;
+        positionRef.current.y = groundLevelYRef.current;
+        airborneMomentumSpeedRef.current = 0;
+      }
     }
 
     if (
@@ -1025,10 +1252,11 @@ export function usePlayerController({
       fppCameraPos.z += -sinCurrentYaw * 0.03 * rifleADS;
     }
 
-    const elevationAngle = clamp(
-      CAMERA_DEFAULT_ELEVATION - currentPitch * 0.6 - sniperADS * 0.05,
-      CAMERA_MIN_ELEVATION,
-      CAMERA_MAX_ELEVATION,
+    // Arm shortens at extreme pitch (camera comes closer when looking up/down)
+    const pitchMagnitude = Math.abs(currentPitch);
+    const armShortenFactor = Math.max(
+      CAMERA_MIN_ARM_SCALE,
+      1 - pitchMagnitude * CAMERA_ARM_PITCH_SHORTEN,
     );
 
     const armLenAdsTarget =
@@ -1039,34 +1267,42 @@ export function usePlayerController({
       activeWeapon === 'sniper'
         ? SHOULDER_OFFSET_SNIPER_ADS
         : SHOULDER_OFFSET_ADS;
-    const armLen = THREE.MathUtils.lerp(
+    const baseArmLen = THREE.MathUtils.lerp(
       CAMERA_ARM_LENGTH,
       armLenAdsTarget,
       adsT,
     );
+    const armLen = baseArmLen * armShortenFactor;
     const shoulder = THREE.MathUtils.lerp(
       SHOULDER_OFFSET,
       shoulderAdsTarget,
       adsT,
     );
 
-    const horizontalDist = armLen * Math.cos(elevationAngle);
-    const verticalDist = armLen * Math.sin(elevationAngle);
+    // PUBG-style orbit: camera extends opposite to aimDir from pivot.
+    // This keeps the character head consistently near the crosshair.
+    const orbitHorizontalDist = armLen * pitchCos;
+    const orbitVerticalDist = armLen * (-Math.sin(currentPitch));
 
     const backX = sinCurrentYaw;
     const backZ = cosCurrentYaw;
     const rightX = cosCurrentYaw;
     const rightZ = -sinCurrentYaw;
 
-    const tppCameraPos = tempThirdPersonCameraPosRef.current;
-    tppCameraPos.set(
-      positionRef.current.x + horizontalDist * backX + shoulder * rightX,
+    // Pivot = character shoulder area + height bias so head sits just below crosshair
+    const pivotY =
       positionRef.current.y +
-        LOOK_AT_HEIGHT +
-        crouchLookHeightOffset +
-        verticalDist -
-        sniperADS * 0.08,
-      positionRef.current.z + horizontalDist * backZ + shoulder * rightZ,
+      LOOK_AT_HEIGHT +
+      crouchLookHeightOffset +
+      CAMERA_HEIGHT_BIAS -
+      sniperADS * 0.08;
+
+    const tppCameraPos = tempThirdPersonCameraPosRef.current;
+    const rawCamY = pivotY + orbitVerticalDist;
+    tppCameraPos.set(
+      positionRef.current.x + orbitHorizontalDist * backX + shoulder * rightX,
+      Math.max(positionRef.current.y + CAMERA_MIN_Y_ABOVE_FEET, rawCamY),
+      positionRef.current.z + orbitHorizontalDist * backZ + shoulder * rightZ,
     );
     if (Math.abs(leanT) > 0.001) {
       const leanOffsetX = leanT * LEAN_CAMERA_OFFSET_X;
@@ -1077,12 +1313,42 @@ export function usePlayerController({
     }
 
     if (cameraEnabledRef.current) {
-      camera.position.copy(tppCameraPos).lerp(fppCameraPos, viewT);
+      const clipEye = cameraClipEyeRef.current;
+      clipEye.set(
+        positionRef.current.x,
+        pivotY,
+        positionRef.current.z,
+      );
+      if (Math.abs(leanT) > 0.001) {
+        const leanOffsetX = leanT * LEAN_CAMERA_OFFSET_X;
+        clipEye.x += cosCurrentYaw * leanOffsetX;
+        clipEye.z += -sinCurrentYaw * leanOffsetX;
+      }
+      const clippedTpp = cameraClipOutRef.current;
+      const volumes = blockingVolumesRef.current;
+      if (volumes.length > 0 && viewT < 0.995) {
+        clipThirdPersonCameraToVolumes(
+          clipEye,
+          tppCameraPos,
+          volumes,
+          CAMERA_BLOCKING_MARGIN,
+          clippedTpp,
+        );
+        camera.position.copy(clippedTpp).lerp(fppCameraPos, viewT);
+      } else {
+        camera.position.copy(tppCameraPos).lerp(fppCameraPos, viewT);
+      }
+
+      // Reset sniper zoom when not ADS or not sniper
+      if (!adsRef.current || activeWeapon !== 'sniper') {
+        sniperZoomRef.current = 1;
+      }
 
       if ('isPerspectiveCamera' in camera && camera.isPerspectiveCamera) {
         const baseFov = fovRef.current;
+        const sniperAdsFov = SNIPER_ADS_FOV / sniperZoomRef.current;
         const adsFovTarget =
-          activeWeapon === 'sniper' ? SNIPER_ADS_FOV : RIFLE_ADS_FOV;
+          activeWeapon === 'sniper' ? sniperAdsFov : RIFLE_ADS_FOV;
         const targetFov = THREE.MathUtils.lerp(baseFov, adsFovTarget, adsT);
         const perspectiveCamera = camera as THREE.PerspectiveCamera;
         const nextFov = THREE.MathUtils.damp(
@@ -1179,6 +1445,7 @@ export function usePlayerController({
     getViewModeLerp: () => viewModeLerpRef.current,
     isADS: () => adsRef.current,
     getAdsLerp: () => adsLerpRef.current,
+    getSniperZoom: () => sniperZoomRef.current,
     isSprinting: () => sprintingRef.current,
     isSprintPressed: () => sprintPressedRef.current,
     isWalkPressed: () => walkPressedRef.current,
@@ -1235,7 +1502,7 @@ export function usePlayerController({
         document.exitPointerLock();
       }
     },
-    setPose: (position, yawRadians, pitchRadians = PLAYER_SPAWN_PITCH) => {
+    setPose: (position, yawRadians, pitchRadians = spawnPitch) => {
       positionRef.current.copy(position);
       resolvedXZRef.current.set(position.x, position.z);
       velocityRef.current.set(0, 0);
@@ -1320,6 +1587,33 @@ function resolveCircleCollisions(
 ) {
   for (const circle of collisionCircles) {
     resolveCircleCircle(positionXZ, radius, circle);
+  }
+}
+
+function resolveBlockingVolumeCollisions(
+  positionXZ: THREE.Vector2,
+  radius: number,
+  footY: number,
+  height: number,
+  blockingVolumes: readonly BlockingVolume[],
+) {
+  const playerTop = footY + height;
+
+  for (const volume of blockingVolumes) {
+    const halfHeight = volume.size[1] / 2;
+    const minY = volume.center[1] - halfHeight;
+    const maxY = volume.center[1] + halfHeight;
+
+    if (playerTop <= minY || footY >= maxY) {
+      continue;
+    }
+
+    resolveCircleRect(positionXZ, radius, {
+      minX: volume.center[0] - volume.size[0] / 2,
+      maxX: volume.center[0] + volume.size[0] / 2,
+      minZ: volume.center[2] - volume.size[2] / 2,
+      maxZ: volume.center[2] + volume.size[2] / 2,
+    });
   }
 }
 

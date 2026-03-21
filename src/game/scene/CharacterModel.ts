@@ -441,7 +441,7 @@ export function removeRootMotion(clip: THREE.AnimationClip): void {
   }
 }
 
-async function applyCharacterTextures(
+export async function applyCharacterTextures(
   model: THREE.Group,
   textureBase?: string,
   dynamicTextures?: CharacterTextureEntry[] | null,

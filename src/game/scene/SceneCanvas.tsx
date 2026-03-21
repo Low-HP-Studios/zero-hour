@@ -15,7 +15,6 @@ import type { AudioVolumeSettings } from "../Audio";
 import { markBootEvent } from "../boot-trace";
 import {
   Targets,
-  createDefaultTargets,
   resetTargets,
   RESPAWN_DELAY_MS,
 } from "../Targets";
@@ -38,14 +37,18 @@ import {
   type AimingState,
   type ShotFiredState,
 } from "./GameplayRuntime";
+import type { BlockingVolume } from "../map-layout";
 import type { CharacterModelOverride } from "./CharacterModel";
-import { MapEnvironment, StressBoxes } from "./MapEnvironment";
+import { PracticeMapEnvironment, StressBoxes } from "./MapEnvironment";
+import {
+  clonePracticeMapTargets,
+  RANGE_PRACTICE_MAP,
+  type PracticeMapDefinition,
+} from "./practice-maps";
 import {
   CANVAS_CAMERA,
   CANVAS_GL,
-  STATIC_COLLIDERS,
   TARGET_FLASH_MS,
-  WORLD_BOUNDS,
 } from "./scene-constants";
 
 export type { HitMarkerKind, AimingState, ShotFiredState };
@@ -83,12 +86,13 @@ type SceneProps = {
   settings: GameSettings;
   audioVolumes: AudioVolumeSettings;
   stressCount: StressModeCount;
+  practiceMap: PracticeMapDefinition;
   booting: boolean;
   deferredAssetsEnabled: boolean;
   presentation: ScenePresentation;
   onPlayerSnapshot: (snapshot: PlayerSnapshot) => void;
   onPerfMetrics: (metrics: PerfMetrics) => void;
-  onHitMarker: (kind: HitMarkerKind) => void;
+  onHitMarker: (kind: HitMarkerKind, damage: number, targetId: string) => void;
   onShotFired: (state: ShotFiredState) => void;
   onWeaponEquippedChange: (equipped: boolean) => void;
   onActiveWeaponChange: (weapon: WeaponKind) => void;
@@ -96,6 +100,7 @@ type SceneProps = {
   onAimingStateChange: (state: AimingState) => void;
   onBootReady: () => void;
   characterOverride?: CharacterModelOverride;
+  onPauseMenuToggle?: () => void;
 };
 
 function waitForAnimationFrame() {
@@ -227,6 +232,7 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
   settings,
   audioVolumes,
   stressCount,
+  practiceMap,
   booting,
   deferredAssetsEnabled,
   presentation,
@@ -240,10 +246,11 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
   onAimingStateChange,
   onBootReady,
   characterOverride,
+  onPauseMenuToggle,
 }: SceneProps, ref) {
   const [canvasEpoch, setCanvasEpoch] = useState(0);
   const [targets, setTargets] = useState<TargetState[]>(() =>
-    createDefaultTargets()
+    clonePracticeMapTargets(practiceMap.targets),
   );
   const sceneTargetsRef = useRef(targets);
   const runtimeRef = useRef<GameplayRuntimeHandle | null>(null);
@@ -253,6 +260,26 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
   const resetTimeoutsRef = useRef<Map<string, number>>(new Map());
   const compileReady = booting && runtimeAssetsReady;
   const lobbyFrameCapEnabled = presentation.phase !== "playing";
+  const [glbCollisionVolumes, setGlbCollisionVolumes] = useState<readonly BlockingVolume[]>([]);
+
+  const handleCollisionReady = useCallback((volumes: readonly BlockingVolume[]) => {
+    setGlbCollisionVolumes(volumes);
+  }, []);
+
+  const runtimePracticeMap = useMemo<PracticeMapDefinition>(() => {
+    if (glbCollisionVolumes.length === 0) return practiceMap;
+    return {
+      ...practiceMap,
+      blockingVolumes: [
+        ...(practiceMap.blockingVolumes ?? []),
+        ...glbCollisionVolumes,
+      ],
+    };
+  }, [practiceMap, glbCollisionVolumes]);
+
+  const renderedPracticeMap = !booting && presentation.phase === "playing"
+    ? practiceMap
+    : RANGE_PRACTICE_MAP;
   // Don't advance frames during menu — scene is hidden; only pace during returning transition
   const paceEnabled = lobbyFrameCapEnabled && presentation.phase !== "menu";
 
@@ -339,6 +366,16 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
       setTargets((previousTargets) => resetTargets(previousTargets));
     });
   }, []);
+
+  useEffect(() => {
+    for (const timeoutId of resetTimeoutsRef.current.values()) {
+      window.clearTimeout(timeoutId);
+    }
+    resetTimeoutsRef.current.clear();
+    startTransition(() => {
+      setTargets(clonePracticeMapTargets(practiceMap.targets));
+    });
+  }, [practiceMap]);
 
   const handleSceneContextLost = useCallback(() => {
     if (recoveringContextRef.current) {
@@ -436,23 +473,27 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
         decay={1.7}
         color={MENU_KEY_LIGHT}
       />
-      <MapEnvironment
+      <PracticeMapEnvironment
+        practiceMap={renderedPracticeMap}
         shadows={settings.shadows}
         theme={worldTheme}
         floorGridOpacity={floorGridOpacity}
+        onCollisionReady={handleCollisionReady}
       />
       <Targets
         targets={targets}
         shadows={settings.shadows && worldTheme > 0.6}
         reveal={presentation.targetReveal}
-        outline={settings.enemyOutline}
         loadCharacterAsset={deferredAssetsEnabled}
+        characterOverride={characterOverride}
       />
-      <StressBoxes count={stressCount} shadows={settings.shadows} />
+      <StressBoxes
+        count={practiceMap.supportsStressMode ? stressCount : 0}
+        shadows={settings.shadows}
+      />
       <GameplayRuntime
         ref={runtimeRef}
-        collisionRects={STATIC_COLLIDERS}
-        worldBounds={WORLD_BOUNDS}
+        practiceMap={runtimePracticeMap}
         audioVolumes={audioVolumes}
         presentation={presentation}
                 sensitivity={settings.sensitivity}
@@ -477,6 +518,7 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
         deferredAssetsEnabled={deferredAssetsEnabled}
         onCriticalAssetsReadyChange={setRuntimeAssetsReady}
         characterOverride={characterOverride}
+        onPauseMenuToggle={onPauseMenuToggle}
       />
       <SceneBootCompiler enabled={compileReady} onReady={onBootReady} />
       {settings.showR3fPerf ? <Perf position="top-left" minimal /> : null}

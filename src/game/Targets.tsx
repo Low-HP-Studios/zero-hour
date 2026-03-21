@@ -2,26 +2,27 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
-import { loadFbxAnimation, loadGlbWithAnimations } from "./AssetLoader";
+import { loadFbxAnimation, loadFbxAsset } from "./AssetLoader";
 import {
   TARGET_CHARACTER_MODEL_URL,
   TARGET_IDLE_ANIMATION_URL,
 } from "./boot-assets";
-import type {
-  EnemyOutlineColor,
-  EnemyOutlineSettings,
-  TargetState,
-} from "./types";
-import { remapAnimationClip, removeRootMotion } from "./scene/CharacterModel";
-import { CHARACTER_TARGET_HEIGHT } from "./scene/scene-constants";
+import type { TargetState } from "./types";
+import {
+  type CharacterModelOverride,
+  applyCharacterTextures,
+  remapAnimationClip,
+  removeRootMotion,
+} from "./scene/CharacterModel";
+import { PRACTICE_TARGET_HEIGHT } from "./scene/scene-constants";
 
 type TargetsProps = {
   targets: TargetState[];
   shadows: boolean;
   reveal: number;
-  outline: EnemyOutlineSettings;
   loadCharacterAsset?: boolean;
   onReadyChange?: (ready: boolean) => void;
+  characterOverride?: CharacterModelOverride;
 };
 
 export type TargetRaycastHit = {
@@ -36,16 +37,15 @@ export type TargetHitZone = "head" | "body" | "leg";
 
 const DAMAGE_PER_SHOT = 25;
 const RESPAWN_DELAY_MS = 2000;
-const TARGET_VISUAL_SCALE = 0.9;
-const TARGET_CHARACTER_HEIGHT = CHARACTER_TARGET_HEIGHT * TARGET_VISUAL_SCALE;
-const TARGET_HP_BAR_Y = 2.4 * TARGET_VISUAL_SCALE;
+const T = PRACTICE_TARGET_HEIGHT;
+const TARGET_HP_BAR_Y = 1.32 * T;
+export const TARGET_DUMMY_GROUP_SCALE_MIN = 0.82;
+export const TARGET_DUMMY_GROUP_SCALE_REVEAL = 0.18;
+
+export function targetDummyGroupScale(reveal: number) {
+  return TARGET_DUMMY_GROUP_SCALE_MIN + reveal * TARGET_DUMMY_GROUP_SCALE_REVEAL;
+}
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
-const ENEMY_OUTLINE_COLOR_HEX: Record<EnemyOutlineColor, string> = {
-  red: "#ff4d4d",
-  yellow: "#facc15",
-  cyan: "#38d9ff",
-  magenta: "#ff4dc4",
-};
 
 type TargetSphereHitbox = {
   zone: TargetHitZone;
@@ -66,152 +66,115 @@ type TargetHitboxPart =
 const TARGET_COLLISION_RADIUS = 0.35;
 
 const TARGET_HITBOX_PARTS: TargetHitboxPart[] = [
-  // Skull — raised and sized so it doesn't extend into the chest
+  // ── Head (2 parts) ──
+  // Skull sphere – extends above model top so the crown is always shootable
   {
     kind: "sphere",
     hitbox: {
       zone: "head",
-      center: [0, 1.66 * TARGET_VISUAL_SCALE, 0.01 * TARGET_VISUAL_SCALE],
-      radius: 0.26 * TARGET_VISUAL_SCALE,
+      center: [0, 0.945 * T, 0.015 * T],
+      radius: 0.085 * T,
     },
   },
-  // Face / jaw area
+  // Neck / jaw bridge
   {
     kind: "box",
     hitbox: {
       zone: "head",
-      center: [0, 1.46 * TARGET_VISUAL_SCALE, 0.02 * TARGET_VISUAL_SCALE],
-      halfSize: [
-        0.16 * TARGET_VISUAL_SCALE,
-        0.1 * TARGET_VISUAL_SCALE,
-        0.14 * TARGET_VISUAL_SCALE,
-      ],
+      center: [0, 0.845 * T, 0.02 * T],
+      halfSize: [0.055 * T, 0.03 * T, 0.055 * T],
     },
   },
-  // Neck
-  {
-    kind: "box",
-    hitbox: {
-      zone: "head",
-      center: [0, 1.34 * TARGET_VISUAL_SCALE, 0],
-      halfSize: [
-        0.1 * TARGET_VISUAL_SCALE,
-        0.06 * TARGET_VISUAL_SCALE,
-        0.1 * TARGET_VISUAL_SCALE,
-      ],
-    },
-  },
-  // Upper torso
+  // ── Body (4 parts) – tight torso, no arm-gap overshoot ──
+  // Upper torso (chest + shoulders)
   {
     kind: "box",
     hitbox: {
       zone: "body",
-      center: [0, 1.15 * TARGET_VISUAL_SCALE, 0],
-      halfSize: [
-        0.33 * TARGET_VISUAL_SCALE,
-        0.28 * TARGET_VISUAL_SCALE,
-        0.2 * TARGET_VISUAL_SCALE,
-      ],
+      center: [0, 0.715 * T, -0.008 * T],
+      halfSize: [0.115 * T, 0.085 * T, 0.065 * T],
     },
   },
+  // Lower torso (belly + hips)
   {
     kind: "box",
     hitbox: {
       zone: "body",
-      center: [0, 0.78 * TARGET_VISUAL_SCALE, 0],
-      halfSize: [
-        0.3 * TARGET_VISUAL_SCALE,
-        0.24 * TARGET_VISUAL_SCALE,
-        0.2 * TARGET_VISUAL_SCALE,
-      ],
+      center: [0, 0.54 * T, -0.01 * T],
+      halfSize: [0.095 * T, 0.075 * T, 0.055 * T],
     },
   },
+  // Left upper arm
   {
     kind: "box",
     hitbox: {
       zone: "body",
-      center: [-0.39 * TARGET_VISUAL_SCALE, 1.04 * TARGET_VISUAL_SCALE, 0],
-      halfSize: [
-        0.12 * TARGET_VISUAL_SCALE,
-        0.2 * TARGET_VISUAL_SCALE,
-        0.13 * TARGET_VISUAL_SCALE,
-      ],
+      center: [-0.165 * T, 0.68 * T, 0.005 * T],
+      halfSize: [0.04 * T, 0.09 * T, 0.04 * T],
     },
   },
+  // Right upper arm
   {
     kind: "box",
     hitbox: {
       zone: "body",
-      center: [0.39 * TARGET_VISUAL_SCALE, 1.04 * TARGET_VISUAL_SCALE, 0],
-      halfSize: [
-        0.12 * TARGET_VISUAL_SCALE,
-        0.2 * TARGET_VISUAL_SCALE,
-        0.13 * TARGET_VISUAL_SCALE,
-      ],
+      center: [0.165 * T, 0.68 * T, 0.005 * T],
+      halfSize: [0.04 * T, 0.09 * T, 0.04 * T],
     },
   },
-  {
-    kind: "box",
-    hitbox: {
-      zone: "body",
-      center: [-0.47 * TARGET_VISUAL_SCALE, 0.73 * TARGET_VISUAL_SCALE, 0],
-      halfSize: [
-        0.11 * TARGET_VISUAL_SCALE,
-        0.2 * TARGET_VISUAL_SCALE,
-        0.12 * TARGET_VISUAL_SCALE,
-      ],
-    },
-  },
-  {
-    kind: "box",
-    hitbox: {
-      zone: "body",
-      center: [0.47 * TARGET_VISUAL_SCALE, 0.73 * TARGET_VISUAL_SCALE, 0],
-      halfSize: [
-        0.11 * TARGET_VISUAL_SCALE,
-        0.2 * TARGET_VISUAL_SCALE,
-        0.12 * TARGET_VISUAL_SCALE,
-      ],
-    },
-  },
+  // ── Legs (6 parts) – boxes overlap at the centerline so nothing passes through ──
+  // Left thigh  (inner edge at +0.02·T → overlaps right thigh)
   {
     kind: "box",
     hitbox: {
       zone: "leg",
-      center: [-0.14 * TARGET_VISUAL_SCALE, 0.26 * TARGET_VISUAL_SCALE, 0],
-      halfSize: [
-        0.14 * TARGET_VISUAL_SCALE,
-        0.36 * TARGET_VISUAL_SCALE,
-        0.15 * TARGET_VISUAL_SCALE,
-      ],
+      center: [-0.045 * T, 0.32 * T, 0],
+      halfSize: [0.065 * T, 0.135 * T, 0.06 * T],
     },
   },
+  // Right thigh (inner edge at -0.02·T → overlaps left thigh)
   {
     kind: "box",
     hitbox: {
       zone: "leg",
-      center: [0.14 * TARGET_VISUAL_SCALE, 0.26 * TARGET_VISUAL_SCALE, 0],
-      halfSize: [
-        0.14 * TARGET_VISUAL_SCALE,
-        0.36 * TARGET_VISUAL_SCALE,
-        0.15 * TARGET_VISUAL_SCALE,
-      ],
+      center: [0.045 * T, 0.32 * T, 0],
+      halfSize: [0.065 * T, 0.135 * T, 0.06 * T],
     },
   },
+  // Left shin  (inner edge at +0.01·T → overlaps right shin)
+  {
+    kind: "box",
+    hitbox: {
+      zone: "leg",
+      center: [-0.045 * T, 0.11 * T, 0],
+      halfSize: [0.055 * T, 0.11 * T, 0.055 * T],
+    },
+  },
+  // Right shin (inner edge at -0.01·T → overlaps left shin)
+  {
+    kind: "box",
+    hitbox: {
+      zone: "leg",
+      center: [0.045 * T, 0.11 * T, 0],
+      halfSize: [0.055 * T, 0.11 * T, 0.055 * T],
+    },
+  },
+  // Left foot
   {
     kind: "sphere",
     hitbox: {
       zone: "leg",
-      center: [-0.14 * TARGET_VISUAL_SCALE, 0.02 * TARGET_VISUAL_SCALE, 0],
-      radius: 0.13 * TARGET_VISUAL_SCALE,
+      center: [-0.045 * T, 0.015 * T, 0.01 * T],
+      radius: 0.055 * T,
     },
   },
+  // Right foot
   {
     kind: "sphere",
     hitbox: {
       zone: "leg",
-      center: [0.14 * TARGET_VISUAL_SCALE, 0.02 * TARGET_VISUAL_SCALE, 0],
-      radius: 0.13 * TARGET_VISUAL_SCALE,
+      center: [0.045 * T, 0.015 * T, 0.01 * T],
+      radius: 0.055 * T,
     },
   },
 ];
@@ -326,6 +289,7 @@ export function raycastTargets(
   direction: THREE.Vector3,
   targets: TargetState[],
   maxDistance = Number.POSITIVE_INFINITY,
+  targetVisualScale = 1,
 ): TargetRaycastHit | null {
   let closestHit: TargetRaycastHit | null = null;
 
@@ -343,6 +307,7 @@ export function raycastTargets(
       .applyAxisAngle(Y_AXIS, -target.facingYaw)
       .normalize();
 
+    const s = targetVisualScale;
     let targetClosestHit: TargetRaycastHit | null = null;
     for (const part of TARGET_HITBOX_PARTS) {
       const partHit = part.kind === "sphere"
@@ -351,16 +316,22 @@ export function raycastTargets(
           part.hitbox.zone,
           localOrigin,
           localDirection,
-          ...part.hitbox.center,
-          part.hitbox.radius,
+          part.hitbox.center[0] * s,
+          part.hitbox.center[1] * s,
+          part.hitbox.center[2] * s,
+          part.hitbox.radius * s,
         )
         : raycastAabbPart(
           target.id,
           part.hitbox.zone,
           localOrigin,
           localDirection,
-          ...part.hitbox.center,
-          ...part.hitbox.halfSize,
+          part.hitbox.center[0] * s,
+          part.hitbox.center[1] * s,
+          part.hitbox.center[2] * s,
+          part.hitbox.halfSize[0] * s,
+          part.hitbox.halfSize[1] * s,
+          part.hitbox.halfSize[2] * s,
         );
       if (!partHit) {
         continue;
@@ -505,7 +476,7 @@ function prepareTargetCharacterModel(model: THREE.Group): void {
   const box = new THREE.Box3().setFromObject(model);
   const size = new THREE.Vector3();
   box.getSize(size);
-  const scale = size.y > 0 ? TARGET_CHARACTER_HEIGHT / size.y : 1;
+  const scale = size.y > 0 ? PRACTICE_TARGET_HEIGHT / size.y : 1;
   model.scale.setScalar(scale);
 
   const scaledBox = new THREE.Box3().setFromObject(model);
@@ -520,12 +491,17 @@ function prepareTargetCharacterModel(model: THREE.Group): void {
   });
 }
 
-function useTargetCharacterAsset(enabled: boolean): TargetCharacterAsset {
+function useTargetCharacterAsset(
+  enabled: boolean,
+  characterOverride?: CharacterModelOverride,
+): TargetCharacterAsset {
   const [asset, setAsset] = useState<TargetCharacterAsset>({
     model: null,
     idleClip: null,
     ready: false,
   });
+
+  const modelUrl = characterOverride?.modelUrl ?? TARGET_CHARACTER_MODEL_URL;
 
   useEffect(() => {
     if (!enabled) {
@@ -536,18 +512,24 @@ function useTargetCharacterAsset(enabled: boolean): TargetCharacterAsset {
 
     (async () => {
       try {
-        const [result, idleClip] = await Promise.all([
-          loadGlbWithAnimations(TARGET_CHARACTER_MODEL_URL),
+        const [fbxModel, idleClip] = await Promise.all([
+          loadFbxAsset(modelUrl),
           loadFbxAnimation(TARGET_IDLE_ANIMATION_URL, "idle"),
         ]);
         if (disposed) return;
-        if (!result) {
+        if (!fbxModel) {
           setAsset({ model: null, idleClip: null, ready: true });
           return;
         }
 
-        const preparedModel = SkeletonUtils.clone(result.scene) as THREE.Group;
+        const preparedModel = SkeletonUtils.clone(fbxModel) as THREE.Group;
         prepareTargetCharacterModel(preparedModel);
+
+        await applyCharacterTextures(
+          preparedModel,
+          characterOverride?.textureBasePath,
+          characterOverride?.textures,
+        );
 
         const modelBoneNames = new Set<string>();
         preparedModel.traverse((child) => {
@@ -570,7 +552,9 @@ function useTargetCharacterAsset(enabled: boolean): TargetCharacterAsset {
           );
         }
 
-        setAsset({ model: preparedModel, idleClip: remappedIdle, ready: true });
+        if (!disposed) {
+          setAsset({ model: preparedModel, idleClip: remappedIdle, ready: true });
+        }
       } catch (error) {
         console.warn("[Targets] Target asset warm-up failed", error);
         if (!disposed) {
@@ -582,10 +566,12 @@ function useTargetCharacterAsset(enabled: boolean): TargetCharacterAsset {
     return () => {
       disposed = true;
     };
-  }, [enabled]);
+  }, [enabled, modelUrl, characterOverride?.textureBasePath, characterOverride?.textures]);
 
   return asset;
 }
+
+const _hpBarParentQuat = new THREE.Quaternion();
 
 const HPBar = memo(
   function HPBar({ hp, maxHp }: { hp: number; maxHp: number }) {
@@ -593,9 +579,13 @@ const HPBar = memo(
     const groupRef = useRef<THREE.Group>(null);
 
     useFrame(() => {
-      if (groupRef.current) {
-        groupRef.current.quaternion.copy(camera.quaternion);
-      }
+      const group = groupRef.current;
+      if (!group || !group.parent) return;
+      // Compensate for parent rotation so the bar always truly faces the camera
+      // localQuat = inverse(parentWorldQuat) * cameraQuat
+      group.parent.getWorldQuaternion(_hpBarParentQuat);
+      _hpBarParentQuat.invert();
+      group.quaternion.copy(camera.quaternion).premultiply(_hpBarParentQuat);
     });
 
     const ratio = Math.max(0, hp / maxHp);
@@ -635,20 +625,17 @@ const TargetDummy = memo(function TargetDummy({
   target,
   shadows,
   reveal,
-  outline,
   characterAsset,
 }: {
   target: TargetState;
   shadows: boolean;
   reveal: number;
-  outline: EnemyOutlineSettings;
   characterAsset: TargetCharacterAsset;
 }) {
   const [x, baseY, z] = target.position;
   const now = performance.now();
   const isHit = target.hitUntil > now;
   const characterMixerRef = useRef<THREE.AnimationMixer | null>(null);
-  const outlineMixerRef = useRef<THREE.AnimationMixer | null>(null);
   const groupRef = useRef<THREE.Group>(null);
   const characterInstance = useMemo(
     () => (characterAsset.model
@@ -656,17 +643,6 @@ const TargetDummy = memo(function TargetDummy({
       : null),
     [characterAsset.model],
   );
-  const outlineInstance = useMemo(
-    () =>
-      outline.enabled && characterAsset.model
-        ? (SkeletonUtils.clone(characterAsset.model) as THREE.Group)
-        : null,
-    [characterAsset.model, outline.enabled],
-  );
-  const outlineColor = ENEMY_OUTLINE_COLOR_HEX[outline.color];
-  const outlineOpacity = outline.opacity * reveal;
-  // Keep silhouette tight to the target mesh; large boosts look like a ghost clone.
-  const outlineScaleBoost = 1 + outline.thickness * 0.000000001 - 0.1;
 
   useEffect(() => {
     if (!characterInstance) return;
@@ -686,24 +662,6 @@ const TargetDummy = memo(function TargetDummy({
 
     return undefined;
   }, [characterAsset.idleClip, characterInstance]);
-
-  useEffect(() => {
-    if (!outlineInstance) return;
-    if (characterAsset.idleClip) {
-      const mixer = new THREE.AnimationMixer(outlineInstance);
-      const action = mixer.clipAction(characterAsset.idleClip);
-      action.setLoop(THREE.LoopRepeat, Infinity);
-      action.play();
-      outlineMixerRef.current = mixer;
-
-      return () => {
-        mixer.stopAllAction();
-        outlineMixerRef.current = null;
-      };
-    }
-
-    return undefined;
-  }, [characterAsset.idleClip, outlineInstance]);
 
   useEffect(() => {
     if (!characterInstance) return;
@@ -727,76 +685,13 @@ const TargetDummy = memo(function TargetDummy({
     });
   }, [characterInstance, isHit, reveal, shadows]);
 
-  useEffect(() => {
-    if (!outlineInstance) return;
-    outlineInstance.traverse((child) => {
-      if (!(child as THREE.Mesh).isMesh) return;
-      const mesh = child as THREE.Mesh;
-      mesh.castShadow = false;
-      mesh.receiveShadow = false;
-      const data = mesh.userData as {
-        __outlineMaterials?: THREE.MeshBasicMaterial[];
-      };
-      if (!data.__outlineMaterials) {
-        const sourceMaterials = Array.isArray(mesh.material)
-          ? mesh.material
-          : [mesh.material];
-        data.__outlineMaterials = sourceMaterials.map(() => {
-          const material = new THREE.MeshBasicMaterial({
-            toneMapped: false,
-          });
-          if ((mesh as THREE.SkinnedMesh).isSkinnedMesh) {
-            (
-              material as THREE.MeshBasicMaterial & {
-                skinning?: boolean;
-              }
-            ).skinning = true;
-          }
-          return material;
-        });
-        mesh.material = Array.isArray(mesh.material)
-          ? data.__outlineMaterials
-          : data.__outlineMaterials[0];
-      }
-      for (const material of data.__outlineMaterials) {
-        material.color.set(outlineColor);
-        material.opacity = outlineOpacity;
-        material.transparent = outlineOpacity < 0.999;
-        material.side = THREE.BackSide;
-        material.depthWrite = false;
-        material.depthTest = true;
-        material.needsUpdate = true;
-      }
-    });
-  }, [outlineColor, outlineInstance, outlineOpacity]);
-
-  useEffect(() => {
-    return () => {
-      if (!outlineInstance) return;
-      outlineInstance.traverse((child) => {
-        if (!(child as THREE.Mesh).isMesh) return;
-        const mesh = child as THREE.Mesh;
-        const data = mesh.userData as {
-          __outlineMaterials?: THREE.MeshBasicMaterial[];
-        };
-        if (!data.__outlineMaterials) return;
-        for (const material of data.__outlineMaterials) {
-          material.dispose();
-        }
-        delete data.__outlineMaterials;
-      });
-    };
-  }, [outlineInstance]);
-
   useFrame((_, delta) => {
     if (reveal <= 0.01 || target.disabled) return;
     characterMixerRef.current?.update(delta);
-    outlineMixerRef.current?.update(delta);
   });
 
-  const scale = 0.82 + reveal * 0.18;
+  const scale = targetDummyGroupScale(reveal);
   const visible = !target.disabled && reveal > 0.01;
-  const outlineVisible = outline.enabled && outlineOpacity > 0.01 && visible;
 
   return (
     <group
@@ -806,50 +701,26 @@ const TargetDummy = memo(function TargetDummy({
       scale={scale}
       visible={visible}
     >
-      {outlineVisible && outlineInstance
-        ? (
-          <primitive
-            object={outlineInstance}
-            scale={[outlineScaleBoost, outlineScaleBoost, outlineScaleBoost]}
-            renderOrder={1}
-          />
-        )
-        : null}
       {characterInstance
-        ? <primitive object={characterInstance} renderOrder={2} />
+        ? <primitive object={characterInstance} renderOrder={0} />
         : (
-          <>
-            {outlineVisible
-              ? (
-                <mesh position={[0, 1.6, 0]} renderOrder={1}>
-                  <sphereGeometry args={[0.22 * outlineScaleBoost, 12, 12]} />
-                  <meshBasicMaterial
-                    color={outlineColor}
-                    side={THREE.BackSide}
-                    transparent={outlineOpacity < 0.999}
-                    opacity={outlineOpacity}
-                    depthWrite={false}
-                    toneMapped={false}
-                  />
-                </mesh>
-              )
-              : null}
-            <mesh
-              position={[0, 1.6, 0]}
-              castShadow={shadows}
-              receiveShadow={shadows}
-              renderOrder={2}
-            >
-              <sphereGeometry args={[0.22, 12, 12]} />
-              <meshStandardMaterial
-                color={isHit ? "#ff5555" : "#e8d5b7"}
-                transparent={reveal < 0.999}
-                opacity={reveal}
-              />
-            </mesh>
-          </>
+          <mesh
+            position={[0, 0.95 * T, 0]}
+            castShadow={shadows}
+            receiveShadow={shadows}
+            renderOrder={0}
+          >
+            <sphereGeometry args={[0.085 * T, 12, 12]} />
+            <meshStandardMaterial
+              color={isHit ? "#ff5555" : "#e8d5b7"}
+              transparent={reveal < 0.999}
+              opacity={reveal}
+            />
+          </mesh>
         )}
-      {reveal >= 0.55 ? <HPBar hp={target.hp} maxHp={target.maxHp} /> : null}
+      {reveal >= 0.55 && target.hp < target.maxHp
+        ? <HPBar hp={target.hp} maxHp={target.maxHp} />
+        : null}
     </group>
   );
 });
@@ -858,11 +729,11 @@ export function Targets({
   targets,
   shadows,
   reveal,
-  outline,
   loadCharacterAsset = true,
   onReadyChange,
+  characterOverride,
 }: TargetsProps) {
-  const characterAsset = useTargetCharacterAsset(loadCharacterAsset);
+  const characterAsset = useTargetCharacterAsset(loadCharacterAsset, characterOverride);
   const assetReady = characterAsset.ready;
 
   useEffect(() => {
@@ -877,7 +748,6 @@ export function Targets({
           target={target}
           shadows={shadows}
           reveal={reveal}
-          outline={outline}
           characterAsset={characterAsset}
         />
       ))}

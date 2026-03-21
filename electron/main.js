@@ -22,8 +22,6 @@ app.commandLine.appendSwitch('enable-zero-copy');
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
 app.commandLine.appendSwitch('force_high_performance_gpu');
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
-app.commandLine.appendSwitch('disable-frame-rate-limit');
-app.commandLine.appendSwitch('disable-gpu-vsync');
 
 const MIME_TYPES = {
   '.html': 'text/html',

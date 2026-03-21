@@ -1,5 +1,10 @@
 export type PixelRatioScale = 0.5 | 0.75 | 1;
 export type StressModeCount = 0 | 50 | 100 | 200;
+export type FpsCap = 0 | 30 | 60 | 120 | 144 | 240; // 0 = uncapped
+export type WindowMode = "windowed" | "fullscreen" | "borderless";
+export type MapId = "range" | "map1";
+export const DEFAULT_PRACTICE_MAP_ID: MapId = "range";
+export const PRACTICE_MAP_IDS: readonly MapId[] = ["range", "map1"];
 
 export type ExperiencePhase = 'menu' | 'entering' | 'playing' | 'returning';
 
@@ -60,17 +65,11 @@ export const DEFAULT_CONTROL_BINDINGS: ControlBindings = {
 };
 
 export type HudOverlayToggles = {
-  practice: boolean;
-  controls: boolean;
-  settings: boolean;
-  performance: boolean;
+  statsBar: boolean;
 };
 
 export const DEFAULT_HUD_OVERLAY_TOGGLES: HudOverlayToggles = {
-  practice: false,
-  controls: false,
-  settings: false,
-  performance: false,
+  statsBar: true,
 };
 
 export type WeaponAlignmentOffset = {
@@ -87,7 +86,7 @@ export const DEFAULT_WEAPON_ALIGNMENT: WeaponAlignmentOffset = {
   posY: 0.24,
   posZ: 0.04,
   rotX: -2.96,
-  rotY: 0.91,
+  rotY: 0.13,
   rotZ: -1.23,
 };
 
@@ -247,25 +246,10 @@ export const DEFAULT_MOVEMENT_SETTINGS: MovementProfileSettings = {
   rifleRunLateralThreshold: 1,
 };
 
-export type EnemyOutlineColor = 'red' | 'yellow' | 'cyan' | 'magenta';
 export type CrouchMode = 'hold' | 'toggle';
-export const DEFAULT_CROUCH_MODE: CrouchMode = 'toggle';
+export const DEFAULT_CROUCH_MODE: CrouchMode = 'hold';
 export type InventoryOpenMode = 'toggle' | 'hold';
-export const DEFAULT_INVENTORY_OPEN_MODE: InventoryOpenMode = 'toggle';
-
-export type EnemyOutlineSettings = {
-  enabled: boolean;
-  color: EnemyOutlineColor;
-  thickness: number;
-  opacity: number;
-};
-
-export const DEFAULT_ENEMY_OUTLINE_SETTINGS: EnemyOutlineSettings = {
-  enabled: true,
-  color: 'red',
-  thickness: 8,
-  opacity: 1,
-};
+export const DEFAULT_INVENTORY_OPEN_MODE: InventoryOpenMode = 'hold';
 
 export type GameSettings = {
   shadows: boolean;
@@ -278,14 +262,17 @@ export type GameSettings = {
   fov: number;
   weaponAlignment: WeaponAlignmentOffset;
   crosshair: CrosshairSettings;
-  enemyOutline: EnemyOutlineSettings;
   movement: MovementProfileSettings;
   weaponRecoilProfiles: WeaponRecoilProfiles;
+  fpsCap: FpsCap;
+  windowMode: WindowMode;
 };
 
 export type PerfMetrics = {
   fps: number;
   frameMs: number;
+  cpuUtilPercent: number;
+  gpuUtilPercent: number;
   drawCalls: number;
   triangles: number;
   geometries: number;
@@ -402,6 +389,8 @@ export type InventoryMoveResult = {
 export const DEFAULT_PERF_METRICS: PerfMetrics = {
   fps: 0,
   frameMs: 0,
+  cpuUtilPercent: 0,
+  gpuUtilPercent: 0,
   drawCalls: 0,
   triangles: 0,
   geometries: 0,

@@ -14,10 +14,9 @@ import {
   BACKPACK_CAPACITY,
   INVENTORY_ITEM_DEFS,
   INVENTORY_NEARBY_RADIUS,
-  PRACTICE_AMMO_SPAWNS,
   type InventoryItemDefinition,
   type InventoryItemId,
-  STATIC_GROUND_SPAWNS,
+  type StaticGroundSpawn,
 } from "./inventory-data";
 
 type RuntimeStack = {
@@ -122,12 +121,38 @@ export class InventorySystem {
   private stackCounter = 0;
   private groundCounter = 0;
   private revision = 0;
+  private defaultGroundSpawns: readonly StaticGroundSpawn[] = [];
+  private practiceAmmoSpawnPoints: {
+    rifle: [number, number, number] | null;
+    sniper: [number, number, number] | null;
+  } = {
+    rifle: null,
+    sniper: null,
+  };
 
-  constructor() {
-    this.reset();
+  constructor(groundSpawns: readonly StaticGroundSpawn[] = []) {
+    this.reset(groundSpawns);
   }
 
-  reset() {
+  grantStackInFirstBackpackSlot(itemId: InventoryItemId, quantity: number) {
+    const definition = INVENTORY_ITEM_DEFS[itemId];
+    const q = Math.max(1, Math.min(quantity, definition.maxStack));
+    const stack = this.createStack(itemId, q);
+    for (let index = 0; index < BACKPACK_CAPACITY; index += 1) {
+      if (!this.backpackSlots[index]) {
+        this.backpackSlots[index] = stack;
+        this.bumpRevision();
+        return true;
+      }
+    }
+    return false;
+  }
+
+  reset(groundSpawns: readonly StaticGroundSpawn[] = this.defaultGroundSpawns) {
+    this.defaultGroundSpawns = groundSpawns.map((spawn) => ({
+      ...spawn,
+      position: [...spawn.position] as [number, number, number],
+    }));
     this.backpackSlots = Array.from({ length: MAX_BACKPACK_SLOTS }, () => null);
     this.attachments = {
       primary: { ...EMPTY_ATTACHMENTS },
@@ -135,12 +160,29 @@ export class InventorySystem {
     };
     this.activeQuickSlot = "primary";
     this.groundItems.clear();
+    this.practiceAmmoSpawnPoints = {
+      rifle: null,
+      sniper: null,
+    };
 
-    for (const spawn of STATIC_GROUND_SPAWNS) {
+    for (const spawn of this.defaultGroundSpawns) {
       this.addGroundItem(
         this.createStack(spawn.itemId, spawn.quantity),
         spawn.position,
       );
+      if (spawn.itemId === "ammo_rifle") {
+        this.practiceAmmoSpawnPoints.rifle = [...spawn.position] as [
+          number,
+          number,
+          number,
+        ];
+      } else if (spawn.itemId === "ammo_sniper") {
+        this.practiceAmmoSpawnPoints.sniper = [...spawn.position] as [
+          number,
+          number,
+          number,
+        ];
+      }
     }
 
     this.bumpRevision();
@@ -224,18 +266,18 @@ export class InventorySystem {
     const nextSniperAmount = Math.max(1, Math.floor(sniperAmount));
 
     let changed = false;
-    if (!this.hasGroundItemWithId("ammo_rifle")) {
+    if (!this.hasGroundItemWithId("ammo_rifle") && this.practiceAmmoSpawnPoints.rifle) {
       this.addGroundItem(
         this.createStack("ammo_rifle", nextRifleAmount),
-        PRACTICE_AMMO_SPAWNS.rifle,
+        this.practiceAmmoSpawnPoints.rifle,
       );
       changed = true;
     }
 
-    if (!this.hasGroundItemWithId("ammo_sniper")) {
+    if (!this.hasGroundItemWithId("ammo_sniper") && this.practiceAmmoSpawnPoints.sniper) {
       this.addGroundItem(
         this.createStack("ammo_sniper", nextSniperAmount),
-        PRACTICE_AMMO_SPAWNS.sniper,
+        this.practiceAmmoSpawnPoints.sniper,
       );
       changed = true;
     }

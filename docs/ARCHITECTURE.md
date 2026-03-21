@@ -20,15 +20,24 @@ Originally started as an FPS prototype, converted to TPS for visible character f
 - `src/App.tsx`
   - Mounts `GameRoot`
 - `src/game/GameRoot.tsx`
-  - Top-level UI overlay state (settings, HUD, pause UI, hit marker)
+  - Top-level UI overlay state (settings, HUD, pause UI, hit marker, selected practice map)
   - HUD visibility toggle (show/hide all corner panels)
+  - Persists settings/profile data and handles GLB-map fallback if the asset fails to load
   - Passes settings + callbacks into scene runtime
+- `src/game/scene/practice-maps.ts`
+  - Practice map registry for `range` and `tdm`
+  - Owns map-specific bounds, collision rectangles, spawn points, targets, and ground loot spawns
 - `src/game/Scene.tsx`
   - R3F `Canvas`
-  - Environment/map geometry (ground, cover blocks, building shell)
+  - Routes the active practice map into `SceneCanvas`
   - Visible player character model (box-based humanoid with weapon)
-  - Runtime systems orchestration (player controller, weapon, targets, audio, perf sampling)
-  - Tracer origin calculation from character weapon position
+  - Runtime systems orchestration entry point
+- `src/game/scene/SceneCanvas.tsx`
+  - Common scene lighting, fog, transitions, HUD-driven presentation state
+  - Chooses the active practice-map environment and resets targets per map
+- `src/game/scene/MapEnvironment.tsx`
+  - Procedural range environment plus generic GLB-map environment
+  - School currently renders as traversal scenery with coarse blocker volumes and tighter world bounds
 - `src/game/PlayerController.ts`
   - Mouse look, WASD/sprint/jump, lightweight collision resolution
   - Over-the-shoulder TPS camera (PUBG-style shoulder offset)
@@ -54,7 +63,7 @@ Originally started as an FPS prototype, converted to TPS for visible character f
 2. TPS camera position calculated (orbit behind player + shoulder offset + ADS interpolation)
 3. Weapon system advances fire timer if trigger is held
 4. Shot direction from `camera.getWorldDirection()` (crosshair aim)
-5. Hitscan raycasts against target hit spheres, applies HP damage
+5. Hitscan raycasts against target hit spheres and available world blockers, then applies HP damage
 6. Tracer origin computed from character weapon position toward hit point
 7. Target state mutates (HP reduction, hit flash, disable at 0 HP, respawn timer)
 8. Audio manager plays gunshot/hit/footsteps
@@ -81,7 +90,7 @@ Originally started as an FPS prototype, converted to TPS for visible character f
 
 - Custom 2D XZ circle-vs-AABB collision for player locomotion
 - Asymmetric gravity on Y axis (lighter rise, floaty peak, faster fall)
-- Hitscan directly ray-tests target hit spheres (not full world occlusion)
+- Hitscan uses lightweight authored blockers when available instead of mesh-derived collision
 
 ### Why this approach
 
@@ -90,10 +99,11 @@ Fast to iterate and stable for a prototype.
 ### Trade-off
 
 Less realistic and less extensible than a full physics stack (`rapier`), especially for slopes, dynamic rigid bodies, and robust character movement.
+It also means new GLB maps start life with coarse blocker passes that need tuning once the layout stops moving.
 
 ## Extension Points
 
-- Swap placeholder map props with GLB assets via `AssetLoader`
+- Add more practice maps by extending `src/game/scene/practice-maps.ts`
 - Add world hit/occlusion ray tests before target checks
 - Replace custom collisions with `@react-three/rapier` if needed
 - Add configurable weapon presets (fire rate, recoil profile, audio)

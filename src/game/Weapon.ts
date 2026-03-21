@@ -544,6 +544,19 @@ export class WeaponSystem {
     const activeKind = this.resolveActiveWeaponKind();
     const reloading = this.isReloading(nowMs);
 
+    // Auto-reload when magazine is empty, regardless of trigger state
+    if (
+      !reloading &&
+      !this.isSwitching(nowMs) &&
+      activeSlot.hasWeapon &&
+      activeKind &&
+      activeSlot.magAmmo <= 0 &&
+      activeSlot.reserveAmmo > 0
+    ) {
+      this.beginReload(nowMs);
+      return shotEvents;
+    }
+
     if (
       this.isSwitching(nowMs) ||
       !activeSlot.hasWeapon ||
@@ -551,11 +564,6 @@ export class WeaponSystem {
       !this.triggerHeld ||
       reloading
     ) {
-      return shotEvents;
-    }
-
-    if (activeSlot.magAmmo <= 0) {
-      this.beginReload(nowMs);
       return shotEvents;
     }
 
@@ -1013,6 +1021,17 @@ export class WeaponSystem {
       return 'slotB';
     }
     return null;
+  }
+
+  replenishPracticeInfiniteRifleAmmo() {
+    const slot = this.slotA;
+    if (!slot.hasWeapon || slot.weaponKind !== "rifle") {
+      return;
+    }
+    const next = { ...slot };
+    next.magAmmo = next.maxMagAmmo;
+    next.reserveAmmo = next.maxReserveAmmo;
+    this.setSlotById("slotA", next);
   }
 
   reset() {

@@ -36,13 +36,14 @@ export const PIXEL_RATIO_OPTIONS: Array<{ value: PixelRatioScale; label: string 
   { value: 1, label: "High" },
 ];
 
+
 export const MENU_TABS: MenuTabOption[] = [
   { id: "practice", label: "Practice", hint: "Range presets" },
   { id: "gameplay", label: "Gameplay", hint: "Look & ADS" },
   { id: "audio", label: "Audio", hint: "Mix levels" },
   { id: "controls", label: "Controls", hint: "Keybinds" },
   { id: "graphics", label: "Graphics", hint: "Render" },
-  { id: "hud", label: "HUD", hint: "Panels" },
+  { id: "hud", label: "HUD", hint: "Stats bar & crosshair" },
   { id: "system", label: "System", hint: "Maintenance" },
 ];
 
@@ -70,20 +71,9 @@ export const BINDING_ROWS: BindingDefinition[] = [
 export const OVERLAY_ROWS: Array<
   { key: keyof HudOverlayToggles; label: string; hint: string }
 > = [
-  { key: "practice", label: "Practice panel", hint: "Top-left range status" },
   {
-    key: "controls",
-    label: "Controls panel",
-    hint: "Bottom-left shortcut list",
-  },
-  {
-    key: "settings",
-    label: "Settings panel",
-    hint: "Bottom-right quick settings",
-  },
-  {
-    key: "performance",
-    label: "Performance panel",
-    hint: "Top-right perf HUD",
+    key: "statsBar",
+    label: "Stats bar",
+    hint: "Ping, FPS, CPU, GPU (top-right)",
   },
 ];

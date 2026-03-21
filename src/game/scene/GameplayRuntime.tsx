@@ -16,7 +16,11 @@ import {
   type RunFacingPhase,
   usePlayerController,
 } from "../PlayerController";
-import { raycastTargets, type TargetRaycastHit } from "../Targets";
+import {
+  raycastTargets,
+  targetDummyGroupScale,
+  type TargetRaycastHit,
+} from "../Targets";
 import {
   type SniperRechamberState,
   type WeaponKind,
@@ -27,7 +31,6 @@ import {
 } from "../Weapon";
 import { type GroundAmmoVisualState, InventorySystem } from "../inventory";
 import type {
-  CollisionRect,
   GameSettings,
   InventoryMoveLocation,
   InventoryMoveRequest,
@@ -39,7 +42,6 @@ import type {
   TargetState,
   WeaponAlignmentOffset,
   WeaponRecoilProfiles,
-  WorldBounds,
 } from "../types";
 import { isSprintInputEligible } from "../movement";
 import {
@@ -69,9 +71,6 @@ import {
   MAX_BLOOD_SPLAT_MARKS,
   MAX_BULLET_IMPACT_MARKS,
   MIN_TRACER_DISTANCE,
-  PLAYER_SPAWN_PITCH,
-  PLAYER_SPAWN_POSITION,
-  PLAYER_SPAWN_YAW,
   RIFLE_RUN_START_MS,
   RIFLE_RUN_STOP_MS,
   SIGHT_MOUNT_TRANSFORMS,
@@ -82,6 +81,7 @@ import {
   type WorldRaycastHit,
   Z_AXIS,
 } from "./scene-constants";
+import type { PracticeMapDefinition } from "./practice-maps";
 
 export type HitMarkerKind = "body" | "head" | "kill";
 export type AimingState = {
@@ -107,8 +107,7 @@ export type GameplayRuntimeHandle = {
 };
 
 type GameplayRuntimeProps = {
-  collisionRects: CollisionRect[];
-  worldBounds: WorldBounds;
+  practiceMap: PracticeMapDefinition;
   audioVolumes: AudioVolumeSettings;
   presentation: ScenePresentation;
   sensitivity: GameSettings["sensitivity"];
@@ -124,7 +123,7 @@ type GameplayRuntimeProps = {
   onResetTargets: () => void;
   onPlayerSnapshot: (snapshot: PlayerSnapshot) => void;
   onPerfMetrics: (metrics: PerfMetrics) => void;
-  onHitMarker: (kind: HitMarkerKind) => void;
+  onHitMarker: (kind: HitMarkerKind, damage: number, targetId: string) => void;
   onShotFired: (state: ShotFiredState) => void;
   onWeaponEquippedChange: (equipped: boolean) => void;
   onActiveWeaponChange: (weapon: WeaponKind) => void;
@@ -133,6 +132,7 @@ type GameplayRuntimeProps = {
   deferredAssetsEnabled?: boolean;
   onCriticalAssetsReadyChange?: (ready: boolean) => void;
   characterOverride?: CharacterModelOverride;
+  onPauseMenuToggle?: () => void;
 };
 
 const MENU_LOOK_HEIGHT = 1.06;
@@ -954,8 +954,7 @@ export const GameplayRuntime = forwardRef<
   GameplayRuntimeHandle,
   GameplayRuntimeProps
 >(function GameplayRuntime({
-  collisionRects,
-  worldBounds,
+  practiceMap,
   audioVolumes,
   presentation,
   sensitivity,
@@ -980,10 +979,18 @@ export const GameplayRuntime = forwardRef<
   deferredAssetsEnabled = true,
   onCriticalAssetsReadyChange,
   characterOverride,
+  onPauseMenuToggle,
 }: GameplayRuntimeProps, ref) {
   const gl = useThree((state) => state.gl);
   const camera = useThree((state) => state.camera);
   const scene = useThree((state) => state.scene);
+  const spawnPosition = practiceMap.playerSpawn.position;
+  const spawnYaw = practiceMap.playerSpawn.yaw;
+  const spawnPitch = practiceMap.playerSpawn.pitch;
+  const spawnPositionVector = useMemo(
+    () => new THREE.Vector3(spawnPosition[0], spawnPosition[1], spawnPosition[2]),
+    [spawnPosition],
+  );
 
   const {
     model: characterModel,
@@ -1012,10 +1019,14 @@ export const GameplayRuntime = forwardRef<
   }, [weaponModels]);
 
   const weaponRef = useRef<WeaponSystem>(new WeaponSystem());
-  const inventoryRef = useRef<InventorySystem>(new InventorySystem());
+  const inventoryRef = useRef<InventorySystem>(
+    new InventorySystem(practiceMap.groundSpawns),
+  );
   const audioRef = useRef(sharedAudioManager);
   const controllerRef = useRef<PlayerControllerApi | null>(null);
   const targetsRef = useRef(targets);
+  const targetRevealRef = useRef(presentation.targetReveal);
+  targetRevealRef.current = presentation.targetReveal;
   const latestControllerSnapshotRef = useRef<PlayerSnapshot | null>(null);
   const lastHudSyncKeyRef = useRef("");
   const ammoVisualRevisionRef = useRef(-1);
@@ -1040,6 +1051,7 @@ export const GameplayRuntime = forwardRef<
   const aimingStateCallbackRef = useRef(onAimingStateChange);
 
   const perfAccumulatorRef = useRef(0);
+  const perfFrameMsEmaRef = useRef(0);
   const fpsFrameCountRef = useRef(0);
   const fpsTimeRef = useRef(0);
   const lastWeaponEquippedRef = useRef<boolean | null>(null);
@@ -1050,7 +1062,7 @@ export const GameplayRuntime = forwardRef<
   const rifleRunStateRef = useRef<RifleRunVisualState>("idle");
   const rifleRunStateUntilRef = useRef(0);
   const rifleRunInputGraceUntilRef = useRef(0);
-  const rifleRunHeadingYawRef = useRef(PLAYER_SPAWN_YAW);
+  const rifleRunHeadingYawRef = useRef(spawnYaw);
   const crouchTransitionStateRef = useRef<CrouchTransitionState>("idle");
   const crouchTransitionStartedAtRef = useRef(0);
   const crouchTransitionDurationRef = useRef(0);
@@ -1071,7 +1083,7 @@ export const GameplayRuntime = forwardRef<
   const unarmedWalkStateUntilRef = useRef(0);
   const lastCharacterAnimStateRef = useRef<CharacterAnimState>("idle");
   const lastPlanarPositionRef = useRef(
-    new THREE.Vector2(PLAYER_SPAWN_POSITION.x, PLAYER_SPAWN_POSITION.z),
+    new THREE.Vector2(spawnPosition[0], spawnPosition[2]),
   );
 
   const worldRiflePickupRef = useRef<THREE.Group>(null);
@@ -1489,11 +1501,7 @@ export const GameplayRuntime = forwardRef<
     const playerPosition = controllerRef.current?.getPosition();
     const playerPositionTuple: [number, number, number] = playerPosition
       ? [playerPosition.x, playerPosition.y, playerPosition.z]
-      : [
-        PLAYER_SPAWN_POSITION.x,
-        PLAYER_SPAWN_POSITION.y,
-        PLAYER_SPAWN_POSITION.z,
-      ];
+      : [...spawnPosition];
     const inventorySnapshot = inventoryRef.current.getSnapshot(
       playerPositionTuple,
       baseSnapshot.inventoryPanelOpen,
@@ -1519,14 +1527,16 @@ export const GameplayRuntime = forwardRef<
       weaponLoadout: weaponRef.current.getLoadoutState(),
       weaponReload: weaponRef.current.getReloadState(nowMs),
     });
-  }, []);
+  }, [spawnPosition]);
 
   const syncWeaponAmmoFromInventory = useCallback(() => {
     const ammo = inventoryRef.current.getAmmoTotalsByWeaponKind();
-    weaponRef.current.setReserveAmmoForKind("rifle", ammo.rifle);
+    if (!practiceMap.infiniteAmmo) {
+      weaponRef.current.setReserveAmmoForKind("rifle", ammo.rifle);
+    }
     weaponRef.current.setReserveAmmoForKind("sniper", ammo.sniper);
     return ammo;
-  }, []);
+  }, [practiceMap.infiniteAmmo]);
 
   const isAmmoItemId = useCallback((
     itemId: string | null,
@@ -1579,9 +1589,9 @@ export const GameplayRuntime = forwardRef<
     const expectedSlot = weaponKind === "rifle" ? "slotA" : "slotB";
     if (slotId !== expectedSlot) {
       inventoryRef.current.dropWeaponItemToGround(weaponId, [
-        fallbackDropPosition?.[0] ?? PLAYER_SPAWN_POSITION.x,
+        fallbackDropPosition?.[0] ?? spawnPosition[0],
         0,
-        fallbackDropPosition?.[2] ?? PLAYER_SPAWN_POSITION.z,
+        fallbackDropPosition?.[2] ?? spawnPosition[2],
       ]);
       return {
         ok: false,
@@ -1593,9 +1603,9 @@ export const GameplayRuntime = forwardRef<
 
     if (weaponRef.current.hasWeaponInSlot(slotId)) {
       inventoryRef.current.dropWeaponItemToGround(weaponId, [
-        fallbackDropPosition?.[0] ?? PLAYER_SPAWN_POSITION.x,
+        fallbackDropPosition?.[0] ?? spawnPosition[0],
         0,
-        fallbackDropPosition?.[2] ?? PLAYER_SPAWN_POSITION.z,
+        fallbackDropPosition?.[2] ?? spawnPosition[2],
       ]);
       return { ok: false, message: "Weapon slot already occupied." };
     }
@@ -1609,7 +1619,7 @@ export const GameplayRuntime = forwardRef<
     });
     weaponRef.current.beginReload(performance.now());
     return { ok: true };
-  }, [resolveWeaponSlotId]);
+  }, [resolveWeaponSlotId, spawnPosition]);
 
   const dropWeaponFromSlot = useCallback((
     slot: "primary" | "secondary",
@@ -1745,6 +1755,12 @@ export const GameplayRuntime = forwardRef<
     return weaponRef.current.getActiveWeapon();
   }, []);
 
+  const handleGetIsWeaponBusy = useCallback(() => {
+    const nowMs = performance.now();
+    const weapon = weaponRef.current;
+    return weapon.isReloading(nowMs) || weapon.getSniperRechamberState(nowMs).active;
+  }, []);
+
   const targetCollisionCircles = useMemo(
     () =>
       targets
@@ -1761,9 +1777,15 @@ export const GameplayRuntime = forwardRef<
   );
 
   const controller = usePlayerController({
-    collisionRects,
+    collisionRects: [...practiceMap.collisionRects],
     collisionCircles: targetCollisionCircles,
-    worldBounds,
+    blockingVolumes: practiceMap.blockingVolumes,
+    worldBounds: practiceMap.worldBounds,
+    spawnPosition,
+    groundLevelY: spawnPosition[1],
+    walkableSurfaces: practiceMap.walkableSurfaces,
+    spawnYaw,
+    spawnPitch,
     sensitivity,
     keybinds,
     crouchMode,
@@ -1777,6 +1799,9 @@ export const GameplayRuntime = forwardRef<
     onUserGesture: handleUserGesture,
     getWeaponEquipped: handleGetWeaponEquipped,
     getActiveWeapon: handleGetActiveWeapon,
+    getIsWeaponBusy: handleGetIsWeaponBusy,
+    onPauseMenuToggle:
+      presentation.phase === "playing" ? onPauseMenuToggle : undefined,
   });
 
   controllerRef.current = controller;
@@ -1786,16 +1811,15 @@ export const GameplayRuntime = forwardRef<
     audioRef.current.cancelSniperShelling();
     weaponRef.current.reset();
     controllerRef.current?.setPose(
-      PLAYER_SPAWN_POSITION,
-      PLAYER_SPAWN_YAW,
-      PLAYER_SPAWN_PITCH,
+      spawnPositionVector,
+      spawnYaw,
+      spawnPitch,
     );
     setImpactMarks([]);
     setBloodSplats([]);
     impactIdRef.current = 0;
     bloodSplatIdRef.current = 0;
     lastImpactCleanupAtRef.current = performance.now();
-    lastWeaponEquippedRef.current = false;
     lastActiveWeaponRef.current = "rifle";
     lastADSRef.current = false;
     lastFirstPersonRef.current = false;
@@ -1805,11 +1829,13 @@ export const GameplayRuntime = forwardRef<
     lastReloadWeaponKindRef.current = null;
     lastHudSyncKeyRef.current = "";
     practiceAmmoRespawnAtRef.current = null;
+    bulletHittableMeshesRef.current = [];
+    bulletHittableMeshesDirtyRef.current = true;
     rifleFireIntentRef.current = false;
     rifleRunStateRef.current = "idle";
     rifleRunStateUntilRef.current = 0;
     rifleRunInputGraceUntilRef.current = 0;
-    rifleRunHeadingYawRef.current = PLAYER_SPAWN_YAW;
+    rifleRunHeadingYawRef.current = spawnYaw;
     crouchTransitionStateRef.current = "idle";
     crouchTransitionStartedAtRef.current = 0;
     crouchTransitionDurationRef.current = 0;
@@ -1834,8 +1860,8 @@ export const GameplayRuntime = forwardRef<
     };
     lastCharacterAnimStateRef.current = "idle";
     lastPlanarPositionRef.current.set(
-      PLAYER_SPAWN_POSITION.x,
-      PLAYER_SPAWN_POSITION.z,
+      spawnPosition[0],
+      spawnPosition[2],
     );
     controllerRef.current?.setRunFacing("off");
     controllerRef.current?.setMovementProfile({
@@ -1844,7 +1870,6 @@ export const GameplayRuntime = forwardRef<
       sprintScale: 1,
       allowSprint: true,
     });
-    weaponEquippedCallbackRef.current(false);
     activeWeaponCallbackRef.current("rifle");
     sniperRechamberCallbackRef.current({
       active: false,
@@ -1855,11 +1880,32 @@ export const GameplayRuntime = forwardRef<
       ads: false,
       firstPerson: false,
     });
-    inventoryRef.current.reset();
+    inventoryRef.current.reset(practiceMap.groundSpawns);
     ammoVisualRevisionRef.current = -1;
     setGroundAmmoVisualState(inventoryRef.current.getGroundAmmoVisualState());
+    if (practiceMap.spawnWithRifle) {
+      inventoryRef.current.grantStackInFirstBackpackSlot("ammo_rifle", 150);
+      const ammo = inventoryRef.current.getAmmoTotalsByWeaponKind();
+      weaponRef.current.equipSlotWithWeapon("slotA", "rifle", {
+        magAmmo: 30,
+        reserveAmmo: ammo.rifle,
+      });
+      inventoryRef.current.setActiveQuickSlot("primary");
+      lastWeaponEquippedRef.current = true;
+      weaponEquippedCallbackRef.current(true);
+    } else {
+      lastWeaponEquippedRef.current = false;
+      weaponEquippedCallbackRef.current(false);
+    }
     latestControllerSnapshotRef.current = null;
-  }, []);
+  }, [
+    practiceMap.groundSpawns,
+    practiceMap.spawnWithRifle,
+    spawnPitch,
+    spawnPosition,
+    spawnPositionVector,
+    spawnYaw,
+  ]);
 
   const handleMoveInventoryItem = useCallback((
     request: InventoryMoveRequest,
@@ -1867,11 +1913,7 @@ export const GameplayRuntime = forwardRef<
     const playerPosition = controllerRef.current?.getPosition();
     const playerTuple: [number, number, number] = playerPosition
       ? [playerPosition.x, playerPosition.y, playerPosition.z]
-      : [
-        PLAYER_SPAWN_POSITION.x,
-        PLAYER_SPAWN_POSITION.y,
-        PLAYER_SPAWN_POSITION.z,
-      ];
+      : [...spawnPosition];
 
     if (request.to.zone === "equip" && request.to.slot === "primary") {
       if (request.from.zone !== "nearby") {
@@ -1964,6 +2006,7 @@ export const GameplayRuntime = forwardRef<
     syncWeaponAmmoFromInventory,
     isAmmoItemId,
     schedulePracticeAmmoRefill,
+    spawnPosition,
   ]);
 
   const handleQuickMoveInventoryItem = useCallback((
@@ -1972,11 +2015,7 @@ export const GameplayRuntime = forwardRef<
     const playerPosition = controllerRef.current?.getPosition();
     const playerTuple: [number, number, number] = playerPosition
       ? [playerPosition.x, playerPosition.y, playerPosition.z]
-      : [
-        PLAYER_SPAWN_POSITION.x,
-        PLAYER_SPAWN_POSITION.y,
-        PLAYER_SPAWN_POSITION.z,
-      ];
+      : [...spawnPosition];
 
     if (location.zone === "equip" && location.slot === "primary") {
       const result = dropWeaponFromSlot("primary", playerTuple);
@@ -2037,7 +2076,12 @@ export const GameplayRuntime = forwardRef<
     syncWeaponAmmoFromInventory,
     isAmmoItemId,
     schedulePracticeAmmoRefill,
+    spawnPosition,
   ]);
+
+  useEffect(() => {
+    resetForMenu();
+  }, [practiceMap.id, resetForMenu]);
 
   useImperativeHandle(ref, () => ({
     requestPointerLock: () => {
@@ -3066,11 +3110,14 @@ export const GameplayRuntime = forwardRef<
           postUpdateLoadout.slotB.reserveAmmo,
       )
       : 0;
-    if (rifleReserveSpent > 0) {
+    if (rifleReserveSpent > 0 && !practiceMap.infiniteAmmo) {
       inventoryRef.current.consumeAmmo("ammo_rifle", rifleReserveSpent);
     }
-    if (sniperReserveSpent > 0) {
+    if (sniperReserveSpent > 0 && !practiceMap.infiniteAmmo) {
       inventoryRef.current.consumeAmmo("ammo_sniper", sniperReserveSpent);
+    }
+    if (practiceMap.infiniteAmmo) {
+      weaponRef.current.replenishPracticeInfiniteRifleAmmo();
     }
 
     const postUpdateReload = weapon.getReloadState(nowMs);
@@ -3116,10 +3163,13 @@ export const GameplayRuntime = forwardRef<
         controller.addRecoil(shot.recoilPitchRadians, shot.recoilYawRadians);
       }
 
+      const targetVisualScale = targetDummyGroupScale(targetRevealRef.current);
       const cameraTargetHit = raycastTargets(
         shot.origin,
         shot.direction,
         targetsRef.current,
+        Number.POSITIVE_INFINITY,
+        targetVisualScale,
       );
       const cameraWorldHit = raycastBulletWorld(
         bulletHittableMeshesRef.current,
@@ -3187,6 +3237,7 @@ export const GameplayRuntime = forwardRef<
         fireDirection,
         targetsRef.current,
         maxFireDistance,
+        targetVisualScale,
       );
       const worldHit = raycastBulletWorld(
         bulletHittableMeshesRef.current,
@@ -3203,10 +3254,16 @@ export const GameplayRuntime = forwardRef<
       const cameraTargetDistanceFromMuzzle = cameraTargetHit
         ? tracerOrigin.distanceTo(cameraTargetHit.point)
         : Number.POSITIVE_INFINITY;
+      const cameraHeadButMuzzleOtherZone = !!cameraTargetHit &&
+        cameraTargetHit.zone === "head" &&
+        !!targetHit &&
+        targetHit.id === cameraTargetHit.id &&
+        targetHit.zone !== "head";
       const cameraTargetReachableFromMuzzle = !!cameraTargetHit &&
         (!worldHit ||
           cameraTargetDistanceFromMuzzle <=
-            worldHit.distance + BULLET_HIT_EPSILON);
+            worldHit.distance + BULLET_HIT_EPSILON ||
+          cameraHeadButMuzzleOtherZone);
       const preferCameraTarget = !!cameraTargetHit &&
         cameraTargetVisible &&
         cameraTargetReachableFromMuzzle &&
@@ -3257,7 +3314,7 @@ export const GameplayRuntime = forwardRef<
           : hitType === "head"
           ? "head"
           : "body";
-        hitMarkerCallbackRef.current(markerKind);
+        hitMarkerCallbackRef.current(markerKind, resolvedDamage, resolvedTargetHit.id);
         if (killed) {
           audio.playKill();
         }
@@ -3476,15 +3533,35 @@ export const GameplayRuntime = forwardRef<
     fpsTimeRef.current += clampedDelta;
     fpsFrameCountRef.current += 1;
 
+    const frameMs = clampedDelta * 1000;
+    const emaAlpha = 0.12;
+    const prevEma = perfFrameMsEmaRef.current;
+    perfFrameMsEmaRef.current = prevEma === 0
+      ? frameMs
+      : prevEma * (1 - emaAlpha) + frameMs * emaAlpha;
+
     if (perfAccumulatorRef.current >= 0.2) {
       const fps = fpsTimeRef.current > 0
         ? fpsFrameCountRef.current / fpsTimeRef.current
         : 0;
+      const ema = perfFrameMsEmaRef.current;
+      const budgetMs = 1000 / 60;
+      const cpuUtilPercent = Math.min(100, Math.round((ema / budgetMs) * 100));
+      const draws = gl.info.render.calls;
+      const tris = gl.info.render.triangles;
+      const gpuUtilPercent = Math.min(
+        100,
+        Math.round(
+          Math.min(100, (draws / 4000) * 42 + (tris / 2_500_000) * 58),
+        ),
+      );
       perfCallbackRef.current({
         fps,
-        frameMs: clampedDelta * 1000,
-        drawCalls: gl.info.render.calls,
-        triangles: gl.info.render.triangles,
+        frameMs,
+        cpuUtilPercent,
+        gpuUtilPercent,
+        drawCalls: draws,
+        triangles: tris,
         geometries: gl.info.memory.geometries,
         textures: gl.info.memory.textures,
       });

@@ -4,11 +4,14 @@
 
 - **Character model**: Trooper FBX (`public/assets/models/character/Trooper/tactical guy.fbx`) with manual texture loading from `.fbm` folder
 - **Animations**: Mixamo FBX files grouped by movement mode and rifle stance
-- Placeholder geometry still used for map, gun, and targets
+- **Practice maps**: selectable procedural `Range` plus a code-built `School` blockout
+- **School gameplay**: traversal-only blockout for now, with no targets, no loot spawns, and authored floor/blocker data for multi-level movement
+- Placeholder geometry still used for weapon pickups and target dummies
 - Audio uses WebAudio synth fallback unless files are added
 
 ## Asset Locations
 
+- Practice maps: `public/assets/map/`
 - Models: `public/assets/models/`
 - Character textures: `public/assets/models/character/Trooper/tactical guy.fbm/`
 - Animations: `public/assets/animations/` (`movement/standing`, `movement/crouch`, `rifle/aim`, `rifle/ready`)
@@ -17,11 +20,21 @@
 
 ## Rules
 
-- Use only free assets (CC0 or similarly permissive)
+- Use only free assets with commercial-friendly licenses (`CC0`, `CC BY`, or similarly permissive)
 - Record source + license in `public/assets/ATTRIBUTION.md`
+- If the license requires attribution, ship the credit text with the build instead of pretending QA will remember it later
 - Prefer keeping originals and documenting edits/conversions
 
 ## Import Pipeline
+
+### Practice Maps
+
+- `Range` remains procedural and keeps the existing stress-box test path
+- `School` is authored directly in `src/game/scene/practice-maps.ts` and rendered procedurally in `src/game/scene/MapEnvironment.tsx`
+- `School` uses authored walkable surfaces, ramps, and blocking volumes instead of imported GLB mesh probing
+- Export an editable GLB for Blender with `pnpm export:school-map` (default output: `build/school-blockout/school-blockout-v1.glb`)
+- Imported `.glb` practice maps are still pipeline-ready, but the current runtime does not depend on them
+- Stress mode stays range-only for now, because one performance fire at a time is enough
 
 ### Character Model (FBX)
 
@@ -57,9 +70,10 @@
 - Attribution added
 - File size reasonable
 - Format works in web + desktop builds
+- Gameplay bounds and collision authored if the asset is decorative scenery
 - Fallback still works if file is missing
 
 ## Trade-off
 
-Using placeholders keeps iteration speed high, but delays “real feel” evaluation for audio/visual feedback.
-That is acceptable early, as long as the pipeline is ready (it is).
+Code-built blockouts are easier to make playable than arbitrary scene imports, but they are still blockouts.
+That buys faster iteration on movement and layout, while the art pass gets to wait its turn like everyone else.

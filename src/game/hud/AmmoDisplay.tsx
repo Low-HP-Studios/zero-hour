@@ -22,7 +22,9 @@ function AmmoDisplayInner({
         <div className="pubg-reload-bar">
           <div
             className="pubg-reload-fill"
-            style={{ width: `${Math.round(Math.max(0, Math.min(1, reloadProgress)) * 100)}%` }}
+            style={{
+              width: `${Math.round(Math.max(0, Math.min(1, reloadProgress)) * 100)}%`,
+            }}
           />
         </div>
       ) : null}
