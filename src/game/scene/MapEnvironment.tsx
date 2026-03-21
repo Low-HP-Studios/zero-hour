@@ -1,8 +1,14 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+
+const EMPTY_STRING_ARRAY: readonly string[] = [];
+const SCHOOL_DEFAULT_DOUBLE_SIDE: readonly string[] = [
+  "walkable_slab",
+  "blocker_wall",
+];
 import * as THREE from "three";
 import {
-  getWalkableSurfaceThickness,
   type BlockingVolume,
+  getWalkableSurfaceThickness,
   type WalkableSurface,
 } from "../map-layout";
 import type { StressModeCount } from "../types";
@@ -14,6 +20,7 @@ import {
   createNightSkyTexture,
   createSkyTexture,
 } from "./Textures";
+import { loadGlbAsset, preloadTextureAsset } from "../AssetLoader";
 
 const VOID_SKY = new THREE.Color("#0a1628");
 const LIVE_SKY = new THREE.Color("#b8d4e8");
@@ -100,7 +107,9 @@ function WorldBackdrop({
         <sphereGeometry args={[560, 48, 32]} />
         <meshBasicMaterial
           color={blendColor(VOID_SKY, LIVE_SKY, textureReveal)}
-          map={allowTextures ? skyTexture ?? undefined : nightSkyTexture ?? undefined}
+          map={allowTextures
+            ? skyTexture ?? undefined
+            : nightSkyTexture ?? undefined}
           side={THREE.BackSide}
           depthWrite={false}
           fog={false}
@@ -202,19 +211,21 @@ export function MapEnvironment({
         />
       </mesh>
 
-      {floorGridOpacity > 0.001 ? (
-        <gridHelper
-          ref={floorGridRef}
-          args={[
-            walkableSizeX,
-            FLOOR_GRID_DIVISIONS,
-            GRID_MAJOR_COLOR,
-            GRID_MINOR_COLOR,
-          ]}
-          position={[walkableCenterX, 0.05, walkableCenterZ]}
-          renderOrder={5}
-        />
-      ) : null}
+      {floorGridOpacity > 0.001
+        ? (
+          <gridHelper
+            ref={floorGridRef}
+            args={[
+              walkableSizeX,
+              FLOOR_GRID_DIVISIONS,
+              GRID_MAJOR_COLOR,
+              GRID_MINOR_COLOR,
+            ]}
+            position={[walkableCenterX, 0.05, walkableCenterZ]}
+            renderOrder={5}
+          />
+        )
+        : null}
     </group>
   );
 }
@@ -312,7 +323,11 @@ function PoolDetails({ shadows }: { shadows: boolean }) {
     <group>
       <mesh position={[centerX, POOL_FLOOR_Y, centerZ]} receiveShadow={shadows}>
         <boxGeometry args={[width, 0.25, depth]} />
-        <meshStandardMaterial color="#325365" roughness={0.95} metalness={0.04} />
+        <meshStandardMaterial
+          color="#325365"
+          roughness={0.95}
+          metalness={0.04}
+        />
       </mesh>
 
       <mesh position={[centerX, POOL_WATER_Y, centerZ]}>
@@ -326,21 +341,45 @@ function PoolDetails({ shadows }: { shadows: boolean }) {
         />
       </mesh>
 
-      <mesh position={[centerX, POOL_WATER_Y - POOL_WALL_HEIGHT / 2, POOL_MIN_Z]}>
+      <mesh
+        position={[centerX, POOL_WATER_Y - POOL_WALL_HEIGHT / 2, POOL_MIN_Z]}
+      >
         <boxGeometry args={[width, POOL_WALL_HEIGHT, 0.35]} />
-        <meshStandardMaterial color="#9ba7aa" roughness={0.9} metalness={0.04} />
+        <meshStandardMaterial
+          color="#9ba7aa"
+          roughness={0.9}
+          metalness={0.04}
+        />
       </mesh>
-      <mesh position={[centerX, POOL_WATER_Y - POOL_WALL_HEIGHT / 2, POOL_MAX_Z]}>
+      <mesh
+        position={[centerX, POOL_WATER_Y - POOL_WALL_HEIGHT / 2, POOL_MAX_Z]}
+      >
         <boxGeometry args={[width, POOL_WALL_HEIGHT, 0.35]} />
-        <meshStandardMaterial color="#9ba7aa" roughness={0.9} metalness={0.04} />
+        <meshStandardMaterial
+          color="#9ba7aa"
+          roughness={0.9}
+          metalness={0.04}
+        />
       </mesh>
-      <mesh position={[POOL_MIN_X, POOL_WATER_Y - POOL_WALL_HEIGHT / 2, centerZ]}>
+      <mesh
+        position={[POOL_MIN_X, POOL_WATER_Y - POOL_WALL_HEIGHT / 2, centerZ]}
+      >
         <boxGeometry args={[0.35, POOL_WALL_HEIGHT, depth]} />
-        <meshStandardMaterial color="#9ba7aa" roughness={0.9} metalness={0.04} />
+        <meshStandardMaterial
+          color="#9ba7aa"
+          roughness={0.9}
+          metalness={0.04}
+        />
       </mesh>
-      <mesh position={[POOL_MAX_X, POOL_WATER_Y - POOL_WALL_HEIGHT / 2, centerZ]}>
+      <mesh
+        position={[POOL_MAX_X, POOL_WATER_Y - POOL_WALL_HEIGHT / 2, centerZ]}
+      >
         <boxGeometry args={[0.35, POOL_WALL_HEIGHT, depth]} />
-        <meshStandardMaterial color="#9ba7aa" roughness={0.9} metalness={0.04} />
+        <meshStandardMaterial
+          color="#9ba7aa"
+          roughness={0.9}
+          metalness={0.04}
+        />
       </mesh>
     </group>
   );
@@ -417,7 +456,346 @@ function SchoolBlockoutEnvironment({
   );
 }
 
-export function StressBoxes({ count, shadows }: { count: StressModeCount; shadows: boolean }) {
+const MIN_WALL_HEIGHT = 0.5;
+const MIN_WALL_TOP_Y = 0.3;
+
+function extractCollisionVolumes(
+  root: THREE.Object3D,
+  scale: number,
+): BlockingVolume[] {
+  const volumes: BlockingVolume[] = [];
+  root.updateMatrixWorld(true);
+
+  root.traverse((child) => {
+    if (!(child as THREE.Mesh).isMesh) return;
+    const mesh = child as THREE.Mesh;
+    if (!mesh.geometry) return;
+    if (!mesh.visible) return;
+    if (mesh.userData.skipCollision) return;
+
+    const box = new THREE.Box3().setFromObject(mesh);
+    if (box.isEmpty()) return;
+
+    box.min.multiplyScalar(scale);
+    box.max.multiplyScalar(scale);
+
+    const size = new THREE.Vector3();
+    box.getSize(size);
+
+    if (size.y < MIN_WALL_HEIGHT) return;
+    if (box.max.y < MIN_WALL_TOP_Y) return;
+
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+
+    volumes.push({
+      center: [center.x, center.y, center.z],
+      size: [size.x, size.y, size.z],
+    });
+  });
+
+  return volumes;
+}
+
+function fixGlbMaterials(root: THREE.Object3D, shadows: boolean) {
+  root.traverse((child) => {
+    if (!(child as THREE.Mesh).isMesh) return;
+    const mesh = child as THREE.Mesh;
+    mesh.castShadow = shadows;
+    mesh.receiveShadow = shadows;
+    mesh.userData.bulletHittable = true;
+
+    const materials = Array.isArray(mesh.material)
+      ? mesh.material
+      : [mesh.material];
+
+    for (const mat of materials) {
+      if (!mat || !(mat as THREE.MeshStandardMaterial).isMeshStandardMaterial) {
+        continue;
+      }
+      const stdMat = mat as THREE.MeshStandardMaterial;
+      if (stdMat.map) stdMat.map.colorSpace = THREE.SRGBColorSpace;
+      if (stdMat.emissiveMap) {
+        stdMat.emissiveMap.colorSpace = THREE.SRGBColorSpace;
+      }
+      stdMat.needsUpdate = true;
+    }
+  });
+}
+
+function hideSchoolGlbMeshes(
+  root: THREE.Object3D,
+  exactNames: readonly string[],
+  nameIncludes: readonly string[],
+) {
+  root.traverse((child) => {
+    const name = child.name ?? "";
+    if (exactNames.includes(name)) {
+      child.visible = false;
+      child.userData.skipCollision = true;
+      return;
+    }
+    for (const part of nameIncludes) {
+      if (part && name.includes(part)) {
+        child.visible = false;
+        child.userData.skipCollision = true;
+        return;
+      }
+    }
+  });
+}
+
+function meshNameMatchesAny(name: string, patterns: readonly string[]) {
+  return patterns.some((p) => p && name.includes(p));
+}
+
+function applySchoolGlbMaterialEnhancements(
+  root: THREE.Object3D,
+  opts: {
+    yardAlbedo: THREE.Texture | null;
+    wallAlbedo: THREE.Texture | null;
+    doubleSideMeshIncludes: readonly string[];
+  },
+) {
+  root.traverse((child) => {
+    if (!(child as THREE.Mesh).isMesh) return;
+    const mesh = child as THREE.Mesh;
+    const doubleSide = meshNameMatchesAny(mesh.name, opts.doubleSideMeshIncludes);
+    const materials = Array.isArray(mesh.material)
+      ? mesh.material
+      : [mesh.material];
+
+    for (const mat of materials) {
+      if (!mat || !(mat as THREE.MeshStandardMaterial).isMeshStandardMaterial) {
+        continue;
+      }
+      const stdMat = mat as THREE.MeshStandardMaterial;
+      const matName = stdMat.name ?? "";
+      if (doubleSide) {
+        stdMat.side = THREE.DoubleSide;
+      }
+      if (!stdMat.map) {
+        if (opts.yardAlbedo && matName.startsWith("M_School_yard")) {
+          stdMat.map = opts.yardAlbedo;
+          stdMat.map.colorSpace = THREE.SRGBColorSpace;
+        } else if (
+          opts.wallAlbedo && /^Material(\.|$)/.test(matName)
+        ) {
+          stdMat.map = opts.wallAlbedo;
+          stdMat.map.colorSpace = THREE.SRGBColorSpace;
+        }
+      }
+      stdMat.needsUpdate = true;
+    }
+  });
+}
+
+const GRASS_TEXTURE_URL = "/assets/grass-texture.jpg";
+const SCHOOL_BACKDROP_PAD = 20;
+const SCHOOL_SKY_RADIUS_FACTOR = 1.35;
+const SCHOOL_SKY_RADIUS_MIN = 120;
+const SCHOOL_SKY_RADIUS_MAX = 620;
+const GRASS_METERS_PER_TILE = 400 / 60;
+
+function SchoolGlbEnvironment({
+  practiceMap,
+  shadows,
+  theme: _theme,
+  onCollisionReady,
+}: {
+  practiceMap: PracticeMapDefinition;
+  shadows: boolean;
+  theme: number;
+  onCollisionReady?: (volumes: readonly BlockingVolume[]) => void;
+}) {
+  void _theme;
+  const worldBounds = practiceMap.worldBounds;
+  const centerX = (worldBounds.minX + worldBounds.maxX) / 2;
+  const centerZ = (worldBounds.minZ + worldBounds.maxZ) / 2;
+  const sizeX = worldBounds.maxX - worldBounds.minX;
+  const sizeZ = worldBounds.maxZ - worldBounds.minZ;
+  const grassPlaneW = sizeX + SCHOOL_BACKDROP_PAD;
+  const grassPlaneD = sizeZ + SCHOOL_BACKDROP_PAD;
+  const skyRadius = THREE.MathUtils.clamp(
+    SCHOOL_SKY_RADIUS_FACTOR * Math.max(sizeX, sizeZ),
+    SCHOOL_SKY_RADIUS_MIN,
+    SCHOOL_SKY_RADIUS_MAX,
+  );
+  const schoolEnv = practiceMap.environment.kind === "school-glb"
+    ? practiceMap.environment
+    : null;
+  const modelUrl = schoolEnv?.modelUrl ?? "";
+  const modelScale = schoolEnv?.scale ?? 1;
+  const wallFallbackUrl = schoolEnv?.wallFallbackTextureUrl ?? "";
+
+  const hiddenExact = useMemo(
+    () => schoolEnv?.hiddenMeshExactNames ?? EMPTY_STRING_ARRAY,
+    [schoolEnv],
+  );
+  const hiddenIncludes = useMemo(
+    () => schoolEnv?.hiddenMeshNameIncludes ?? EMPTY_STRING_ARRAY,
+    [schoolEnv],
+  );
+  const doubleSideIncludes = useMemo(
+    () =>
+      schoolEnv?.doubleSideMeshNameIncludes ?? SCHOOL_DEFAULT_DOUBLE_SIDE,
+    [schoolEnv],
+  );
+  const onCollisionReadyRef = useRef(onCollisionReady);
+  onCollisionReadyRef.current = onCollisionReady;
+
+  const [mapScene, setMapScene] = useState<THREE.Group | null>(null);
+  const [grassTexture, setGrassTexture] = useState<THREE.Texture | null>(null);
+  const [yardGrassTexture, setYardGrassTexture] = useState<
+    THREE.Texture | null
+  >(null);
+  const [wallFallbackTexture, setWallFallbackTexture] = useState<
+    THREE.Texture | null
+  >(null);
+
+  useEffect(() => {
+    let disposed = false;
+    preloadTextureAsset(GRASS_TEXTURE_URL).then((tex) => {
+      if (disposed || !tex) return;
+      const ground = tex.clone();
+      ground.wrapS = THREE.RepeatWrapping;
+      ground.wrapT = THREE.RepeatWrapping;
+      ground.repeat.set(
+        grassPlaneW / GRASS_METERS_PER_TILE,
+        grassPlaneD / GRASS_METERS_PER_TILE,
+      );
+      ground.colorSpace = THREE.SRGBColorSpace;
+      ground.needsUpdate = true;
+      setGrassTexture(ground);
+
+      const yard = tex.clone();
+      yard.wrapS = THREE.RepeatWrapping;
+      yard.wrapT = THREE.RepeatWrapping;
+      yard.repeat.set(6, 6);
+      yard.colorSpace = THREE.SRGBColorSpace;
+      yard.needsUpdate = true;
+      setYardGrassTexture(yard);
+    });
+    return () => {
+      disposed = true;
+    };
+  }, [grassPlaneW, grassPlaneD]);
+
+  useEffect(() => {
+    if (!wallFallbackUrl) {
+      setWallFallbackTexture(null);
+      return;
+    }
+    let disposed = false;
+    preloadTextureAsset(wallFallbackUrl).then((tex) => {
+      if (disposed || !tex) return;
+      const wall = tex.clone();
+      wall.wrapS = THREE.RepeatWrapping;
+      wall.wrapT = THREE.RepeatWrapping;
+      wall.repeat.set(3, 3);
+      wall.colorSpace = THREE.SRGBColorSpace;
+      wall.needsUpdate = true;
+      setWallFallbackTexture(wall);
+    });
+    return () => {
+      disposed = true;
+    };
+  }, [wallFallbackUrl]);
+
+  useEffect(() => {
+    if (!modelUrl) return;
+    let disposed = false;
+    loadGlbAsset(modelUrl).then((group) => {
+      if (disposed || !group) return;
+      const clone = group.clone(true);
+      fixGlbMaterials(clone, shadows);
+      hideSchoolGlbMeshes(clone, hiddenExact, hiddenIncludes);
+
+      const volumes = extractCollisionVolumes(clone, modelScale);
+      onCollisionReadyRef.current?.(volumes);
+
+      setMapScene(clone);
+    });
+    return () => {
+      disposed = true;
+    };
+  }, [modelUrl, shadows, modelScale, hiddenExact, hiddenIncludes]);
+
+  useEffect(() => {
+    if (!mapScene) return;
+    applySchoolGlbMaterialEnhancements(mapScene, {
+      yardAlbedo: yardGrassTexture,
+      wallAlbedo: wallFallbackTexture,
+      doubleSideMeshIncludes: doubleSideIncludes,
+    });
+  }, [
+    mapScene,
+    yardGrassTexture,
+    wallFallbackTexture,
+    doubleSideIncludes,
+  ]);
+
+  const skyTexture = useMemo(() => createSkyTexture(), []);
+
+  useEffect(() => {
+    return () => {
+      skyTexture?.dispose();
+    };
+  }, [skyTexture]);
+
+  return (
+    <group>
+      <mesh position={[centerX, 0, centerZ]}>
+        <sphereGeometry args={[skyRadius, 48, 32]} />
+        <meshBasicMaterial
+          map={skyTexture ?? undefined}
+          side={THREE.BackSide}
+          depthWrite={false}
+          fog={false}
+        />
+      </mesh>
+
+      <mesh
+        position={[centerX, -0.02, centerZ]}
+        rotation={[-Math.PI / 2, 0, 0]}
+        receiveShadow={shadows}
+        userData={{ bulletHittable: true }}
+      >
+        <planeGeometry args={[grassPlaneW, grassPlaneD]} />
+        <meshStandardMaterial
+          map={grassTexture}
+          color="#7cac54"
+          roughness={0.92}
+          metalness={0}
+        />
+      </mesh>
+
+      <ambientLight intensity={0.52} color="#fff2de" />
+      <hemisphereLight args={["#dcecff", "#6b5438", 0.62]} />
+      <directionalLight
+        position={[centerX + 20, 28, centerZ + 12]}
+        intensity={0.82}
+        color="#ffe0b8"
+      />
+      <directionalLight
+        position={[centerX - 16, 14, centerZ - 18]}
+        intensity={0.34}
+        color="#9fcbff"
+      />
+
+      {mapScene && (
+        <primitive
+          object={mapScene}
+          scale={[modelScale, modelScale, modelScale]}
+        />
+      )}
+    </group>
+  );
+}
+
+export function StressBoxes(
+  { count, shadows }: { count: StressModeCount; shadows: boolean },
+) {
   void count;
   void shadows;
   return null;
@@ -428,12 +806,25 @@ export function PracticeMapEnvironment({
   shadows,
   theme,
   floorGridOpacity,
+  onCollisionReady,
 }: {
   practiceMap: PracticeMapDefinition;
   shadows: boolean;
   theme: number;
   floorGridOpacity: number;
+  onCollisionReady?: (volumes: readonly BlockingVolume[]) => void;
 }) {
+  if (practiceMap.environment.kind === "school-glb") {
+    return (
+      <SchoolGlbEnvironment
+        practiceMap={practiceMap}
+        shadows={shadows}
+        theme={theme}
+        onCollisionReady={onCollisionReady}
+      />
+    );
+  }
+
   if (practiceMap.environment.kind === "school-blockout") {
     return (
       <SchoolBlockoutEnvironment

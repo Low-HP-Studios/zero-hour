@@ -155,7 +155,98 @@ const RUN_TRANSITION_BODY_YAW_DAMP = 16;
 const ADS_BODY_YAW_DAMP = 22;
 const SHOOT_BODY_YAW_DAMP = 34;
 const SHOOT_ALIGN_WINDOW_MS = 180;
+const CAMERA_BLOCKING_MARGIN = 0.38;
 const HEAD_TURN_DEAD_ZONE = THREE.MathUtils.degToRad(45);
+
+const cameraClipDir = new THREE.Vector3();
+const cameraClipBoxMin = new THREE.Vector3();
+const cameraClipBoxMax = new THREE.Vector3();
+
+function rayAabbIntersectEnterDistance(
+  origin: THREE.Vector3,
+  dir: THREE.Vector3,
+  maxT: number,
+  boxMin: THREE.Vector3,
+  boxMax: THREE.Vector3,
+): number | null {
+  let tMin = 0;
+  let tMax = maxT;
+  for (let i = 0; i < 3; i++) {
+    const o = origin.getComponent(i);
+    const d = dir.getComponent(i);
+    const mn = boxMin.getComponent(i);
+    const mx = boxMax.getComponent(i);
+    if (Math.abs(d) < 1e-8) {
+      if (o < mn || o > mx) return null;
+      continue;
+    }
+    const invD = 1 / d;
+    let t0 = (mn - o) * invD;
+    let t1 = (mx - o) * invD;
+    if (t0 > t1) {
+      const s = t0;
+      t0 = t1;
+      t1 = s;
+    }
+    tMin = Math.max(tMin, t0);
+    tMax = Math.min(tMax, t1);
+    if (tMin > tMax) return null;
+  }
+  if (tMin > maxT) return null;
+  if (tMin < 0) {
+    if (tMax < 0 || tMax > maxT) return null;
+    return 0;
+  }
+  return tMin;
+}
+
+function clipThirdPersonCameraToVolumes(
+  origin: THREE.Vector3,
+  target: THREE.Vector3,
+  volumes: readonly BlockingVolume[],
+  margin: number,
+  out: THREE.Vector3,
+): void {
+  cameraClipDir.subVectors(target, origin);
+  const maxDist = cameraClipDir.length();
+  if (maxDist < 1e-4) {
+    out.copy(target);
+    return;
+  }
+  cameraClipDir.normalize();
+  let minHit = maxDist;
+  for (const volume of volumes) {
+    const hx = volume.size[0] / 2;
+    const hy = volume.size[1] / 2;
+    const hz = volume.size[2] / 2;
+    cameraClipBoxMin.set(
+      volume.center[0] - hx,
+      volume.center[1] - hy,
+      volume.center[2] - hz,
+    );
+    cameraClipBoxMax.set(
+      volume.center[0] + hx,
+      volume.center[1] + hy,
+      volume.center[2] + hz,
+    );
+    const t = rayAabbIntersectEnterDistance(
+      origin,
+      cameraClipDir,
+      maxDist,
+      cameraClipBoxMin,
+      cameraClipBoxMax,
+    );
+    if (t !== null && t > 0.02 && t < minHit) {
+      minHit = t;
+    }
+  }
+  if (minHit >= maxDist - 1e-3) {
+    out.copy(target);
+    return;
+  }
+  const dist = Math.max(0.12, minHit - margin);
+  out.copy(origin).addScaledVector(cameraClipDir, Math.min(dist, maxDist));
+}
 const MAX_FREE_LOOK_YAW_OFFSET = THREE.MathUtils.degToRad(120);
 const FORWARD_DIAGONAL_BODY_YAW_THRESHOLD = 0.35;
 const DIAGONAL_BODY_YAW_OFFSET = THREE.MathUtils.degToRad(30);
@@ -253,6 +344,8 @@ export function usePlayerController({
   const tempAimDirRef = useRef(new THREE.Vector3());
   const tempFirstPersonCameraPosRef = useRef(new THREE.Vector3());
   const tempThirdPersonCameraPosRef = useRef(new THREE.Vector3());
+  const cameraClipEyeRef = useRef(new THREE.Vector3());
+  const cameraClipOutRef = useRef(new THREE.Vector3());
   const snapshotAccumulatorRef = useRef(0);
   const snapshotObjectRef = useRef<PlayerSnapshot>({
     ...DEFAULT_PLAYER_SNAPSHOT,
@@ -1172,7 +1265,35 @@ export function usePlayerController({
     }
 
     if (cameraEnabledRef.current) {
-      camera.position.copy(tppCameraPos).lerp(fppCameraPos, viewT);
+      const clipEye = cameraClipEyeRef.current;
+      clipEye.set(
+        positionRef.current.x,
+        positionRef.current.y +
+          LOOK_AT_HEIGHT +
+          crouchLookHeightOffset +
+          verticalDist -
+          sniperADS * 0.08,
+        positionRef.current.z,
+      );
+      if (Math.abs(leanT) > 0.001) {
+        const leanOffsetX = leanT * LEAN_CAMERA_OFFSET_X;
+        clipEye.x += cosCurrentYaw * leanOffsetX;
+        clipEye.z += -sinCurrentYaw * leanOffsetX;
+      }
+      const clippedTpp = cameraClipOutRef.current;
+      const volumes = blockingVolumesRef.current;
+      if (volumes.length > 0 && viewT < 0.995) {
+        clipThirdPersonCameraToVolumes(
+          clipEye,
+          tppCameraPos,
+          volumes,
+          CAMERA_BLOCKING_MARGIN,
+          clippedTpp,
+        );
+        camera.position.copy(clippedTpp).lerp(fppCameraPos, viewT);
+      } else {
+        camera.position.copy(tppCameraPos).lerp(fppCameraPos, viewT);
+      }
 
       if ('isPerspectiveCamera' in camera && camera.isPerspectiveCamera) {
         const baseFov = fovRef.current;

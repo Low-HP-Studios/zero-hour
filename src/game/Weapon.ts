@@ -1015,6 +1015,17 @@ export class WeaponSystem {
     return null;
   }
 
+  replenishPracticeInfiniteRifleAmmo() {
+    const slot = this.slotA;
+    if (!slot.hasWeapon || slot.weaponKind !== "rifle") {
+      return;
+    }
+    const next = { ...slot };
+    next.magAmmo = next.maxMagAmmo;
+    next.reserveAmmo = next.maxReserveAmmo;
+    this.setSlotById("slotA", next);
+  }
+
   reset() {
     this.slotA = { ...DEFAULT_SLOT_A };
     this.slotB = { ...DEFAULT_SLOT_B };

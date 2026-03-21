@@ -37,6 +37,7 @@ import {
   type AimingState,
   type ShotFiredState,
 } from "./GameplayRuntime";
+import type { BlockingVolume } from "../map-layout";
 import type { CharacterModelOverride } from "./CharacterModel";
 import { PracticeMapEnvironment, StressBoxes } from "./MapEnvironment";
 import {
@@ -257,6 +258,23 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
   const resetTimeoutsRef = useRef<Map<string, number>>(new Map());
   const compileReady = booting && runtimeAssetsReady;
   const lobbyFrameCapEnabled = presentation.phase !== "playing";
+  const [glbCollisionVolumes, setGlbCollisionVolumes] = useState<readonly BlockingVolume[]>([]);
+
+  const handleCollisionReady = useCallback((volumes: readonly BlockingVolume[]) => {
+    setGlbCollisionVolumes(volumes);
+  }, []);
+
+  const runtimePracticeMap = useMemo<PracticeMapDefinition>(() => {
+    if (glbCollisionVolumes.length === 0) return practiceMap;
+    return {
+      ...practiceMap,
+      blockingVolumes: [
+        ...(practiceMap.blockingVolumes ?? []),
+        ...glbCollisionVolumes,
+      ],
+    };
+  }, [practiceMap, glbCollisionVolumes]);
+
   const renderedPracticeMap = !booting && presentation.phase === "playing"
     ? practiceMap
     : RANGE_PRACTICE_MAP;
@@ -458,6 +476,7 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
         shadows={settings.shadows}
         theme={worldTheme}
         floorGridOpacity={floorGridOpacity}
+        onCollisionReady={handleCollisionReady}
       />
       <Targets
         targets={targets}
@@ -472,7 +491,7 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
       />
       <GameplayRuntime
         ref={runtimeRef}
-        practiceMap={practiceMap}
+        practiceMap={runtimePracticeMap}
         audioVolumes={audioVolumes}
         presentation={presentation}
                 sensitivity={settings.sensitivity}

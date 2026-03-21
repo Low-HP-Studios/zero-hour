@@ -32,7 +32,7 @@ export type InventoryItemDefinition = {
 export const INVENTORY_ITEM_DEFS: Record<InventoryItemId, InventoryItemDefinition> = {
   weapon_rifle: {
     id: "weapon_rifle",
-    name: "M416 Rifle",
+    name: "AKM",
     icon: "AR",
     category: "weapon",
     maxStack: 1,

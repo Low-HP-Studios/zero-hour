@@ -1522,10 +1522,12 @@ export const GameplayRuntime = forwardRef<
 
   const syncWeaponAmmoFromInventory = useCallback(() => {
     const ammo = inventoryRef.current.getAmmoTotalsByWeaponKind();
-    weaponRef.current.setReserveAmmoForKind("rifle", ammo.rifle);
+    if (!practiceMap.infiniteAmmo) {
+      weaponRef.current.setReserveAmmoForKind("rifle", ammo.rifle);
+    }
     weaponRef.current.setReserveAmmoForKind("sniper", ammo.sniper);
     return ammo;
-  }, []);
+  }, [practiceMap.infiniteAmmo]);
 
   const isAmmoItemId = useCallback((
     itemId: string | null,
@@ -1800,7 +1802,6 @@ export const GameplayRuntime = forwardRef<
     impactIdRef.current = 0;
     bloodSplatIdRef.current = 0;
     lastImpactCleanupAtRef.current = performance.now();
-    lastWeaponEquippedRef.current = false;
     lastActiveWeaponRef.current = "rifle";
     lastADSRef.current = false;
     lastFirstPersonRef.current = false;
@@ -1851,7 +1852,6 @@ export const GameplayRuntime = forwardRef<
       sprintScale: 1,
       allowSprint: true,
     });
-    weaponEquippedCallbackRef.current(false);
     activeWeaponCallbackRef.current("rifle");
     sniperRechamberCallbackRef.current({
       active: false,
@@ -1865,8 +1865,29 @@ export const GameplayRuntime = forwardRef<
     inventoryRef.current.reset(practiceMap.groundSpawns);
     ammoVisualRevisionRef.current = -1;
     setGroundAmmoVisualState(inventoryRef.current.getGroundAmmoVisualState());
+    if (practiceMap.spawnWithRifle) {
+      inventoryRef.current.grantStackInFirstBackpackSlot("ammo_rifle", 150);
+      const ammo = inventoryRef.current.getAmmoTotalsByWeaponKind();
+      weaponRef.current.equipSlotWithWeapon("slotA", "rifle", {
+        magAmmo: 30,
+        reserveAmmo: ammo.rifle,
+      });
+      inventoryRef.current.setActiveQuickSlot("primary");
+      lastWeaponEquippedRef.current = true;
+      weaponEquippedCallbackRef.current(true);
+    } else {
+      lastWeaponEquippedRef.current = false;
+      weaponEquippedCallbackRef.current(false);
+    }
     latestControllerSnapshotRef.current = null;
-  }, [practiceMap.groundSpawns, spawnPitch, spawnPosition, spawnPositionVector, spawnYaw]);
+  }, [
+    practiceMap.groundSpawns,
+    practiceMap.spawnWithRifle,
+    spawnPitch,
+    spawnPosition,
+    spawnPositionVector,
+    spawnYaw,
+  ]);
 
   const handleMoveInventoryItem = useCallback((
     request: InventoryMoveRequest,
@@ -3071,11 +3092,14 @@ export const GameplayRuntime = forwardRef<
           postUpdateLoadout.slotB.reserveAmmo,
       )
       : 0;
-    if (rifleReserveSpent > 0) {
+    if (rifleReserveSpent > 0 && !practiceMap.infiniteAmmo) {
       inventoryRef.current.consumeAmmo("ammo_rifle", rifleReserveSpent);
     }
-    if (sniperReserveSpent > 0) {
+    if (sniperReserveSpent > 0 && !practiceMap.infiniteAmmo) {
       inventoryRef.current.consumeAmmo("ammo_sniper", sniperReserveSpent);
+    }
+    if (practiceMap.infiniteAmmo) {
+      weaponRef.current.replenishPracticeInfiniteRifleAmmo();
     }
 
     const postUpdateReload = weapon.getReloadState(nowMs);

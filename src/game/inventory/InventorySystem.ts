@@ -134,6 +134,20 @@ export class InventorySystem {
     this.reset(groundSpawns);
   }
 
+  grantStackInFirstBackpackSlot(itemId: InventoryItemId, quantity: number) {
+    const definition = INVENTORY_ITEM_DEFS[itemId];
+    const q = Math.max(1, Math.min(quantity, definition.maxStack));
+    const stack = this.createStack(itemId, q);
+    for (let index = 0; index < BACKPACK_CAPACITY; index += 1) {
+      if (!this.backpackSlots[index]) {
+        this.backpackSlots[index] = stack;
+        this.bumpRevision();
+        return true;
+      }
+    }
+    return false;
+  }
+
   reset(groundSpawns: readonly StaticGroundSpawn[] = this.defaultGroundSpawns) {
     this.defaultGroundSpawns = groundSpawns.map((spawn) => ({
       ...spawn,

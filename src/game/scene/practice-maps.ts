@@ -1,9 +1,4 @@
-import type {
-  BlockingVolume,
-  BlockingVolumeMaterial,
-  WalkableSurface,
-  WalkableSurfaceMaterial,
-} from "../map-layout";
+import type { BlockingVolume, WalkableSurface } from "../map-layout";
 import type { CollisionRect, MapId, TargetState, WorldBounds } from "../types";
 import { createDefaultTargets } from "../Targets";
 import type { StaticGroundSpawn } from "../inventory/inventory-data";
@@ -19,6 +14,15 @@ export type PracticeMapEnvironment =
     }
   | {
       kind: "school-blockout";
+    }
+  | {
+      kind: "school-glb";
+      modelUrl: string;
+      scale?: number;
+      hiddenMeshExactNames?: readonly string[];
+      hiddenMeshNameIncludes?: readonly string[];
+      doubleSideMeshNameIncludes?: readonly string[];
+      wallFallbackTextureUrl?: string;
     };
 
 export type PracticeMapDefinition = {
@@ -38,12 +42,12 @@ export type PracticeMapDefinition = {
   groundSpawns: readonly StaticGroundSpawn[];
   walkableSurfaces?: readonly WalkableSurface[];
   blockingVolumes?: readonly BlockingVolume[];
+  infiniteAmmo?: boolean;
+  spawnWithRifle?: boolean;
   environment: PracticeMapEnvironment;
 };
 
 const DEFAULT_PLAYER_PITCH = -0.05;
-const SCHOOL_SECOND_FLOOR_Y = 6;
-const POOL_FLOOR_Y = -1.75;
 
 const RANGE_WORLD_BOUNDS: WorldBounds = {
   minX: -80,
@@ -65,149 +69,19 @@ const RANGE_GROUND_SPAWNS: readonly StaticGroundSpawn[] = [
 ];
 
 const SCHOOL_WORLD_BOUNDS: WorldBounds = {
-  minX: -48,
-  maxX: 48,
-  minZ: -52,
-  maxZ: 64,
+  minX: -100,
+  maxX: 100,
+  minZ: -100,
+  maxZ: 100,
 };
 
-const TDM_COLLIDERS: readonly CollisionRect[] = [];
+const MAP1_COLLIDERS: readonly CollisionRect[] = [];
 
-const TDM_OCCLUDERS: readonly OccluderVolume[] = [];
+const MAP1_OCCLUDERS: readonly OccluderVolume[] = [];
 
-function slab(
-  minX: number,
-  maxX: number,
-  minZ: number,
-  maxZ: number,
-  y: number,
-  material: WalkableSurfaceMaterial,
-  thickness = 0.6,
-): WalkableSurface {
-  return {
-    kind: "slab",
-    minX,
-    maxX,
-    minZ,
-    maxZ,
-    y,
-    material,
-    thickness,
-  };
-}
-
-function ramp(
-  minX: number,
-  maxX: number,
-  minZ: number,
-  maxZ: number,
-  axis: "x" | "z",
-  startY: number,
-  endY: number,
-  material: WalkableSurfaceMaterial,
-  thickness = 0.6,
-): WalkableSurface {
-  return {
-    kind: "ramp",
-    minX,
-    maxX,
-    minZ,
-    maxZ,
-    axis,
-    startY,
-    endY,
-    material,
-    thickness,
-  };
-}
-
-function volume(
-  minX: number,
-  maxX: number,
-  minY: number,
-  maxY: number,
-  minZ: number,
-  maxZ: number,
-  material: BlockingVolumeMaterial = "wall",
-): BlockingVolume {
-  return {
-    center: [
-      (minX + maxX) / 2,
-      (minY + maxY) / 2,
-      (minZ + maxZ) / 2,
-    ],
-    size: [maxX - minX, maxY - minY, maxZ - minZ],
-    material,
-  };
-}
-
-const SCHOOL_WALKABLE_SURFACES: readonly WalkableSurface[] = [
-  // Yard — split to avoid overlapping pool-deck slabs (prevents z-fighting)
-  slab(-48, 28, 18, 64, 0, "yard"),        // top-yard left of pool wing
-  slab(46, 48, 18, 64, 0, "yard"),          // top-yard right sliver past pool wall
-  slab(28, 46, 40, 64, 0, "yard"),          // top-yard above pool wing
-  slab(-48, 48, -52, -18, 0, "yard"),       // bottom yard (unchanged)
-  slab(-48, -24, -18, 18, 0, "yard"),       // left yard (unchanged)
-  slab(24, 48, -18, 10, 0, "yard"),         // right yard (unchanged)
-
-  // Interior building
-  slab(-24, 24, -18, 18, 0, "interior"),
-
-  // Pool deck — fill the gap at x=[24,30] z=[10,12] by extending south edge
-  slab(24, 30, 10, 18, 0, "poolDeck"),      // was z=[12,18], now z=[10,18]
-  slab(30, 46, 10, 16, 0, "poolDeck"),
-  slab(28, 46, 34, 40, 0, "poolDeck"),
-  slab(28, 34, 16, 34, 0, "poolDeck"),
-  slab(40, 46, 16, 34, 0, "poolDeck"),
-  // Fill gap behind pool wall at x=[46,48] z=[10,18]
-  slab(46, 48, 10, 18, 0, "yard"),
-
-  // Pool floor — prevents infinite fall if player jumps over railings
-  slab(34, 40, 16, 34, POOL_FLOOR_Y, "poolDeck"),
-
-  // Upper floor & ramps
-  slab(-24, 24, -18, 18, SCHOOL_SECOND_FLOOR_Y, "upper"),
-  ramp(-24, -18, -8, 8, "x", 0, SCHOOL_SECOND_FLOOR_Y, "stair"),
-  ramp(18, 24, -8, 8, "x", SCHOOL_SECOND_FLOOR_Y, 0, "stair"),
-];
-
-const SCHOOL_BLOCKING_VOLUMES: readonly BlockingVolume[] = [
-  volume(-24, -6, 0, 4.2, 17.5, 18.5),
-  volume(6, 24, 0, 4.2, 17.5, 18.5),
-  volume(-24, 24, 4.2, 8.8, 17.5, 18.5),
-  volume(-24, -6, 0, 4.2, -18.5, -17.5),
-  volume(6, 24, 0, 4.2, -18.5, -17.5),
-  volume(-24, 24, 4.2, 8.8, -18.5, -17.5),
-  volume(-24.5, -23.5, 0, 8.8, -18, 18),
-  volume(23.5, 24.5, 0, 8.8, -18, 10),
-  volume(23.5, 24.5, 4.2, 8.8, 10, 18),
-  volume(-24, -12, 0, 3.4, -4.5, -3.5),
-  volume(-8, 8, 0, 3.4, -4.5, -3.5),
-  volume(12, 24, 0, 3.4, -4.5, -3.5),
-  volume(-24, -12, 0, 3.4, 3.5, 4.5),
-  volume(-8, 8, 0, 3.4, 3.5, 4.5),
-  volume(12, 24, 0, 3.4, 3.5, 4.5),
-  volume(-24, -12, SCHOOL_SECOND_FLOOR_Y, SCHOOL_SECOND_FLOOR_Y + 3.2, -4.5, -3.5),
-  volume(-8, 8, SCHOOL_SECOND_FLOOR_Y, SCHOOL_SECOND_FLOOR_Y + 3.2, -4.5, -3.5),
-  volume(12, 24, SCHOOL_SECOND_FLOOR_Y, SCHOOL_SECOND_FLOOR_Y + 3.2, -4.5, -3.5),
-  volume(-24, -12, SCHOOL_SECOND_FLOOR_Y, SCHOOL_SECOND_FLOOR_Y + 3.2, 3.5, 4.5),
-  volume(-8, 8, SCHOOL_SECOND_FLOOR_Y, SCHOOL_SECOND_FLOOR_Y + 3.2, 3.5, 4.5),
-  volume(12, 24, SCHOOL_SECOND_FLOOR_Y, SCHOOL_SECOND_FLOOR_Y + 3.2, 3.5, 4.5),
-  volume(30, 46, 0, 2.6, 9.5, 10.5),
-  volume(30, 46, 0, 2.6, 39.5, 40.5),
-  volume(45.5, 46.5, 0, 2.6, 10, 40),
-  volume(34, 40, 0, 1.25, 15.5, 16.5, "railing"),
-  volume(34, 40, 0, 1.25, 33.5, 34.5, "railing"),
-  volume(33.5, 34.5, 0, 1.25, 16, 34, "railing"),
-  volume(39.5, 40.5, 0, 1.25, 16, 34, "railing"),
-  volume(-14, -10, 0, 1.6, 30, 34, "cover"),
-  volume(10, 14, 0, 1.6, 44, 48, "cover"),
-  volume(-4, 4, 0, 1.8, -34, -30, "cover"),
-];
-
-const TDM_PLAYER_SPAWN = {
-  position: [0, 0, 34] as [number, number, number],
-  yaw: 0,
+const MAP1_PLAYER_SPAWN = {
+  position: [0, 0.5, 2] as [number, number, number],
+  yaw: Math.PI,
   pitch: DEFAULT_PLAYER_PITCH,
 };
 
@@ -231,27 +105,33 @@ export const RANGE_PRACTICE_MAP: PracticeMapDefinition = {
   },
 };
 
-export const TDM_PRACTICE_MAP: PracticeMapDefinition = {
-  id: "tdm",
+export const MAP1_PRACTICE_MAP: PracticeMapDefinition = {
+  id: "map1",
   label: "School",
   description: "Movement-first school blockout with a 2-floor main building and pool wing.",
   supportsStressMode: false,
   worldBounds: SCHOOL_WORLD_BOUNDS,
-  collisionRects: TDM_COLLIDERS,
-  occluderVolumes: TDM_OCCLUDERS,
-  playerSpawn: TDM_PLAYER_SPAWN,
+  collisionRects: MAP1_COLLIDERS,
+  occluderVolumes: MAP1_OCCLUDERS,
+  playerSpawn: MAP1_PLAYER_SPAWN,
   targets: [],
   groundSpawns: [],
-  walkableSurfaces: SCHOOL_WALKABLE_SURFACES,
-  blockingVolumes: SCHOOL_BLOCKING_VOLUMES,
+  walkableSurfaces: [],
+  blockingVolumes: [],
+  infiniteAmmo: true,
+  spawnWithRifle: true,
   environment: {
-    kind: "school-blockout",
+    kind: "school-glb",
+    modelUrl: "/assets/map/map1.glb",
+    scale: 0.25,
+    doubleSideMeshNameIncludes: ["walkable_slab", "blocker_wall", "Cube"],
+    wallFallbackTextureUrl: "/assets/space/glTF/Rocks_Desert_Diffuse.png",
   },
 };
 
 export const PRACTICE_MAPS: Record<MapId, PracticeMapDefinition> = {
   range: RANGE_PRACTICE_MAP,
-  tdm: TDM_PRACTICE_MAP,
+  map1: MAP1_PRACTICE_MAP,
 };
 
 export const PRACTICE_MAP_OPTIONS = [
@@ -261,9 +141,9 @@ export const PRACTICE_MAP_OPTIONS = [
     description: RANGE_PRACTICE_MAP.description,
   },
   {
-    id: TDM_PRACTICE_MAP.id,
-    label: TDM_PRACTICE_MAP.label,
-    description: TDM_PRACTICE_MAP.description,
+    id: MAP1_PRACTICE_MAP.id,
+    label: MAP1_PRACTICE_MAP.label,
+    description: MAP1_PRACTICE_MAP.description,
   },
 ] as const;
 
