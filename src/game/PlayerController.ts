@@ -132,9 +132,10 @@ const GROUND_STEP_DOWN_HEIGHT = 1.8;
 const CAMERA_ARM_LENGTH = 2.25;
 const CAMERA_ARM_LENGTH_ADS = 0.0;
 const CAMERA_ARM_LENGTH_SNIPER_ADS = 0.78;
-const CAMERA_DEFAULT_ELEVATION = 0.23;
-const CAMERA_MIN_ELEVATION = 0.05;
-const CAMERA_MAX_ELEVATION = 1.2;
+const CAMERA_HEIGHT_BIAS = 0.55;
+const CAMERA_ARM_PITCH_SHORTEN = 0.3;
+const CAMERA_MIN_ARM_SCALE = 0.55;
+const CAMERA_MIN_Y_ABOVE_FEET = 0.5;
 const LOOK_AT_HEIGHT = 1.2;
 const SHOULDER_OFFSET = 0.2;
 const SHOULDER_OFFSET_ADS = 0.2;
@@ -1251,10 +1252,11 @@ export function usePlayerController({
       fppCameraPos.z += -sinCurrentYaw * 0.03 * rifleADS;
     }
 
-    const elevationAngle = clamp(
-      CAMERA_DEFAULT_ELEVATION - currentPitch * 0.6 - sniperADS * 0.05,
-      CAMERA_MIN_ELEVATION,
-      CAMERA_MAX_ELEVATION,
+    // Arm shortens at extreme pitch (camera comes closer when looking up/down)
+    const pitchMagnitude = Math.abs(currentPitch);
+    const armShortenFactor = Math.max(
+      CAMERA_MIN_ARM_SCALE,
+      1 - pitchMagnitude * CAMERA_ARM_PITCH_SHORTEN,
     );
 
     const armLenAdsTarget =
@@ -1265,34 +1267,42 @@ export function usePlayerController({
       activeWeapon === 'sniper'
         ? SHOULDER_OFFSET_SNIPER_ADS
         : SHOULDER_OFFSET_ADS;
-    const armLen = THREE.MathUtils.lerp(
+    const baseArmLen = THREE.MathUtils.lerp(
       CAMERA_ARM_LENGTH,
       armLenAdsTarget,
       adsT,
     );
+    const armLen = baseArmLen * armShortenFactor;
     const shoulder = THREE.MathUtils.lerp(
       SHOULDER_OFFSET,
       shoulderAdsTarget,
       adsT,
     );
 
-    const horizontalDist = armLen * Math.cos(elevationAngle);
-    const verticalDist = armLen * Math.sin(elevationAngle);
+    // PUBG-style orbit: camera extends opposite to aimDir from pivot.
+    // This keeps the character head consistently near the crosshair.
+    const orbitHorizontalDist = armLen * pitchCos;
+    const orbitVerticalDist = armLen * (-Math.sin(currentPitch));
 
     const backX = sinCurrentYaw;
     const backZ = cosCurrentYaw;
     const rightX = cosCurrentYaw;
     const rightZ = -sinCurrentYaw;
 
-    const tppCameraPos = tempThirdPersonCameraPosRef.current;
-    tppCameraPos.set(
-      positionRef.current.x + horizontalDist * backX + shoulder * rightX,
+    // Pivot = character shoulder area + height bias so head sits just below crosshair
+    const pivotY =
       positionRef.current.y +
-        LOOK_AT_HEIGHT +
-        crouchLookHeightOffset +
-        verticalDist -
-        sniperADS * 0.08,
-      positionRef.current.z + horizontalDist * backZ + shoulder * rightZ,
+      LOOK_AT_HEIGHT +
+      crouchLookHeightOffset +
+      CAMERA_HEIGHT_BIAS -
+      sniperADS * 0.08;
+
+    const tppCameraPos = tempThirdPersonCameraPosRef.current;
+    const rawCamY = pivotY + orbitVerticalDist;
+    tppCameraPos.set(
+      positionRef.current.x + orbitHorizontalDist * backX + shoulder * rightX,
+      Math.max(positionRef.current.y + CAMERA_MIN_Y_ABOVE_FEET, rawCamY),
+      positionRef.current.z + orbitHorizontalDist * backZ + shoulder * rightZ,
     );
     if (Math.abs(leanT) > 0.001) {
       const leanOffsetX = leanT * LEAN_CAMERA_OFFSET_X;
@@ -1306,11 +1316,7 @@ export function usePlayerController({
       const clipEye = cameraClipEyeRef.current;
       clipEye.set(
         positionRef.current.x,
-        positionRef.current.y +
-          LOOK_AT_HEIGHT +
-          crouchLookHeightOffset +
-          verticalDist -
-          sniperADS * 0.08,
+        pivotY,
         positionRef.current.z,
       );
       if (Math.abs(leanT) > 0.001) {

@@ -86,7 +86,7 @@ export const DEFAULT_WEAPON_ALIGNMENT: WeaponAlignmentOffset = {
   posY: 0.24,
   posZ: 0.04,
   rotX: -2.96,
-  rotY: 0.91,
+  rotY: 0.13,
   rotZ: -1.23,
 };
 
@@ -247,9 +247,9 @@ export const DEFAULT_MOVEMENT_SETTINGS: MovementProfileSettings = {
 };
 
 export type CrouchMode = 'hold' | 'toggle';
-export const DEFAULT_CROUCH_MODE: CrouchMode = 'toggle';
+export const DEFAULT_CROUCH_MODE: CrouchMode = 'hold';
 export type InventoryOpenMode = 'toggle' | 'hold';
-export const DEFAULT_INVENTORY_OPEN_MODE: InventoryOpenMode = 'toggle';
+export const DEFAULT_INVENTORY_OPEN_MODE: InventoryOpenMode = 'hold';
 
 export type GameSettings = {
   shadows: boolean;

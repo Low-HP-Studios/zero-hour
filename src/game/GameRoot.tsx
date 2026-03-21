@@ -12,6 +12,7 @@ import { type AudioVolumeSettings } from "./Audio";
 import { getCharacterById } from "./characters";
 import { ExperienceMenuOverlay } from "./ExperienceMenuOverlay";
 import { MinimalStatsBar } from "./hud/MinimalStatsBar";
+import { PubgHud } from "./hud/PubgHud";
 import {
   type AimingState,
   type HitMarkerKind,
@@ -31,11 +32,9 @@ import {
 import { PubgInventoryOverlay } from "./inventory/PubgInventoryOverlay";
 import type { SniperRechamberState, WeaponKind } from "./Weapon";
 import {
-  DEFAULT_MOVEMENT_SETTINGS,
   DEFAULT_PERF_METRICS,
   DEFAULT_PLAYER_SNAPSHOT,
   DEFAULT_WEAPON_RECOIL_PROFILES,
-  DEFAULT_WEAPON_ALIGNMENT,
   type CrosshairColor,
   type ExperiencePhase,
   type GameSettings,
@@ -1153,7 +1152,7 @@ export function GameRoot({
           : null}
 
         <div className="center-stack">
-          {combatHudVisible && !isGameplayPaused && !isAimingDownSight
+          {combatHudVisible && !isGameplayPaused && (!isAimingDownSight || activeWeapon === "rifle")
             ? (
               <div
                 className={`crosshair ${
@@ -1200,27 +1199,6 @@ export function GameRoot({
                     />
                   )
                   : null}
-              </div>
-            )
-            : null}
-          {isAimingDownSight && activeWeapon === "rifle" && combatHudVisible
-            ? (
-              <div
-                className="rifle-ads-overlay"
-                style={
-                  {
-                    "--ads-dot-size": `${settings.crosshair.ads.rifleDotSize}`,
-                    "--ads-dot-color":
-                      CROSSHAIR_COLOR_HEX[settings.crosshair.ads.rifleDotColor],
-                    "--ch-outline-enabled": settings.crosshair.outline.enabled
-                      ? "1"
-                      : "0",
-                    "--ch-outline-thickness": `${settings.crosshair.outline.thickness}`,
-                    "--ch-outline-opacity": `${settings.crosshair.outline.opacity}`,
-                  } as React.CSSProperties
-                }
-              >
-                <div className="rifle-ads-dot" />
               </div>
             )
             : null}
@@ -1596,275 +1574,6 @@ export function GameRoot({
                             </div>
                           </MenuSection>
 
-                          <MenuSection
-                            title="Field of View"
-                            blurb="PUBG-style FOV: wider = more peripheral vision but smaller targets. Applies to both FPP and TPP."
-                          >
-                            <RangeField
-                              label="Base FOV"
-                              value={settings.fov}
-                              min={40}
-                              max={120}
-                              step={1}
-                              suffix="°"
-                              onChange={(value) =>
-                                setSettings((prev) => ({
-                                  ...prev,
-                                  fov: value,
-                                }))}
-                            />
-                            <div className="settings-chip-wrap">
-                              <span className="pill-chip">
-                                Low (40-55): Zoomed, sniper-friendly
-                              </span>
-                              <span className="pill-chip">
-                                Normal (60-75): Balanced
-                              </span>
-                              <span className="pill-chip">
-                                Wide (80-120): Max awareness
-                              </span>
-                            </div>
-                          </MenuSection>
-
-                          <MenuSection
-                            title="Weapon Alignment (Debug)"
-                            blurb="Tweak weapon position and rotation on the hand bone. Values are saved. Hit Reset to start over."
-                          >
-                            <RangeField
-                              label="Offset X (left/right)"
-                              value={settings.weaponAlignment.posX}
-                              min={-0.5}
-                              max={0.5}
-                              step={0.005}
-                              onChange={(value) =>
-                                setSettings((prev) => ({
-                                  ...prev,
-                                  weaponAlignment: {
-                                    ...prev.weaponAlignment,
-                                    posX: value,
-                                  },
-                                }))}
-                            />
-                            <RangeField
-                              label="Offset Y (up/down)"
-                              value={settings.weaponAlignment.posY}
-                              min={-0.5}
-                              max={0.5}
-                              step={0.005}
-                              onChange={(value) =>
-                                setSettings((prev) => ({
-                                  ...prev,
-                                  weaponAlignment: {
-                                    ...prev.weaponAlignment,
-                                    posY: value,
-                                  },
-                                }))}
-                            />
-                            <RangeField
-                              label="Offset Z (forward/back)"
-                              value={settings.weaponAlignment.posZ}
-                              min={-0.5}
-                              max={0.5}
-                              step={0.005}
-                              onChange={(value) =>
-                                setSettings((prev) => ({
-                                  ...prev,
-                                  weaponAlignment: {
-                                    ...prev.weaponAlignment,
-                                    posZ: value,
-                                  },
-                                }))}
-                            />
-                            <RangeField
-                              label="Rotation X (pitch)"
-                              value={settings.weaponAlignment.rotX}
-                              min={-3.14}
-                              max={3.14}
-                              step={0.01}
-                              suffix=" rad"
-                              onChange={(value) =>
-                                setSettings((prev) => ({
-                                  ...prev,
-                                  weaponAlignment: {
-                                    ...prev.weaponAlignment,
-                                    rotX: value,
-                                  },
-                                }))}
-                            />
-                            <RangeField
-                              label="Rotation Y (yaw)"
-                              value={settings.weaponAlignment.rotY}
-                              min={-3.14}
-                              max={3.14}
-                              step={0.01}
-                              suffix=" rad"
-                              onChange={(value) =>
-                                setSettings((prev) => ({
-                                  ...prev,
-                                  weaponAlignment: {
-                                    ...prev.weaponAlignment,
-                                    rotY: value,
-                                  },
-                                }))}
-                            />
-                            <RangeField
-                              label="Rotation Z (roll)"
-                              value={settings.weaponAlignment.rotZ}
-                              min={-3.14}
-                              max={3.14}
-                              step={0.01}
-                              suffix=" rad"
-                              onChange={(value) =>
-                                setSettings((prev) => ({
-                                  ...prev,
-                                  weaponAlignment: {
-                                    ...prev.weaponAlignment,
-                                    rotZ: value,
-                                  },
-                                }))}
-                            />
-                            <div className="settings-chip-wrap">
-                              <button
-                                type="button"
-                                className="btn"
-                                onClick={() =>
-                                  setSettings((prev) => ({
-                                    ...prev,
-                                    weaponAlignment: {
-                                      ...DEFAULT_WEAPON_ALIGNMENT,
-                                    },
-                                  }))}
-                              >
-                                Reset Alignment
-                              </button>
-                            </div>
-                          </MenuSection>
-
-                          <MenuSection
-                            title="Rifle Movement Tuning"
-                            blurb="Change walk/jog/run feel live. This controls speed scales and slide gating for forward-biased sprinting."
-                          >
-                            <RangeField
-                              label="Rifle Walk Speed Scale"
-                              value={settings.movement.rifleWalkSpeedScale}
-                              min={0.2}
-                              max={1.2}
-                              step={0.01}
-                              onChange={(value) =>
-                                setSettings((prev) => ({
-                                  ...prev,
-                                  movement: {
-                                    ...prev.movement,
-                                    rifleWalkSpeedScale: value,
-                                  },
-                                }))}
-                            />
-                            <RangeField
-                              label="Rifle Jog Speed Scale"
-                              value={settings.movement.rifleJogSpeedScale}
-                              min={0.2}
-                              max={2}
-                              step={0.01}
-                              onChange={(value) =>
-                                setSettings((prev) => ({
-                                  ...prev,
-                                  movement: {
-                                    ...prev.movement,
-                                    rifleJogSpeedScale: value,
-                                  },
-                                }))}
-                            />
-                            <RangeField
-                              label="Rifle Run Speed Scale"
-                              value={settings.movement.rifleRunSpeedScale}
-                              min={0.2}
-                              max={3}
-                              step={0.01}
-                              onChange={(value) =>
-                                setSettings((prev) => ({
-                                  ...prev,
-                                  movement: {
-                                    ...prev.movement,
-                                    rifleRunSpeedScale: value,
-                                  },
-                                }))}
-                            />
-                            <RangeField
-                              label="Rifle Fire Prep Speed Scale"
-                              value={settings.movement.rifleFirePrepSpeedScale}
-                              min={0.1}
-                              max={1}
-                              step={0.01}
-                              onChange={(value) =>
-                                setSettings((prev) => ({
-                                  ...prev,
-                                  movement: {
-                                    ...prev.movement,
-                                    rifleFirePrepSpeedScale: value,
-                                  },
-                                }))}
-                            />
-                            <RangeField
-                              label="Crouch Speed Scale"
-                              value={settings.movement.crouchSpeedScale}
-                              min={0.2}
-                              max={1.2}
-                              step={0.01}
-                              onChange={(value) =>
-                                setSettings((prev) => ({
-                                  ...prev,
-                                  movement: {
-                                    ...prev.movement,
-                                    crouchSpeedScale: value,
-                                  },
-                                }))}
-                            />
-                            <RangeField
-                              label="Slide Forward Threshold"
-                              value={settings.movement.rifleRunForwardThreshold}
-                              min={0.05}
-                              max={1}
-                              step={0.01}
-                              onChange={(value) =>
-                                setSettings((prev) => ({
-                                  ...prev,
-                                  movement: {
-                                    ...prev.movement,
-                                    rifleRunForwardThreshold: value,
-                                  },
-                                }))}
-                            />
-                            <RangeField
-                              label="Slide Lateral Threshold"
-                              value={settings.movement.rifleRunLateralThreshold}
-                              min={0}
-                              max={1}
-                              step={0.01}
-                              onChange={(value) =>
-                                setSettings((prev) => ({
-                                  ...prev,
-                                  movement: {
-                                    ...prev.movement,
-                                    rifleRunLateralThreshold: value,
-                                  },
-                                }))}
-                            />
-                            <div className="settings-chip-wrap">
-                              <button
-                                type="button"
-                                className="btn"
-                                onClick={() =>
-                                  setSettings((prev) => ({
-                                    ...prev,
-                                    movement: {
-                                      ...DEFAULT_MOVEMENT_SETTINGS,
-                                    },
-                                  }))}
-                              >
-                                Reset Movement Tuning
-                              </button>
-                            </div>
-                          </MenuSection>
 
                           <MenuSection
                             title="Weapon Recoil Tuning"
@@ -2891,70 +2600,9 @@ export function GameRoot({
                           </MenuSection>
 
                           <MenuSection
-                            title="ADS Basics"
-                            blurb="Red Dot Reticle (2 MOA emitter dot) and sniper scope center-dot tuning."
+                            title="Sniper Scope"
+                            blurb="Sniper scope center-dot tuning."
                           >
-                            <RangeField
-                              label="Red Dot Reticle Size"
-                              value={settings.crosshair.ads.rifleDotSize}
-                              min={1}
-                              max={16}
-                              step={0.5}
-                              onChange={(value) =>
-                                setSettings((prev) => ({
-                                  ...prev,
-                                  crosshair: {
-                                    ...prev.crosshair,
-                                    ads: {
-                                      ...prev.crosshair.ads,
-                                      rifleDotSize: value,
-                                    },
-                                  },
-                                }))}
-                            />
-                            <div className="field-row">
-                              <div>
-                                <div className="field-label">Red Dot Reticle Color</div>
-                                <div className="field-hint">
-                                  2 MOA emitter dot tint
-                                </div>
-                              </div>
-                              <div className="color-chip-row">
-                                {CROSSHAIR_COLOR_OPTIONS.map((option) => (
-                                  <button
-                                    key={`rifle-dot-${option.id}`}
-                                    type="button"
-                                    className={`color-chip ${
-                                      settings.crosshair.ads.rifleDotColor ===
-                                        option.id
-                                        ? "active"
-                                        : ""
-                                    }`}
-                                    onClick={() =>
-                                      setSettings((prev) => ({
-                                        ...prev,
-                                        crosshair: {
-                                          ...prev.crosshair,
-                                          ads: {
-                                            ...prev.crosshair.ads,
-                                            rifleDotColor: option.id,
-                                          },
-                                        },
-                                      }))}
-                                  >
-                                    <span
-                                      className="color-chip-swatch"
-                                      style={{
-                                        backgroundColor:
-                                          CROSSHAIR_COLOR_HEX[option.id],
-                                      }}
-                                    />
-                                    {option.label}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-
                             <RangeField
                               label="Sniper Dot Size"
                               value={settings.crosshair.ads.sniperDotSize}
@@ -3060,6 +2708,10 @@ export function GameRoot({
             )
             : null}
         </div>
+
+        {combatHudVisible && !isGameplayPaused ? (
+          <PubgHud player={player} visible />
+        ) : null}
 
       </div>
       {showClickToContinueOverlay ? (

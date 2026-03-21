@@ -801,8 +801,8 @@ function SchoolGlbEnvironment({
         <planeGeometry args={[grassPlaneW, grassPlaneD]} />
         <meshStandardMaterial
           map={grassTexture}
-          color="#7cac54"
-          roughness={0.92}
+          color="#5f7f43"
+          roughness={0.96}
           metalness={0}
         />
       </mesh>
