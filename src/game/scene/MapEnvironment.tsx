@@ -17,8 +17,10 @@ import { RANGE_PRACTICE_MAP } from "./practice-maps";
 import { OCEAN_LEVEL_Y, OCEAN_SIZE } from "./scene-constants";
 import {
   createGrassTexture,
+  createIceTexture,
   createNightSkyTexture,
   createSkyTexture,
+  createTundraTexture,
 } from "./Textures";
 import { loadGlbAsset, preloadTextureAsset } from "../AssetLoader";
 
@@ -28,16 +30,19 @@ const VOID_WALKABLE = new THREE.Color("#080809");
 const LIVE_WALKABLE = new THREE.Color("#e8e8e8");
 const GRID_MAJOR_COLOR = new THREE.Color("#8fb3ff");
 const GRID_MINOR_COLOR = new THREE.Color("#ffffff");
-const SAND_COLOR_VOID = new THREE.Color("#060607");
-const SAND_COLOR_LIVE = new THREE.Color("#c4a96a");
-const WATER_COLOR_VOID = new THREE.Color("#050609");
-const WATER_COLOR_LIVE = new THREE.Color("#1e4a61");
+const TUNDRA_COLOR_VOID = new THREE.Color("#06080c");
+const TUNDRA_COLOR_LIVE = new THREE.Color("#dde7f0");
+const ICE_COLOR_VOID = new THREE.Color("#07111c");
+const ICE_COLOR_LIVE = new THREE.Color("#7ab5c8");
 const SCHOOL_BASE_VOID = new THREE.Color("#0b0b0d");
 const SCHOOL_BASE_LIVE = new THREE.Color("#64615b");
 const FLOOR_GRID_DIVISIONS = 16;
-const SAND_STRIP_SIZE = 320;
+const BACKDROP_SHELF_SIZE = 760;
 const RANGE_FLOOR_TEXTURE_URL = "/assets/range-floor-texture.jpg";
 const RANGE_FLOOR_METERS_PER_TILE = 8;
+const SKY_ASSET_URL = "/assets/sky/sky.glb";
+const SKY_ASSET_BASE_RADIUS = 500;
+const WORLD_SKY_RADIUS = 560;
 
 const POOL_MIN_X = 34;
 const POOL_MAX_X = 40;
@@ -53,6 +58,116 @@ function clamp01(value: number) {
 
 function blendColor(from: THREE.Color, to: THREE.Color, amount: number) {
   return new THREE.Color().copy(from).lerp(to, clamp01(amount));
+}
+
+function createSkyMaterial(source: THREE.Material) {
+  const texturedSource = source as THREE.Material & {
+    emissiveMap?: THREE.Texture | null;
+    map?: THREE.Texture | null;
+  };
+  const map = texturedSource.map ?? texturedSource.emissiveMap ?? null;
+  if (map) {
+    map.colorSpace = THREE.SRGBColorSpace;
+  }
+
+  const material = new THREE.MeshBasicMaterial({
+    color: "#ffffff",
+    map: map ?? undefined,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+    fog: false,
+  });
+  material.toneMapped = false;
+  return material;
+}
+
+function disposeObjectMaterials(root: THREE.Object3D) {
+  root.traverse((child) => {
+    if (!(child as THREE.Mesh).isMesh) return;
+    const mesh = child as THREE.Mesh;
+    const materials = Array.isArray(mesh.material)
+      ? mesh.material
+      : [mesh.material];
+    for (const material of materials) {
+      material?.dispose();
+    }
+  });
+}
+
+function prepareSkyAsset(root: THREE.Object3D) {
+  root.traverse((child) => {
+    child.userData.skipCollision = true;
+    child.userData.bulletHittable = false;
+
+    if (!(child as THREE.Mesh).isMesh) return;
+    const mesh = child as THREE.Mesh;
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+    mesh.renderOrder = -100;
+    mesh.frustumCulled = false;
+
+    mesh.material = Array.isArray(mesh.material)
+      ? mesh.material.map((material) => createSkyMaterial(material))
+      : createSkyMaterial(mesh.material);
+  });
+}
+
+function SkyBackdrop({
+  centerX,
+  centerZ,
+  radius,
+  fallbackColor,
+  fallbackTexture,
+}: {
+  centerX: number;
+  centerZ: number;
+  radius: number;
+  fallbackColor?: THREE.ColorRepresentation;
+  fallbackTexture?: THREE.Texture | null;
+}) {
+  const [skyScene, setSkyScene] = useState<THREE.Group | null>(null);
+
+  useEffect(() => {
+    let disposed = false;
+    let localScene: THREE.Group | null = null;
+
+    loadGlbAsset(SKY_ASSET_URL).then((group) => {
+      if (disposed || !group) return;
+      const clone = group.clone(true);
+      prepareSkyAsset(clone);
+      localScene = clone;
+      setSkyScene(clone);
+    });
+
+    return () => {
+      disposed = true;
+      if (localScene) {
+        disposeObjectMaterials(localScene);
+      }
+    };
+  }, []);
+
+  if (skyScene) {
+    const scale = radius / SKY_ASSET_BASE_RADIUS;
+    return (
+      <group position={[centerX, 0, centerZ]} scale={[scale, scale, scale]}>
+        <primitive object={skyScene} />
+      </group>
+    );
+  }
+
+  return (
+    <mesh position={[centerX, 0, centerZ]}>
+      <sphereGeometry args={[radius, 48, 32]} />
+      <meshBasicMaterial
+        color={fallbackColor}
+        map={fallbackTexture ?? undefined}
+        side={THREE.BackSide}
+        depthWrite={false}
+        fog={false}
+      />
+    </mesh>
+  );
 }
 
 type SurfacePalette = {
@@ -84,12 +199,16 @@ const BLOCKING_PALETTE: Record<
 function WorldBackdrop({
   theme,
   worldBounds,
+  showSkyBackdrop = true,
 }: {
   theme: number;
   worldBounds: PracticeMapDefinition["worldBounds"];
+  showSkyBackdrop?: boolean;
 }) {
   const skyTexture = useMemo(() => createSkyTexture(), []);
   const nightSkyTexture = useMemo(() => createNightSkyTexture(), []);
+  const tundraTexture = useMemo(() => createTundraTexture(), []);
+  const iceTexture = useMemo(() => createIceTexture(), []);
   const liveTheme = clamp01(theme);
   const textureReveal = clamp01((liveTheme - 0.52) / 0.48);
   const allowTextures = textureReveal > 0.001;
@@ -100,33 +219,33 @@ function WorldBackdrop({
     return () => {
       skyTexture?.dispose();
       nightSkyTexture?.dispose();
+      tundraTexture?.dispose();
+      iceTexture?.dispose();
     };
-  }, [nightSkyTexture, skyTexture]);
+  }, [iceTexture, nightSkyTexture, skyTexture, tundraTexture]);
 
   return (
     <group>
-      <mesh>
-        <sphereGeometry args={[560, 48, 32]} />
-        <meshBasicMaterial
-          color={blendColor(VOID_SKY, LIVE_SKY, textureReveal)}
-          map={allowTextures
-            ? skyTexture ?? undefined
-            : nightSkyTexture ?? undefined}
-          side={THREE.BackSide}
-          depthWrite={false}
-          fog={false}
+      {showSkyBackdrop ? (
+        <SkyBackdrop
+          centerX={walkableCenterX}
+          centerZ={walkableCenterZ}
+          radius={WORLD_SKY_RADIUS}
+          fallbackColor={blendColor(VOID_SKY, LIVE_SKY, textureReveal)}
+          fallbackTexture={allowTextures ? skyTexture : nightSkyTexture}
         />
-      </mesh>
+      ) : null}
 
       <mesh
         position={[walkableCenterX, -0.12, walkableCenterZ]}
         rotation={[-Math.PI / 2, 0, 0]}
       >
-        <planeGeometry args={[SAND_STRIP_SIZE, SAND_STRIP_SIZE]} />
+        <planeGeometry args={[BACKDROP_SHELF_SIZE, BACKDROP_SHELF_SIZE]} />
         <meshStandardMaterial
-          color={blendColor(SAND_COLOR_VOID, SAND_COLOR_LIVE, liveTheme)}
-          roughness={1}
-          metalness={0}
+          color={blendColor(TUNDRA_COLOR_VOID, TUNDRA_COLOR_LIVE, liveTheme)}
+          map={allowTextures ? tundraTexture ?? undefined : undefined}
+          roughness={0.98}
+          metalness={0.03}
         />
       </mesh>
 
@@ -136,9 +255,10 @@ function WorldBackdrop({
       >
         <planeGeometry args={[OCEAN_SIZE, OCEAN_SIZE]} />
         <meshStandardMaterial
-          color={blendColor(WATER_COLOR_VOID, WATER_COLOR_LIVE, liveTheme)}
-          roughness={1}
-          metalness={0}
+          color={blendColor(ICE_COLOR_VOID, ICE_COLOR_LIVE, liveTheme)}
+          map={allowTextures ? iceTexture ?? undefined : undefined}
+          roughness={THREE.MathUtils.lerp(0.96, 0.46, liveTheme)}
+          metalness={THREE.MathUtils.lerp(0.02, 0.18, liveTheme)}
         />
       </mesh>
     </group>
@@ -150,6 +270,7 @@ export type MapEnvironmentProps = {
   theme: number;
   floorGridOpacity: number;
   worldBounds?: PracticeMapDefinition["worldBounds"];
+  showSkyBackdrop?: boolean;
 };
 
 export function MapEnvironment({
@@ -157,6 +278,7 @@ export function MapEnvironment({
   theme,
   floorGridOpacity,
   worldBounds = RANGE_PRACTICE_MAP.worldBounds,
+  showSkyBackdrop = true,
 }: MapEnvironmentProps) {
   const grassTexture = useMemo(() => createGrassTexture(), []);
   const [rangeFloorTexture, setRangeFloorTexture] = useState<
@@ -219,7 +341,11 @@ export function MapEnvironment({
 
   return (
     <group>
-      <WorldBackdrop theme={theme} worldBounds={worldBounds} />
+      <WorldBackdrop
+        theme={theme}
+        worldBounds={worldBounds}
+        showSkyBackdrop={showSkyBackdrop}
+      />
 
       <ambientLight
         intensity={THREE.MathUtils.lerp(0, 0.25, liveTheme)}
@@ -426,10 +552,12 @@ function SchoolBlockoutEnvironment({
   practiceMap,
   shadows,
   theme,
+  showSkyBackdrop,
 }: {
   practiceMap: PracticeMapDefinition;
   shadows: boolean;
   theme: number;
+  showSkyBackdrop: boolean;
 }) {
   const worldBounds = practiceMap.worldBounds;
   const surfaces = practiceMap.walkableSurfaces ?? [];
@@ -442,7 +570,11 @@ function SchoolBlockoutEnvironment({
 
   return (
     <group>
-      <WorldBackdrop theme={theme} worldBounds={worldBounds} />
+      <WorldBackdrop
+        theme={theme}
+        worldBounds={worldBounds}
+        showSkyBackdrop={showSkyBackdrop}
+      />
 
       <mesh
         position={[centerX, -0.18, centerZ]}
@@ -639,11 +771,13 @@ function SchoolGlbEnvironment({
   shadows,
   theme: _theme,
   onCollisionReady,
+  showSkyBackdrop,
 }: {
   practiceMap: PracticeMapDefinition;
   shadows: boolean;
   theme: number;
   onCollisionReady?: (volumes: readonly BlockingVolume[]) => void;
+  showSkyBackdrop: boolean;
 }) {
   void _theme;
   const worldBounds = practiceMap.worldBounds;
@@ -782,15 +916,14 @@ function SchoolGlbEnvironment({
 
   return (
     <group>
-      <mesh position={[centerX, 0, centerZ]}>
-        <sphereGeometry args={[skyRadius, 48, 32]} />
-        <meshBasicMaterial
-          map={skyTexture ?? undefined}
-          side={THREE.BackSide}
-          depthWrite={false}
-          fog={false}
+      {showSkyBackdrop ? (
+        <SkyBackdrop
+          centerX={centerX}
+          centerZ={centerZ}
+          radius={skyRadius}
+          fallbackTexture={skyTexture}
         />
-      </mesh>
+      ) : null}
 
       <mesh
         position={[centerX, -0.02, centerZ]}
@@ -844,12 +977,14 @@ export function PracticeMapEnvironment({
   theme,
   floorGridOpacity,
   onCollisionReady,
+  showSkyBackdrop = true,
 }: {
   practiceMap: PracticeMapDefinition;
   shadows: boolean;
   theme: number;
   floorGridOpacity: number;
   onCollisionReady?: (volumes: readonly BlockingVolume[]) => void;
+  showSkyBackdrop?: boolean;
 }) {
   if (practiceMap.environment.kind === "school-glb") {
     return (
@@ -858,6 +993,7 @@ export function PracticeMapEnvironment({
         shadows={shadows}
         theme={theme}
         onCollisionReady={onCollisionReady}
+        showSkyBackdrop={showSkyBackdrop}
       />
     );
   }
@@ -868,6 +1004,7 @@ export function PracticeMapEnvironment({
         practiceMap={practiceMap}
         shadows={shadows}
         theme={theme}
+        showSkyBackdrop={showSkyBackdrop}
       />
     );
   }
@@ -878,6 +1015,7 @@ export function PracticeMapEnvironment({
       theme={theme}
       floorGridOpacity={floorGridOpacity}
       worldBounds={practiceMap.worldBounds}
+      showSkyBackdrop={showSkyBackdrop}
     />
   );
 }

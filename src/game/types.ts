@@ -290,6 +290,7 @@ export type PlayerWeaponSlotSnapshot = {
   hasWeapon: boolean;
   magAmmo: number;
   reserveAmmo: number;
+  infiniteReserveAmmo: boolean;
   maxMagAmmo: number;
   maxReserveAmmo: number;
   maxPacks: number;
@@ -468,6 +469,7 @@ export const DEFAULT_PLAYER_SNAPSHOT: PlayerSnapshot = {
       hasWeapon: false,
       magAmmo: 0,
       reserveAmmo: 0,
+      infiniteReserveAmmo: false,
       maxMagAmmo: 30,
       maxReserveAmmo: 240,
       maxPacks: 8,
@@ -478,6 +480,7 @@ export const DEFAULT_PLAYER_SNAPSHOT: PlayerSnapshot = {
       hasWeapon: false,
       magAmmo: 0,
       reserveAmmo: 0,
+      infiniteReserveAmmo: false,
       maxMagAmmo: 7,
       maxReserveAmmo: 120,
       maxPacks: 4,

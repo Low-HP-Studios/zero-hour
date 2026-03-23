@@ -21,6 +21,7 @@ export type WeaponSlotState = {
   hasWeapon: boolean;
   magAmmo: number;
   reserveAmmo: number;
+  infiniteReserveAmmo: boolean;
   maxMagAmmo: number;
   maxReserveAmmo: number;
   maxPacks: number;
@@ -190,6 +191,7 @@ function resolveDefaultSlot(weaponKind: WeaponKind): WeaponSlotState {
     hasWeapon: false,
     magAmmo: 0,
     reserveAmmo: 0,
+    infiniteReserveAmmo: false,
     maxMagAmmo: WEAPON_CONFIG[weaponKind].baseMagAmmo,
     maxReserveAmmo:
       WEAPON_CONFIG[weaponKind].ammoPerPack *
@@ -336,6 +338,7 @@ export class WeaponSystem {
     options?: {
       magAmmo?: number;
       reserveAmmo?: number;
+      infiniteReserveAmmo?: boolean;
     },
   ) {
     const hadOwnedWeapon = this.hasAnyWeapon();
@@ -343,15 +346,21 @@ export class WeaponSystem {
     const config = WEAPON_CONFIG[kind];
     const slot = this.getSlotById(slotId);
     this.applySlotDefaultsForWeapon(slot, kind);
+    slot.infiniteReserveAmmo = options?.infiniteReserveAmmo ?? false;
     slot.hasWeapon = true;
     slot.magAmmo = Math.min(
       slot.maxMagAmmo,
       Math.max(0, options?.magAmmo ?? slot.maxMagAmmo),
     );
-    slot.reserveAmmo = Math.min(
-      slot.maxReserveAmmo,
-      Math.max(0, options?.reserveAmmo ?? config.ammoPerPack * config.maxPacks),
-    );
+    slot.reserveAmmo = slot.infiniteReserveAmmo
+      ? slot.maxReserveAmmo
+      : Math.min(
+        slot.maxReserveAmmo,
+        Math.max(
+          0,
+          options?.reserveAmmo ?? config.ammoPerPack * config.maxPacks,
+        ),
+      );
     this.setSlotById(slotId, slot);
 
     if (!this.getSlotById(this.activeSlot).hasWeapon) {
@@ -510,6 +519,7 @@ export class WeaponSystem {
     slot.hasWeapon = true;
     slot.magAmmo = 0;
     slot.reserveAmmo = 0;
+    slot.infiniteReserveAmmo = false;
     this.setSlotById(slotId, slot);
   }
 
@@ -521,6 +531,7 @@ export class WeaponSystem {
       hasWeapon: false,
       magAmmo: 0,
       reserveAmmo: 0,
+      infiniteReserveAmmo: false,
       maxReserveAmmo: 0,
       maxPacks: 0,
       packAmmo: WEAPON_CONFIG.rifle.ammoPerPack,
@@ -643,10 +654,15 @@ export class WeaponSystem {
     const activeKind = slot.weaponKind;
     if (slot.hasWeapon && activeKind === this.reloadWeaponKind) {
       const needed = Math.max(0, slot.maxMagAmmo - slot.magAmmo);
-      const load = Math.min(needed, this.reloadAmmoToLoad, slot.reserveAmmo);
+      const availableReserve = slot.infiniteReserveAmmo
+        ? this.reloadAmmoToLoad
+        : slot.reserveAmmo;
+      const load = Math.min(needed, this.reloadAmmoToLoad, availableReserve);
       if (load > 0) {
         slot.magAmmo = Math.min(slot.maxMagAmmo, slot.magAmmo + load);
-        slot.reserveAmmo = Math.max(0, slot.reserveAmmo - load);
+        slot.reserveAmmo = slot.infiniteReserveAmmo
+          ? slot.maxReserveAmmo
+          : Math.max(0, slot.reserveAmmo - load);
         this.setSlotById(this.reloadSlot, slot);
       }
     }
@@ -680,7 +696,7 @@ export class WeaponSystem {
       activeSlot &&
       activeKind &&
       activeSlot.magAmmo <= 0 &&
-      activeSlot.reserveAmmo > 0
+      (activeSlot.infiniteReserveAmmo || activeSlot.reserveAmmo > 0)
     ) {
       this.beginReload(nowMs);
       return shotEvents;
@@ -693,6 +709,10 @@ export class WeaponSystem {
       !this.triggerHeld ||
       reloading
     ) {
+      return shotEvents;
+    }
+
+    if (activeSlot.magAmmo <= 0) {
       return shotEvents;
     }
 
@@ -974,6 +994,34 @@ export class WeaponSystem {
 
     slot.reserveAmmo = next;
     if (this.reloadSlot === slotId && this.reloadWeaponKind === kind) {
+      this.reloadAmmoToLoad = slot.infiniteReserveAmmo
+        ? this.reloadAmmoToLoad
+        : Math.min(this.reloadAmmoToLoad, slot.reserveAmmo);
+    }
+    this.setSlotById(slotId, slot);
+    return true;
+  }
+
+  setInfiniteReserveAmmoForKind(kind: WeaponKind, infinite: boolean) {
+    const slotId = this.getSlotIdForKind(kind);
+    const slot = this.getSlotById(slotId);
+    if (!slot.hasWeapon || slot.weaponKind !== kind) {
+      return false;
+    }
+
+    if (slot.infiniteReserveAmmo === infinite) {
+      if (infinite && slot.reserveAmmo !== slot.maxReserveAmmo) {
+        slot.reserveAmmo = slot.maxReserveAmmo;
+        this.setSlotById(slotId, slot);
+        return true;
+      }
+      return false;
+    }
+
+    slot.infiniteReserveAmmo = infinite;
+    if (infinite) {
+      slot.reserveAmmo = slot.maxReserveAmmo;
+    } else if (this.reloadSlot === slotId && this.reloadWeaponKind === kind) {
       this.reloadAmmoToLoad = Math.min(this.reloadAmmoToLoad, slot.reserveAmmo);
     }
     this.setSlotById(slotId, slot);
@@ -997,14 +1045,16 @@ export class WeaponSystem {
     }
 
     const need = Math.max(0, slot.maxMagAmmo - slot.magAmmo);
-    if (need <= 0 || slot.reserveAmmo <= 0) {
+    if (need <= 0 || (!slot.infiniteReserveAmmo && slot.reserveAmmo <= 0)) {
       return false;
     }
 
     const profile = WEAPON_CONFIG[slot.weaponKind];
     this.reloadSlot = slotId;
     this.reloadWeaponKind = slot.weaponKind;
-    this.reloadAmmoToLoad = Math.min(need, slot.reserveAmmo);
+    this.reloadAmmoToLoad = slot.infiniteReserveAmmo
+      ? need
+      : Math.min(need, slot.reserveAmmo);
     this.reloadStartedAtMs = nowMs;
     this.reloadUntilMs = nowMs + profile.reloadMs;
     return true;
@@ -1159,17 +1209,6 @@ export class WeaponSystem {
       return 'slotB';
     }
     return null;
-  }
-
-  replenishPracticeInfiniteRifleAmmo() {
-    const slot = this.slotA;
-    if (!slot.hasWeapon || slot.weaponKind !== "rifle") {
-      return;
-    }
-    const next = { ...slot };
-    next.magAmmo = next.maxMagAmmo;
-    next.reserveAmmo = next.maxReserveAmmo;
-    this.setSlotById("slotA", next);
   }
 
   reset() {

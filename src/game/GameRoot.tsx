@@ -9,6 +9,7 @@ import {
 import { flushSync } from "react-dom";
 import { toast } from "sonner";
 import { type AudioVolumeSettings } from "./Audio";
+import { preloadPracticeMapAssets } from "./boot-assets";
 import { getCharacterById } from "./characters";
 import { ExperienceMenuOverlay } from "./ExperienceMenuOverlay";
 import { MinimalStatsBar } from "./hud/MinimalStatsBar";
@@ -128,6 +129,7 @@ function isLoadoutSlotEqual(
     previous.hasWeapon === next.hasWeapon &&
     previous.magAmmo === next.magAmmo &&
     previous.reserveAmmo === next.reserveAmmo &&
+    previous.infiniteReserveAmmo === next.infiniteReserveAmmo &&
     previous.maxMagAmmo === next.maxMagAmmo &&
     previous.maxReserveAmmo === next.maxReserveAmmo &&
     previous.maxPacks === next.maxPacks &&
@@ -169,6 +171,33 @@ const BOOT_PRESENTATION: ScenePresentation = {
   killPulse: 0,
 };
 
+const INITIAL_PRACTICE_MAP_READY_STATE: Record<MapId, boolean> = {
+  range: true,
+  map1: false,
+};
+
+function PracticeLoadingOverlay({ mapLabel }: { mapLabel: string }) {
+  return (
+    <div className="loading-screen loading-screen--main">
+      <div className="loading-main-backdrop" aria-hidden="true" />
+      <div className="loading-main">
+        <div className="loading-content">
+          <div className="loading-hero">
+            <h1 className="loading-logo-text">GreyTrace</h1>
+          </div>
+        </div>
+        <div className="loading-bottom-left">
+          <div className="loading-bottom-left-brand">Loading {mapLabel}</div>
+          <p className="loading-alpha-note">
+            Warming the map before we drop you in. Better a short curtain than
+            admiring unfinished geometry.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 type GameRootProps = {
   booting: boolean;
   deferredAssetsEnabled: boolean;
@@ -204,6 +233,14 @@ export function GameRoot({
   const [selectedMapId, setSelectedMapId] = useState<MapId>(
     persistedSettings.selectedMapId,
   );
+  const practiceMapWarmupsRef = useRef<Partial<Record<MapId, Promise<void>>>>(
+    {},
+  );
+  const practiceEnterTokenRef = useRef(0);
+  const [practiceMapReady, setPracticeMapReady] = useState<
+    Record<MapId, boolean>
+  >(INITIAL_PRACTICE_MAP_READY_STATE);
+  const [practiceLoading, setPracticeLoading] = useState(false);
   const selectedMap = useMemo(
     () => getPracticeMapById(selectedMapId),
     [selectedMapId],
@@ -450,6 +487,38 @@ export function GameRoot({
     setMenuSettingsOpen(true);
   }, []);
 
+  const warmPracticeMapAssets = useCallback((mapToWarm = selectedMap) => {
+    const existing = practiceMapWarmupsRef.current[mapToWarm.id];
+    if (existing) {
+      return existing;
+    }
+
+    const request = preloadPracticeMapAssets(mapToWarm)
+      .catch((error: unknown) => {
+        console.warn("[Practice] Map warmup failed", {
+          mapId: mapToWarm.id,
+          error,
+        });
+      })
+      .finally(() => {
+        setPracticeMapReady((previous) =>
+          previous[mapToWarm.id]
+            ? previous
+            : {
+              ...previous,
+              [mapToWarm.id]: true,
+            }
+        );
+      });
+
+    practiceMapWarmupsRef.current[mapToWarm.id] = request;
+    return request;
+  }, [selectedMap]);
+
+  useEffect(() => {
+    void warmPracticeMapAssets(selectedMap);
+  }, [selectedMap, warmPracticeMapAssets]);
+
   useEffect(() => {
     if (!showSettingsModal) {
       return;
@@ -467,8 +536,9 @@ export function GameRoot({
     };
   }, [showSettingsModal]);
 
-  const handleEnterPractice = useCallback(() => {
+  const startPracticeSession = useCallback(() => {
     flushSync(() => {
+      setPracticeLoading(false);
       setMenuSettingsOpen(false);
       setPauseMenuOpen(false);
       setBindingCapture(null);
@@ -479,6 +549,28 @@ export function GameRoot({
     window.focus();
     setNeedsPointerLock(true);
   }, []);
+
+  const handleEnterPractice = useCallback(() => {
+    if (practiceMapReady[selectedMap.id]) {
+      startPracticeSession();
+      return;
+    }
+
+    const token = practiceEnterTokenRef.current + 1;
+    practiceEnterTokenRef.current = token;
+    setPracticeLoading(true);
+    void warmPracticeMapAssets(selectedMap).finally(() => {
+      if (practiceEnterTokenRef.current !== token) {
+        return;
+      }
+      startPracticeSession();
+    });
+  }, [
+    practiceMapReady,
+    selectedMap,
+    startPracticeSession,
+    warmPracticeMapAssets,
+  ]);
 
   const handleReturnToLobby = useCallback(() => {
     setNeedsPointerLock(false);
@@ -1147,6 +1239,8 @@ export function GameRoot({
           />
         )
         : null}
+
+      {practiceLoading ? <PracticeLoadingOverlay mapLabel={selectedMap.label} /> : null}
 
       <div className={uiOverlayClassName}>
         {combatHudVisible && hudPanels.statsBar

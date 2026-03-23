@@ -1,7 +1,7 @@
-import type { BlockingVolume, WalkableSurface } from "../map-layout";
-import type { CollisionRect, MapId, TargetState, WorldBounds } from "../types";
-import { createDefaultTargets } from "../Targets";
-import type { StaticGroundSpawn } from "../inventory/inventory-data";
+import type { BlockingVolume, WalkableSurface } from '../map-layout';
+import type { CollisionRect, MapId, TargetState, WorldBounds } from '../types';
+import { createDefaultTargets } from '../Targets';
+import type { StaticGroundSpawn } from '../inventory/inventory-data';
 
 export type OccluderVolume = {
   center: [number, number, number];
@@ -10,13 +10,13 @@ export type OccluderVolume = {
 
 export type PracticeMapEnvironment =
   | {
-      kind: "range-procedural";
+      kind: 'range-procedural';
     }
   | {
-      kind: "school-blockout";
+      kind: 'school-blockout';
     }
   | {
-      kind: "school-glb";
+      kind: 'school-glb';
       modelUrl: string;
       scale?: number;
       hiddenMeshExactNames?: readonly string[];
@@ -62,10 +62,10 @@ const RANGE_COLLIDERS: readonly CollisionRect[] = [
 ];
 
 const RANGE_GROUND_SPAWNS: readonly StaticGroundSpawn[] = [
-  { itemId: "weapon_rifle", quantity: 1, position: [1.4, 0.05, 3.5] },
-  { itemId: "weapon_sniper", quantity: 1, position: [1.9, 0.05, 3.5] },
-  { itemId: "ammo_rifle", quantity: 150, position: [0.95, 0.14, 3.85] },
-  { itemId: "ammo_sniper", quantity: 30, position: [2.35, 0.14, 3.85] },
+  { itemId: 'weapon_rifle', quantity: 1, position: [1.4, 0.05, 3.5] },
+  { itemId: 'weapon_sniper', quantity: 1, position: [1.9, 0.05, 3.5] },
+  { itemId: 'ammo_rifle', quantity: 150, position: [0.95, 0.14, 3.85] },
+  { itemId: 'ammo_sniper', quantity: 30, position: [2.35, 0.14, 3.85] },
 ];
 
 const SCHOOL_WORLD_BOUNDS: WorldBounds = {
@@ -86,9 +86,10 @@ const MAP1_PLAYER_SPAWN = {
 };
 
 export const RANGE_PRACTICE_MAP: PracticeMapDefinition = {
-  id: "range",
-  label: "Range",
-  description: "Procedural practice range with the existing stress-box load test.",
+  id: 'range',
+  label: 'Range',
+  description:
+    'Procedural practice range with the existing stress-box load test.',
   supportsStressMode: true,
   worldBounds: RANGE_WORLD_BOUNDS,
   collisionRects: RANGE_COLLIDERS,
@@ -101,14 +102,15 @@ export const RANGE_PRACTICE_MAP: PracticeMapDefinition = {
   targets: createDefaultTargets(),
   groundSpawns: RANGE_GROUND_SPAWNS,
   environment: {
-    kind: "range-procedural",
+    kind: 'range-procedural',
   },
 };
 
 export const MAP1_PRACTICE_MAP: PracticeMapDefinition = {
-  id: "map1",
-  label: "School",
-  description: "Movement-first school blockout with a 2-floor main building and pool wing.",
+  id: 'map1',
+  label: 'School',
+  description:
+    'Movement-first school blockout with a 2-floor main building and pool wing.',
   supportsStressMode: false,
   worldBounds: SCHOOL_WORLD_BOUNDS,
   collisionRects: MAP1_COLLIDERS,
@@ -121,11 +123,11 @@ export const MAP1_PRACTICE_MAP: PracticeMapDefinition = {
   infiniteAmmo: true,
   spawnWithRifle: true,
   environment: {
-    kind: "school-glb",
-    modelUrl: "/assets/map/map1.glb",
-    scale: 0.25,
-    doubleSideMeshNameIncludes: ["walkable_slab", "blocker_wall", "Cube"],
-    wallFallbackTextureUrl: "/assets/space/glTF/Rocks_Desert_Diffuse.png",
+    kind: 'school-glb',
+    modelUrl: '/assets/map/map1.glb',
+    scale: 0.75,
+    doubleSideMeshNameIncludes: ['walkable_slab', 'blocker_wall', 'Cube'],
+    wallFallbackTextureUrl: '/assets/space/glTF/Rocks_Desert_Diffuse.png',
   },
 };
 

@@ -1,307 +1,345 @@
 import fs from "node:fs";
 import path from "node:path";
-import * as THREE from "three";
-import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
 
-const SCHOOL_SECOND_FLOOR_Y = 6;
-const SURFACE_THICKNESS = 0.6;
+const DEFAULT_SOURCE_PATH = "public/assets/map/map1.glb";
 const DEFAULT_OUTPUT_PATH = "build/school-blockout/school-blockout-v1.glb";
+const DEFAULT_GRASS_TEXTURE_PATH = "public/assets/grass-texture.jpg";
+const MODEL_SCALE = 0.25;
+const WORLD_MIN = -100;
+const WORLD_MAX = 100;
+const OUTER_PAD = 20;
+const GROUND_Y = -0.02;
+const GRASS_METERS_PER_TILE = 400 / 60;
 
-class NodeFileReader {
-  constructor() {
-    this.result = null;
-    this.onloadend = null;
-    this.onerror = null;
+function align4(value) {
+  return (value + 3) & ~3;
+}
+
+function padBinaryBufferTo4(buffer) {
+  const aligned = align4(buffer.length);
+  if (aligned === buffer.length) return buffer;
+  return Buffer.concat([buffer, Buffer.alloc(aligned - buffer.length, 0x00)]);
+}
+
+function padJsonBufferTo4(buffer) {
+  const aligned = align4(buffer.length);
+  if (aligned === buffer.length) return buffer;
+  return Buffer.concat([buffer, Buffer.alloc(aligned - buffer.length, 0x20)]);
+}
+
+function parseGlb(fileBuffer) {
+  if (fileBuffer.length < 20) {
+    throw new Error("Invalid GLB: file too small.");
   }
-
-  readAsArrayBuffer(blob) {
-    blob.arrayBuffer().then((buffer) => {
-      this.result = buffer;
-      this.onloadend?.();
-    }).catch((error) => {
-      this.onerror?.(error);
-    });
+  const magic = fileBuffer.readUInt32LE(0);
+  const version = fileBuffer.readUInt32LE(4);
+  if (magic !== 0x46546c67) {
+    throw new Error("Invalid GLB: bad magic.");
   }
-
-  readAsDataURL(blob) {
-    blob.arrayBuffer().then((buffer) => {
-      const mimeType = blob.type || "application/octet-stream";
-      const base64 = Buffer.from(buffer).toString("base64");
-      this.result = `data:${mimeType};base64,${base64}`;
-      this.onloadend?.();
-    }).catch((error) => {
-      this.onerror?.(error);
-    });
+  if (version !== 2) {
+    throw new Error(`Unsupported GLB version: ${version}`);
   }
-}
-
-globalThis.FileReader = NodeFileReader;
-
-const SURFACE_PALETTE = {
-  yard: "#6d675d",
-  interior: "#a49a88",
-  upper: "#c2b8a4",
-  poolDeck: "#d0c7b0",
-  stair: "#968e81",
-};
-
-const BLOCKER_PALETTE = {
-  wall: "#7f7567",
-  railing: "#4f555c",
-  cover: "#6a4f39",
-};
-
-function slab(minX, maxX, minZ, maxZ, y, material) {
-  return {
-    kind: "slab",
-    minX,
-    maxX,
-    minZ,
-    maxZ,
-    y,
-    material,
-    thickness: SURFACE_THICKNESS,
-  };
-}
-
-function ramp(minX, maxX, minZ, maxZ, axis, startY, endY, material) {
-  return {
-    kind: "ramp",
-    minX,
-    maxX,
-    minZ,
-    maxZ,
-    axis,
-    startY,
-    endY,
-    material,
-    thickness: SURFACE_THICKNESS,
-  };
-}
-
-function volume(minX, maxX, minY, maxY, minZ, maxZ, material = "wall") {
-  return {
-    center: [
-      (minX + maxX) / 2,
-      (minY + maxY) / 2,
-      (minZ + maxZ) / 2,
-    ],
-    size: [maxX - minX, maxY - minY, maxZ - minZ],
-    material,
-  };
-}
-
-const WALKABLE_SURFACES = [
-  slab(-48, 48, 18, 64, 0, "yard"),
-  slab(-48, 48, -52, -18, 0, "yard"),
-  slab(-48, -24, -18, 18, 0, "yard"),
-  slab(24, 48, -18, 10, 0, "yard"),
-  slab(-24, 24, -18, 18, 0, "interior"),
-  slab(24, 30, 12, 18, 0, "poolDeck"),
-  slab(30, 46, 10, 16, 0, "poolDeck"),
-  slab(30, 46, 34, 40, 0, "poolDeck"),
-  slab(28, 34, 16, 34, 0, "poolDeck"),
-  slab(40, 46, 16, 34, 0, "poolDeck"),
-  slab(-24, 24, -18, 18, SCHOOL_SECOND_FLOOR_Y, "upper"),
-  ramp(-24, -18, -8, 8, "x", 0, SCHOOL_SECOND_FLOOR_Y, "stair"),
-  ramp(18, 24, -8, 8, "x", SCHOOL_SECOND_FLOOR_Y, 0, "stair"),
-];
-
-const BLOCKING_VOLUMES = [
-  volume(-24, -6, 0, 4.2, 17.5, 18.5),
-  volume(6, 24, 0, 4.2, 17.5, 18.5),
-  volume(-24, 24, 4.2, 8.8, 17.5, 18.5),
-  volume(-24, -6, 0, 4.2, -18.5, -17.5),
-  volume(6, 24, 0, 4.2, -18.5, -17.5),
-  volume(-24, 24, 4.2, 8.8, -18.5, -17.5),
-  volume(-24.5, -23.5, 0, 8.8, -18, 18),
-  volume(23.5, 24.5, 0, 8.8, -18, 10),
-  volume(23.5, 24.5, 4.2, 8.8, 10, 18),
-  volume(-24, -12, 0, 3.4, -4.5, -3.5),
-  volume(-8, 8, 0, 3.4, -4.5, -3.5),
-  volume(12, 24, 0, 3.4, -4.5, -3.5),
-  volume(-24, -12, 0, 3.4, 3.5, 4.5),
-  volume(-8, 8, 0, 3.4, 3.5, 4.5),
-  volume(12, 24, 0, 3.4, 3.5, 4.5),
-  volume(-24, -12, SCHOOL_SECOND_FLOOR_Y, SCHOOL_SECOND_FLOOR_Y + 3.2, -4.5, -3.5),
-  volume(-8, 8, SCHOOL_SECOND_FLOOR_Y, SCHOOL_SECOND_FLOOR_Y + 3.2, -4.5, -3.5),
-  volume(12, 24, SCHOOL_SECOND_FLOOR_Y, SCHOOL_SECOND_FLOOR_Y + 3.2, -4.5, -3.5),
-  volume(-24, -12, SCHOOL_SECOND_FLOOR_Y, SCHOOL_SECOND_FLOOR_Y + 3.2, 3.5, 4.5),
-  volume(-8, 8, SCHOOL_SECOND_FLOOR_Y, SCHOOL_SECOND_FLOOR_Y + 3.2, 3.5, 4.5),
-  volume(12, 24, SCHOOL_SECOND_FLOOR_Y, SCHOOL_SECOND_FLOOR_Y + 3.2, 3.5, 4.5),
-  volume(30, 46, 0, 2.6, 9.5, 10.5),
-  volume(30, 46, 0, 2.6, 39.5, 40.5),
-  volume(45.5, 46.5, 0, 2.6, 10, 40),
-  volume(34, 40, 0, 1.25, 15.5, 16.5, "railing"),
-  volume(34, 40, 0, 1.25, 33.5, 34.5, "railing"),
-  volume(33.5, 34.5, 0, 1.25, 16, 34, "railing"),
-  volume(39.5, 40.5, 0, 1.25, 16, 34, "railing"),
-  volume(-14, -10, 0, 1.6, 30, 34, "cover"),
-  volume(10, 14, 0, 1.6, 44, 48, "cover"),
-  volume(-4, 4, 0, 1.8, -34, -30, "cover"),
-];
-
-function createMaterialCache(palette, prefix) {
-  const cache = new Map();
-  return (key) => {
-    const resolved = key ?? Object.keys(palette)[0];
-    if (cache.has(resolved)) {
-      return cache.get(resolved);
+  let offset = 12;
+  let jsonChunk = null;
+  let binChunk = null;
+  while (offset + 8 <= fileBuffer.length) {
+    const chunkLength = fileBuffer.readUInt32LE(offset);
+    const chunkType = fileBuffer.readUInt32LE(offset + 4);
+    offset += 8;
+    if (offset + chunkLength > fileBuffer.length) {
+      throw new Error("Invalid GLB: chunk overruns file.");
     }
-    const material = new THREE.MeshStandardMaterial({
-      color: palette[resolved],
-      roughness: 0.9,
-      metalness: 0.04,
-    });
-    material.name = `${prefix}_${resolved}`;
-    cache.set(resolved, material);
-    return material;
+    const chunkData = fileBuffer.subarray(offset, offset + chunkLength);
+    offset += chunkLength;
+    if (chunkType === 0x4e4f534a) {
+      jsonChunk = chunkData;
+    } else if (chunkType === 0x004e4942) {
+      binChunk = chunkData;
+    }
+  }
+  if (!jsonChunk || !binChunk) {
+    throw new Error("Invalid GLB: missing JSON or BIN chunk.");
+  }
+  const jsonText = jsonChunk.toString("utf8").replace(/\0+$/, "");
+  return {
+    json: JSON.parse(jsonText),
+    bin: Buffer.from(binChunk),
   };
 }
 
-function addSurfaceMesh(group, surface, resolveMaterial) {
-  const thickness = surface.thickness ?? SURFACE_THICKNESS;
-  let geometry;
-  let mesh;
+function createGlb(json, bin) {
+  const jsonString = JSON.stringify(json);
+  const jsonBuffer = padJsonBufferTo4(Buffer.from(jsonString, "utf8"));
+  const binBuffer = padBinaryBufferTo4(bin);
+  const totalLength = 12 + 8 + jsonBuffer.length + 8 + binBuffer.length;
+  const header = Buffer.alloc(12);
+  header.writeUInt32LE(0x46546c67, 0);
+  header.writeUInt32LE(2, 4);
+  header.writeUInt32LE(totalLength, 8);
 
-  if (surface.kind === "slab") {
-    geometry = new THREE.BoxGeometry(
-      surface.maxX - surface.minX,
-      thickness,
-      surface.maxZ - surface.minZ,
-    );
-    mesh = new THREE.Mesh(geometry, resolveMaterial(surface.material));
-    mesh.position.set(
-      (surface.minX + surface.maxX) / 2,
-      surface.y - thickness / 2,
-      (surface.minZ + surface.maxZ) / 2,
-    );
-  } else {
-    const run = surface.axis === "x"
-      ? surface.maxX - surface.minX
-      : surface.maxZ - surface.minZ;
-    const rise = surface.endY - surface.startY;
-    const angle = Math.atan2(rise, run);
-    const length = Math.hypot(run, rise);
-    const centerY = (surface.startY + surface.endY) / 2 -
-      (thickness / 2) * Math.cos(angle);
-    geometry = surface.axis === "x"
-      ? new THREE.BoxGeometry(length, thickness, surface.maxZ - surface.minZ)
-      : new THREE.BoxGeometry(surface.maxX - surface.minX, thickness, length);
-    mesh = new THREE.Mesh(geometry, resolveMaterial(surface.material));
-    mesh.position.set(
-      (surface.minX + surface.maxX) / 2,
-      centerY,
-      (surface.minZ + surface.maxZ) / 2,
-    );
-    mesh.rotation.set(
-      surface.axis === "x" ? 0 : -angle,
-      0,
-      surface.axis === "x" ? angle : 0,
-    );
-  }
+  const jsonChunkHeader = Buffer.alloc(8);
+  jsonChunkHeader.writeUInt32LE(jsonBuffer.length, 0);
+  jsonChunkHeader.writeUInt32LE(0x4e4f534a, 4);
 
-  mesh.name = `walkable_${surface.kind}_${surface.material ?? "interior"}`;
-  group.add(mesh);
+  const binChunkHeader = Buffer.alloc(8);
+  binChunkHeader.writeUInt32LE(binBuffer.length, 0);
+  binChunkHeader.writeUInt32LE(0x004e4942, 4);
+
+  return Buffer.concat([
+    header,
+    jsonChunkHeader,
+    jsonBuffer,
+    binChunkHeader,
+    binBuffer,
+  ]);
 }
 
-function addBlockerMesh(group, blocker, resolveMaterial) {
-  const geometry = new THREE.BoxGeometry(
-    blocker.size[0],
-    blocker.size[1],
-    blocker.size[2],
-  );
-  const mesh = new THREE.Mesh(geometry, resolveMaterial(blocker.material));
-  mesh.position.set(...blocker.center);
-  mesh.name = `blocker_${blocker.material ?? "wall"}`;
-  group.add(mesh);
+function appendBinData(bin, typedArrayOrBuffer) {
+  const source = Buffer.isBuffer(typedArrayOrBuffer)
+    ? typedArrayOrBuffer
+    : Buffer.from(
+      typedArrayOrBuffer.buffer,
+      typedArrayOrBuffer.byteOffset,
+      typedArrayOrBuffer.byteLength,
+    );
+  const start = align4(bin.length);
+  const paddedBin = start > bin.length
+    ? Buffer.concat([bin, Buffer.alloc(start - bin.length, 0x00)])
+    : bin;
+  const nextBin = Buffer.concat([paddedBin, source]);
+  return {
+    nextBin,
+    byteOffset: start,
+    byteLength: source.length,
+  };
 }
 
-function addPoolDetails(group) {
-  const poolMaterial = new THREE.MeshStandardMaterial({
-    color: "#2f7ea1",
-    roughness: 0.22,
-    metalness: 0.08,
-    transparent: true,
-    opacity: 0.86,
-  });
-  poolMaterial.name = "M_Pool_Water";
-
-  const tileMaterial = new THREE.MeshStandardMaterial({
-    color: "#9ba7aa",
-    roughness: 0.9,
-    metalness: 0.04,
-  });
-  tileMaterial.name = "M_Pool_Tile";
-
-  const floor = new THREE.Mesh(
-    new THREE.BoxGeometry(6, 0.25, 18),
-    tileMaterial,
-  );
-  floor.name = "pool_floor";
-  floor.position.set(37, -1.75, 25);
-  group.add(floor);
-
-  const water = new THREE.Mesh(
-    new THREE.BoxGeometry(5.8, 0.12, 17.8),
-    poolMaterial,
-  );
-  water.name = "pool_water";
-  water.position.set(37, -1.1, 25);
-  group.add(water);
+function ensureRootArrays(doc) {
+  if (!doc.buffers) doc.buffers = [];
+  if (!doc.bufferViews) doc.bufferViews = [];
+  if (!doc.accessors) doc.accessors = [];
+  if (!doc.images) doc.images = [];
+  if (!doc.samplers) doc.samplers = [];
+  if (!doc.textures) doc.textures = [];
+  if (!doc.materials) doc.materials = [];
+  if (!doc.meshes) doc.meshes = [];
+  if (!doc.nodes) doc.nodes = [];
+  if (!doc.scenes) doc.scenes = [{ nodes: [] }];
 }
 
-function buildSchoolGroup() {
-  const group = new THREE.Group();
-  group.name = "SchoolBlockout";
+function addOuterGround(doc, bin, grassTexturePath) {
+  const mapSpan = (WORLD_MAX - WORLD_MIN) + OUTER_PAD;
+  const half = mapSpan / 2;
+  const tiles = mapSpan / GRASS_METERS_PER_TILE;
+  const positions = new Float32Array([
+    -half, 0, -half,
+    half, 0, -half,
+    half, 0, half,
+    -half, 0, half,
+  ]);
+  const normals = new Float32Array([
+    0, 1, 0,
+    0, 1, 0,
+    0, 1, 0,
+    0, 1, 0,
+  ]);
+  const uvs = new Float32Array([
+    0, 0,
+    tiles, 0,
+    tiles, tiles,
+    0, tiles,
+  ]);
+  const indices = new Uint16Array([0, 1, 2, 0, 2, 3]);
 
-  const getSurfaceMaterial = createMaterialCache(SURFACE_PALETTE, "M_School");
-  const getBlockerMaterial = createMaterialCache(BLOCKER_PALETTE, "M_Blocker");
+  const grassBytes = fs.readFileSync(grassTexturePath);
 
-  for (const surface of WALKABLE_SURFACES) {
-    addSurfaceMesh(group, surface, getSurfaceMaterial);
-  }
+  let nextBin = bin;
+  const posAppended = appendBinData(nextBin, positions);
+  nextBin = posAppended.nextBin;
+  const normalAppended = appendBinData(nextBin, normals);
+  nextBin = normalAppended.nextBin;
+  const uvAppended = appendBinData(nextBin, uvs);
+  nextBin = uvAppended.nextBin;
+  const indexAppended = appendBinData(nextBin, indices);
+  nextBin = indexAppended.nextBin;
+  const imageAppended = appendBinData(nextBin, grassBytes);
+  nextBin = imageAppended.nextBin;
 
-  for (const blocker of BLOCKING_VOLUMES) {
-    addBlockerMesh(group, blocker, getBlockerMaterial);
-  }
+  const bufferIndex = 0;
 
-  addPoolDetails(group);
-  return group;
-}
+  const posViewIndex = doc.bufferViews.push({
+    buffer: bufferIndex,
+    byteOffset: posAppended.byteOffset,
+    byteLength: posAppended.byteLength,
+    target: 34962,
+  }) - 1;
+  const normalViewIndex = doc.bufferViews.push({
+    buffer: bufferIndex,
+    byteOffset: normalAppended.byteOffset,
+    byteLength: normalAppended.byteLength,
+    target: 34962,
+  }) - 1;
+  const uvViewIndex = doc.bufferViews.push({
+    buffer: bufferIndex,
+    byteOffset: uvAppended.byteOffset,
+    byteLength: uvAppended.byteLength,
+    target: 34962,
+  }) - 1;
+  const indexViewIndex = doc.bufferViews.push({
+    buffer: bufferIndex,
+    byteOffset: indexAppended.byteOffset,
+    byteLength: indexAppended.byteLength,
+    target: 34963,
+  }) - 1;
+  const imageViewIndex = doc.bufferViews.push({
+    buffer: bufferIndex,
+    byteOffset: imageAppended.byteOffset,
+    byteLength: imageAppended.byteLength,
+  }) - 1;
 
-async function exportSchoolBlockout(outputPath) {
-  const scene = new THREE.Scene();
-  scene.name = "SchoolBlockoutScene";
-  scene.add(buildSchoolGroup());
+  const posAccessorIndex = doc.accessors.push({
+    bufferView: posViewIndex,
+    byteOffset: 0,
+    componentType: 5126,
+    count: 4,
+    type: "VEC3",
+    min: [-half, 0, -half],
+    max: [half, 0, half],
+  }) - 1;
+  const normalAccessorIndex = doc.accessors.push({
+    bufferView: normalViewIndex,
+    byteOffset: 0,
+    componentType: 5126,
+    count: 4,
+    type: "VEC3",
+  }) - 1;
+  const uvAccessorIndex = doc.accessors.push({
+    bufferView: uvViewIndex,
+    byteOffset: 0,
+    componentType: 5126,
+    count: 4,
+    type: "VEC2",
+  }) - 1;
+  const indexAccessorIndex = doc.accessors.push({
+    bufferView: indexViewIndex,
+    byteOffset: 0,
+    componentType: 5123,
+    count: 6,
+    type: "SCALAR",
+    min: [0],
+    max: [3],
+  }) - 1;
 
-  const exporter = new GLTFExporter();
-  const buffer = await new Promise((resolve, reject) => {
-    exporter.parse(
-      scene,
-      (result) => {
-        if (result instanceof ArrayBuffer) {
-          resolve(Buffer.from(result));
-          return;
-        }
-        reject(new Error("Expected binary GLB export output."));
+  const imageIndex = doc.images.push({
+    bufferView: imageViewIndex,
+    mimeType: "image/jpeg",
+    name: "grass-texture",
+  }) - 1;
+  const samplerIndex = doc.samplers.push({
+    magFilter: 9729,
+    minFilter: 9987,
+    wrapS: 10497,
+    wrapT: 10497,
+  }) - 1;
+  const textureIndex = doc.textures.push({
+    sampler: samplerIndex,
+    source: imageIndex,
+    name: "T_Outer_Grass",
+  }) - 1;
+  const materialIndex = doc.materials.push({
+    name: "M_Outer_Grass",
+    pbrMetallicRoughness: {
+      baseColorTexture: { index: textureIndex },
+      baseColorFactor: [0.95, 0.98, 0.95, 1],
+      metallicFactor: 0,
+      roughnessFactor: 0.96,
+    },
+  }) - 1;
+  const meshIndex = doc.meshes.push({
+    name: "OuterGround",
+    primitives: [{
+      attributes: {
+        POSITION: posAccessorIndex,
+        NORMAL: normalAccessorIndex,
+        TEXCOORD_0: uvAccessorIndex,
       },
-      (error) => reject(error),
-      { binary: true, onlyVisible: true },
-    );
-  });
+      indices: indexAccessorIndex,
+      material: materialIndex,
+      mode: 4,
+    }],
+  }) - 1;
+  const nodeIndex = doc.nodes.push({
+    name: "OuterGround",
+    mesh: meshIndex,
+    translation: [0, GROUND_Y, 0],
+  }) - 1;
 
-  const absoluteOutputPath = path.resolve(outputPath);
-  fs.mkdirSync(path.dirname(absoluteOutputPath), { recursive: true });
-  fs.writeFileSync(absoluteOutputPath, buffer);
-  return absoluteOutputPath;
+  return {
+    nextBin,
+    outerGroundNodeIndex: nodeIndex,
+  };
 }
 
-const outputPath = process.argv[2] || DEFAULT_OUTPUT_PATH;
-exportSchoolBlockout(outputPath).then((absolutePath) => {
-  console.log(`Exported School blockout to: ${absolutePath}`);
-}).catch((error) => {
-  console.error("Failed to export School blockout GLB:");
+function wrapOriginalMapNodes(doc) {
+  const defaultSceneIndex = doc.scene ?? 0;
+  const defaultScene = doc.scenes[defaultSceneIndex];
+  const originalNodes = [...(defaultScene.nodes ?? [])];
+  const wrapperNodeIndex = doc.nodes.push({
+    name: "SchoolMapScaled",
+    scale: [MODEL_SCALE, MODEL_SCALE, MODEL_SCALE],
+    children: originalNodes,
+  }) - 1;
+  defaultScene.nodes = [wrapperNodeIndex];
+  return { defaultSceneIndex };
+}
+
+function exportComposedMap(sourcePath, outputPath, grassTexturePath) {
+  if (!fs.existsSync(sourcePath)) {
+    throw new Error(`Source map not found: ${sourcePath}`);
+  }
+  if (!fs.existsSync(grassTexturePath)) {
+    throw new Error(`Grass texture not found: ${grassTexturePath}`);
+  }
+
+  const sourceBytes = fs.readFileSync(sourcePath);
+  const { json, bin } = parseGlb(sourceBytes);
+  ensureRootArrays(json);
+  if (json.buffers.length === 0) {
+    json.buffers.push({ byteLength: 0 });
+  }
+  if (!json.buffers[0]) {
+    json.buffers[0] = { byteLength: 0 };
+  }
+
+  const { defaultSceneIndex } = wrapOriginalMapNodes(json);
+  const outer = addOuterGround(json, bin, grassTexturePath);
+  json.scenes[defaultSceneIndex].nodes.push(outer.outerGroundNodeIndex);
+  json.buffers[0].byteLength = outer.nextBin.length;
+
+  const outputBytes = createGlb(json, outer.nextBin);
+  const outputDir = path.dirname(outputPath);
+  fs.mkdirSync(outputDir, { recursive: true });
+  fs.writeFileSync(outputPath, outputBytes);
+  return outputPath;
+}
+
+function resolvePaths() {
+  const sourceArg = process.argv[2];
+  const outputArg = process.argv[3];
+  const grassArg = process.argv[4];
+  return {
+    sourcePath: path.resolve(sourceArg || DEFAULT_SOURCE_PATH),
+    outputPath: path.resolve(outputArg || DEFAULT_OUTPUT_PATH),
+    grassTexturePath: path.resolve(grassArg || DEFAULT_GRASS_TEXTURE_PATH),
+  };
+}
+
+try {
+  const { sourcePath, outputPath, grassTexturePath } = resolvePaths();
+  const absolutePath = exportComposedMap(sourcePath, outputPath, grassTexturePath);
+  console.log(`Exported composed map to: ${absolutePath}`);
+} catch (error) {
+  console.error("Failed to export composed map:");
   console.error(error);
   process.exit(1);
-});
+}

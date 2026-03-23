@@ -3,6 +3,7 @@ import React from "react";
 type AmmoDisplayProps = {
   magAmmo: number;
   reserveAmmo: number;
+  infiniteReserveAmmo: boolean;
   isReloading: boolean;
   reloadProgress: number;
 };
@@ -10,6 +11,7 @@ type AmmoDisplayProps = {
 function AmmoDisplayInner({
   magAmmo,
   reserveAmmo,
+  infiniteReserveAmmo,
   isReloading,
   reloadProgress,
 }: AmmoDisplayProps) {
@@ -17,7 +19,9 @@ function AmmoDisplayInner({
     <div className="pubg-ammo-display">
       <span className="pubg-ammo-mag">{magAmmo}</span>
       <span className="pubg-ammo-separator">/</span>
-      <span className="pubg-ammo-reserve">{reserveAmmo}</span>
+      <span className="pubg-ammo-reserve">
+        {infiniteReserveAmmo ? "∞" : reserveAmmo}
+      </span>
       {isReloading ? (
         <div className="pubg-reload-bar">
           <div

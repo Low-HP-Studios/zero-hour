@@ -76,6 +76,7 @@ function PubgHudInner({ player, visible }: PubgHudProps) {
           <AmmoDisplay
             magAmmo={activeSlot.magAmmo}
             reserveAmmo={activeSlot.reserveAmmo}
+            infiniteReserveAmmo={activeSlot.infiniteReserveAmmo}
             isReloading={weaponReload.active}
             reloadProgress={weaponReload.progress}
           />

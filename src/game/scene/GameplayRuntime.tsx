@@ -1676,10 +1676,11 @@ export const GameplayRuntime = forwardRef<
       reserveAmmo: weaponKind === "rifle"
         ? ammoTotals.rifle
         : ammoTotals.sniper,
+      infiniteReserveAmmo: practiceMap.infiniteAmmo && weaponKind === "rifle",
     });
     weaponRef.current.beginReload(performance.now());
     return { ok: true };
-  }, [resolveWeaponSlotId, spawnPosition]);
+  }, [practiceMap.infiniteAmmo, resolveWeaponSlotId, spawnPosition]);
 
   const dropWeaponFromSlot = useCallback((
     slot: "primary" | "secondary",
@@ -1953,11 +1954,17 @@ export const GameplayRuntime = forwardRef<
     ammoVisualRevisionRef.current = -1;
     setGroundAmmoVisualState(inventoryRef.current.getGroundAmmoVisualState());
     if (practiceMap.spawnWithRifle) {
-      inventoryRef.current.grantStackInFirstBackpackSlot("ammo_rifle", 150);
-      const ammo = inventoryRef.current.getAmmoTotalsByWeaponKind();
+      if (!practiceMap.infiniteAmmo) {
+        inventoryRef.current.grantStackInFirstBackpackSlot("ammo_rifle", 150);
+      }
+      const rifleSlotDefaults = weaponRef.current.getSlotStateForLoadout("slotA");
+      const reserveAmmo = practiceMap.infiniteAmmo
+        ? rifleSlotDefaults.maxReserveAmmo
+        : inventoryRef.current.getAmmoTotalsByWeaponKind().rifle;
       weaponRef.current.equipSlotWithWeapon("slotA", "rifle", {
         magAmmo: 30,
-        reserveAmmo: ammo.rifle,
+        reserveAmmo,
+        infiniteReserveAmmo: practiceMap.infiniteAmmo,
       });
       inventoryRef.current.setActiveQuickSlot("primary");
       lastWeaponEquippedRef.current = true;
@@ -1968,6 +1975,7 @@ export const GameplayRuntime = forwardRef<
     }
     latestControllerSnapshotRef.current = null;
   }, [
+    practiceMap.infiniteAmmo,
     practiceMap.groundSpawns,
     practiceMap.spawnWithRifle,
     spawnPitch,
@@ -2467,15 +2475,17 @@ export const GameplayRuntime = forwardRef<
     const activeQuickSlot = inventoryRef.current.getActiveQuickSlot();
     const weaponControlEnabled = activeQuickSlot === "primary" ||
       activeQuickSlot === "secondary";
+    const fireInputHeld = weaponControlEnabled && rifleFireIntentRef.current;
+    const preUpdateFireState = weapon.getFireState(nowMs);
+    const fireAnimationIntent = fireInputHeld &&
+      preUpdateFireState.reason === "none";
     const firePrepIntent = isWeaponHoldEquipped &&
       !adsActive &&
       !crouched &&
-      weaponControlEnabled &&
-      rifleFireIntentRef.current;
+      fireAnimationIntent;
     const firePrepVisual = firePrepIntent && !movementActive;
     const crouchAimCompositeActive = isWeaponHoldEquipped &&
-      weaponControlEnabled &&
-      rifleFireIntentRef.current &&
+      fireAnimationIntent &&
       !adsActive &&
       (crouched || crouchTransitionState !== "idle");
     const movementHeadingYaw = resolveMovementHeadingYaw(
@@ -2767,8 +2777,7 @@ export const GameplayRuntime = forwardRef<
       rifleReadyPoseActive = false;
     }
 
-    const triggerHeldForWeapon = weaponControlEnabled &&
-      rifleFireIntentRef.current;
+    const triggerHeldForWeapon = fireInputHeld;
     weapon.setTriggerHeld(triggerHeldForWeapon);
 
     const crouchPose = crouchTransitionState !== "idle"
@@ -3162,11 +3171,7 @@ export const GameplayRuntime = forwardRef<
       triggerHeldForWeapon &&
       shots.length === 0 &&
       fireState.blocked &&
-      (
-        fireState.reason === "empty" ||
-        fireState.reason === "reloading" ||
-        fireState.reason === "sniperRechamber"
-      )
+      fireState.reason === "empty"
     ) {
       audio.playDryFire();
     }
@@ -3192,9 +3197,6 @@ export const GameplayRuntime = forwardRef<
     }
     if (sniperReserveSpent > 0 && !practiceMap.infiniteAmmo) {
       inventoryRef.current.consumeAmmo("ammo_sniper", sniperReserveSpent);
-    }
-    if (practiceMap.infiniteAmmo) {
-      weaponRef.current.replenishPracticeInfiniteRifleAmmo();
     }
 
     const postUpdateReload = weapon.getReloadState(nowMs);

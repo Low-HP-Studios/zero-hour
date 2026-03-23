@@ -182,3 +182,177 @@ export function createGrassTexture(): THREE.CanvasTexture | null {
   return texture;
 }
 
+export function createTundraTexture(): THREE.CanvasTexture | null {
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  const size = 512;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    return null;
+  }
+
+  const rng = createSeededRandom(823451);
+  const base = ctx.createLinearGradient(0, 0, size, size);
+  base.addColorStop(0, "#edf4fb");
+  base.addColorStop(0.4, "#d9e5f0");
+  base.addColorStop(0.72, "#c6d4df");
+  base.addColorStop(1, "#b2c0cd");
+  ctx.fillStyle = base;
+  ctx.fillRect(0, 0, size, size);
+
+  for (let i = 0; i < 2600; i += 1) {
+    const x = rng() * size;
+    const y = rng() * size;
+    const radius = 8 + rng() * 26;
+    const alpha = 0.025 + rng() * 0.07;
+    const bright = 210 + Math.floor(rng() * 35);
+    const tint = 225 + Math.floor(rng() * 25);
+    const grd = ctx.createRadialGradient(x, y, 0, x, y, radius);
+    grd.addColorStop(0, `rgba(${bright}, ${bright + 6}, ${Math.min(255, tint + 8)}, ${alpha})`);
+    grd.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = grd;
+    ctx.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+  }
+
+  for (let i = 0; i < 300; i += 1) {
+    const x = rng() * size;
+    const y = rng() * size;
+    const radius = 10 + rng() * 34;
+    const alpha = 0.08 + rng() * 0.1;
+    const grd = ctx.createRadialGradient(x, y, 0, x, y, radius);
+    grd.addColorStop(0, `rgba(118, 130, 140, ${alpha})`);
+    grd.addColorStop(0.55, `rgba(126, 136, 146, ${alpha * 0.45})`);
+    grd.addColorStop(1, "rgba(126, 136, 146, 0)");
+    ctx.fillStyle = grd;
+    ctx.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+  }
+
+  ctx.lineCap = "round";
+  for (let i = 0; i < 220; i += 1) {
+    const startX = rng() * size;
+    const startY = rng() * size;
+    const length = 28 + rng() * 90;
+    const angle = -0.38 + rng() * 0.28;
+    const line = ctx.createLinearGradient(
+      startX,
+      startY,
+      startX + Math.cos(angle) * length,
+      startY + Math.sin(angle) * length,
+    );
+    const alpha = 0.025 + rng() * 0.04;
+    line.addColorStop(0, "rgba(255,255,255,0)");
+    line.addColorStop(0.3, `rgba(255,255,255,${alpha})`);
+    line.addColorStop(0.7, `rgba(190, 208, 220, ${alpha * 0.75})`);
+    line.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.strokeStyle = line;
+    ctx.lineWidth = 1 + rng() * 3.2;
+    ctx.beginPath();
+    ctx.moveTo(startX, startY);
+    ctx.lineTo(
+      startX + Math.cos(angle) * length,
+      startY + Math.sin(angle) * length,
+    );
+    ctx.stroke();
+  }
+
+  for (let i = 0; i < 1800; i += 1) {
+    const x = rng() * size;
+    const y = rng() * size;
+    const radius = 0.4 + rng() * 1.1;
+    const alpha = 0.04 + rng() * 0.1;
+    ctx.beginPath();
+    ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(8, 8);
+  texture.needsUpdate = true;
+  return texture;
+}
+
+export function createIceTexture(): THREE.CanvasTexture | null {
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  const size = 512;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    return null;
+  }
+
+  const rng = createSeededRandom(991177);
+  const base = ctx.createLinearGradient(0, 0, size, size);
+  base.addColorStop(0, "#9dd5de");
+  base.addColorStop(0.35, "#6ea9bf");
+  base.addColorStop(0.7, "#50839d");
+  base.addColorStop(1, "#35586e");
+  ctx.fillStyle = base;
+  ctx.fillRect(0, 0, size, size);
+
+  for (let i = 0; i < 1200; i += 1) {
+    const x = rng() * size;
+    const y = rng() * size;
+    const radius = 10 + rng() * 34;
+    const alpha = 0.03 + rng() * 0.06;
+    const grd = ctx.createRadialGradient(x, y, 0, x, y, radius);
+    grd.addColorStop(0, `rgba(205, 245, 255, ${alpha})`);
+    grd.addColorStop(0.5, `rgba(170, 222, 240, ${alpha * 0.7})`);
+    grd.addColorStop(1, "rgba(170, 222, 240, 0)");
+    ctx.fillStyle = grd;
+    ctx.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+  }
+
+  ctx.lineCap = "round";
+  for (let i = 0; i < 180; i += 1) {
+    const x = rng() * size;
+    const y = rng() * size;
+    const length = 20 + rng() * 74;
+    const angle = rng() * Math.PI * 2;
+    const alpha = 0.04 + rng() * 0.08;
+    ctx.strokeStyle = `rgba(220, 248, 255, ${alpha})`;
+    ctx.lineWidth = 0.8 + rng() * 2.1;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(
+      x + Math.cos(angle) * length,
+      y + Math.sin(angle) * length,
+    );
+    ctx.stroke();
+  }
+
+  for (let i = 0; i < 40; i += 1) {
+    const x = rng() * size;
+    const y = rng() * size;
+    const radius = 36 + rng() * 82;
+    const grd = ctx.createRadialGradient(x, y, radius * 0.15, x, y, radius);
+    grd.addColorStop(0, "rgba(235, 252, 255, 0.18)");
+    grd.addColorStop(0.5, "rgba(186, 230, 244, 0.08)");
+    grd.addColorStop(1, "rgba(186, 230, 244, 0)");
+    ctx.fillStyle = grd;
+    ctx.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(6, 6);
+  texture.needsUpdate = true;
+  return texture;
+}

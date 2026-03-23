@@ -277,8 +277,17 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
     setGlbCollisionVolumes(volumes);
   }, []);
 
+  useEffect(() => {
+    setGlbCollisionVolumes([]);
+  }, [practiceMap.id]);
+
   const runtimePracticeMap = useMemo<PracticeMapDefinition>(() => {
-    if (glbCollisionVolumes.length === 0) return practiceMap;
+    if (
+      practiceMap.environment.kind !== "school-glb" ||
+      glbCollisionVolumes.length === 0
+    ) {
+      return practiceMap;
+    }
     return {
       ...practiceMap,
       blockingVolumes: [
@@ -292,6 +301,7 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
     ? practiceMap
     : RANGE_PRACTICE_MAP;
   const paceEnabled = lobbyFrameCapEnabled;
+  const showSkyBackdrop = presentation.phase === "playing";
 
   const dpr = useMemo(() => {
     const devicePixelRatio =
@@ -492,6 +502,7 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
         theme={worldTheme}
         floorGridOpacity={floorGridOpacity}
         onCollisionReady={handleCollisionReady}
+        showSkyBackdrop={showSkyBackdrop}
       />
       <Targets
         targets={targets}

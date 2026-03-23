@@ -4,7 +4,10 @@ The current runtime uses authored procedural geometry for practice maps and synt
 
 Bundled third-party runtime assets:
 
-- None in the active practice-map pipeline
+- `FREE - SkyBox Tundra Northern Lights` by Paul (`/public/assets/sky/sky.glb`)
+  Source: https://sketchfab.com/3d-models/free-skybox-tundra-northern-lights-38b11068b8534e5d95817807152594c2
+  License: CC BY 4.0 https://creativecommons.org/licenses/by/4.0/
+  Notes: AI-generated source asset from Sketchfab, bundled as the active sky dome for Range and School.
 
 Pipeline-ready asset locations:
 - `/public/assets/map/*.glb`

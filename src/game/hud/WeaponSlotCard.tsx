@@ -34,7 +34,9 @@ function WeaponSlotCardInner({
           <div className="pubg-slot-ammo">
             <span className="pubg-slot-mag">{slot.magAmmo}</span>
             <span className="pubg-slot-divider">/</span>
-            <span className="pubg-slot-reserve">{slot.reserveAmmo}</span>
+            <span className="pubg-slot-reserve">
+              {slot.infiniteReserveAmmo ? "∞" : slot.reserveAmmo}
+            </span>
           </div>
         </>
       ) : (

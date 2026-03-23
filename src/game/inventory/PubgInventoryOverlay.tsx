@@ -72,7 +72,9 @@ function resolveWeaponAmmo(player: PlayerSnapshot, slot: InventoryWeaponEquipSlo
     return "No weapon equipped";
   }
 
-  return `${snapshot.magAmmo}/${snapshot.maxMagAmmo} | ${snapshot.reserveAmmo}`;
+  return `${snapshot.magAmmo}/${snapshot.maxMagAmmo} | ${
+    snapshot.infiniteReserveAmmo ? "∞" : snapshot.reserveAmmo
+  }`;
 }
 
 function resolveWeaponIcon(player: PlayerSnapshot, slot: InventoryWeaponEquipSlot) {

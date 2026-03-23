@@ -1,10 +1,12 @@
 import {
+  loadGlbAsset,
   loadFbxAnimation,
   loadFbxAsset,
   preloadTextureAsset,
   type PreloadManifestEntry,
 } from "./AssetLoader";
 import type { AudioBufferKey, AudioManager } from "./Audio";
+import type { PracticeMapDefinition } from "./scene/practice-maps";
 import {
   SIGHT_FBX_URL,
   SIGHT_TEXTURE_BASE,
@@ -15,6 +17,9 @@ export const TARGET_CHARACTER_MODEL_URL =
   "/assets/models/character/Trooper/tactical guy.fbx";
 export const TARGET_IDLE_ANIMATION_URL =
   "/assets/animations/movement/standing/idle.fbx";
+const PRACTICE_WORLD_SKY_ASSET_URL = "/assets/sky/sky.glb";
+const PRACTICE_GRASS_TEXTURE_URL = "/assets/grass-texture.jpg";
+const PRACTICE_RANGE_FLOOR_TEXTURE_URL = "/assets/range-floor-texture.jpg";
 
 export const TARGET_TEXTURE_URLS: string[] = [];
 
@@ -108,6 +113,34 @@ export function createDeferredBootPreloadManifest(
       load: () => audioManager.prepareBuffer(key),
     })),
   ];
+}
+
+export async function preloadPracticeMapAssets(
+  practiceMap: PracticeMapDefinition,
+): Promise<void> {
+  const requests: Array<Promise<unknown>> = [
+    loadGlbAsset(PRACTICE_WORLD_SKY_ASSET_URL),
+  ];
+
+  switch (practiceMap.environment.kind) {
+    case "school-glb":
+      requests.push(loadGlbAsset(practiceMap.environment.modelUrl));
+      requests.push(preloadTextureAsset(PRACTICE_GRASS_TEXTURE_URL));
+      if (practiceMap.environment.wallFallbackTextureUrl) {
+        requests.push(
+          preloadTextureAsset(practiceMap.environment.wallFallbackTextureUrl),
+        );
+      }
+      break;
+    case "school-blockout":
+      requests.push(preloadTextureAsset(PRACTICE_GRASS_TEXTURE_URL));
+      break;
+    case "range-procedural":
+      requests.push(preloadTextureAsset(PRACTICE_RANGE_FLOOR_TEXTURE_URL));
+      break;
+  }
+
+  await Promise.all(requests);
 }
 
 function fileName(url: string) {
