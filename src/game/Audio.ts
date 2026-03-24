@@ -116,7 +116,7 @@ const AUDIO_URL_CANDIDATES = {
     "/assets/audio/improved/sniper/sniper-reloading.wav",
   ],
   dryFire: [
-    "/assets/audio/improved/fire-empty-gun.mp3",
+    "/assets/audio/improved/fire-empty-gun.wav",
   ],
   footstepLeft: [
     "/assets/audio/footsteps/left-leg.wav",
@@ -336,6 +336,40 @@ export class AudioManager {
       console.warn("[Audio] Crouch enter file buffer unavailable.");
     }
     void this.prepareBuffer("crouchEnter");
+  }
+
+  playLanding() {
+    if (!this.context || this.context.state !== "running" || !this.footstepGain) {
+      return;
+    }
+
+    const bufferKey: FootstepBufferKey =
+      Math.random() < 0.5 ? "footstepLeft" : "footstepRight";
+    const variant = FOOTSTEP_VARIANT_BY_BUFFER_KEY[bufferKey];
+    const buffer = this.buffers[bufferKey];
+
+    if (buffer) {
+      const source = this.context.createBufferSource();
+      source.buffer = buffer;
+      source.playbackRate.value = 0.72 + Math.random() * 0.06;
+      const gain = this.context.createGain();
+      const tone = this.context.createBiquadFilter();
+      tone.type = "lowpass";
+      tone.frequency.value = 1400;
+      gain.gain.value = 1.3 * this.footstepFileGains[variant];
+      source.connect(tone);
+      tone.connect(gain);
+      gain.connect(this.footstepGain);
+      const now = this.context.currentTime;
+      source.start(now);
+      source.stop(now + Math.min(0.4, source.buffer.duration));
+      return;
+    }
+
+    if (AUDIO_DEBUG) {
+      console.warn("[Audio] Landing footstep buffer unavailable.");
+    }
+    void this.prepareBuffer(bufferKey);
   }
 
   playGunshot(kind: WeaponKind = "rifle") {

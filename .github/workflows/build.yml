@@ -13,13 +13,13 @@ jobs:
   build-mac:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: pnpm/action-setup@v4
         with:
           version: latest
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: pnpm
@@ -34,7 +34,7 @@ jobs:
         run: |
           node -e "const fs=require('fs');const files=fs.readdirSync('release');const hasDmg=files.some((f)=>f.endsWith('.dmg'));const hasZip=files.some((f)=>f.endsWith('.zip'));const hasYml=files.includes('latest-mac.yml');const hasBlockmap=files.some((f)=>f.endsWith('.blockmap'));if(!hasDmg||!hasZip||!hasYml||!hasBlockmap){console.error('Missing expected mac artifacts',files);process.exit(1);}console.log('mac artifacts OK:',files);"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: mac-build
           path: |
@@ -47,13 +47,13 @@ jobs:
   build-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: pnpm/action-setup@v4
         with:
           version: latest
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: pnpm
@@ -69,7 +69,7 @@ jobs:
         run: |
           node -e "const fs=require('fs');const files=fs.readdirSync('release');const hasExe=files.some((f)=>f.endsWith('.exe'));const hasYml=files.includes('latest.yml');const hasBlockmap=files.some((f)=>f.endsWith('.blockmap'));if(!hasExe||!hasYml||!hasBlockmap){console.error('Missing expected windows artifacts',files);process.exit(1);}console.log('windows artifacts OK:',files);"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: windows-build
           path: |
@@ -81,13 +81,13 @@ jobs:
   build-linux:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: pnpm/action-setup@v4
         with:
           version: latest
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: pnpm
@@ -102,7 +102,7 @@ jobs:
         run: |
           node -e "const fs=require('fs');const files=fs.readdirSync('release');const hasAppImage=files.some((f)=>f.endsWith('.AppImage'));const hasYml=files.some((f)=>f.startsWith('latest')&&f.endsWith('.yml'));if(!hasAppImage||!hasYml){console.error('Missing expected linux artifacts',files);process.exit(1);}console.log('linux artifacts OK:',files);"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: linux-build
           path: |
@@ -116,7 +116,7 @@ jobs:
     needs: [build-mac, build-windows, build-linux]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           path: artifacts
           merge-multiple: true

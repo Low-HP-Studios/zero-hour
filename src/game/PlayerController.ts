@@ -20,9 +20,12 @@ import {
   type WorldBounds,
 } from './types';
 import {
-  AIR_STEER_TURN_RATE,
   isSprintInputEligible,
-  rotatePlanarVelocityTowards,
+  resolveDesiredPlanarVelocity,
+  resolveJumpTakeoffMomentum,
+  resolveSprintMomentumActive,
+  stepAirbornePlanarVelocity,
+  stepGroundedPlanarVelocity,
 } from './movement';
 
 type PlayerAction =
@@ -80,6 +83,7 @@ export type PlayerControllerApi = {
   getHeadYawOffset: () => number;
   getPitch: () => number;
   getLeanValue: () => number;
+  getPlanarVelocity: () => THREE.Vector2;
   getPlanarSpeed: () => number;
   getMoveInput: () => THREE.Vector2;
   isFirstPerson: () => boolean;
@@ -124,9 +128,6 @@ const MAX_CONSECUTIVE_JUMP_PENALTY = 0.4;
 const CONSECUTIVE_JUMP_RESET_MS = 800;
 const PLAYER_STAND_HEIGHT = 1.78;
 const PLAYER_CROUCH_HEIGHT = 1.16;
-const GROUND_ACCEL_RATE = 18;
-const GROUND_DECEL_RATE = 22;
-const DIRECTION_REVERSAL_DECEL_RATE = 30;
 const GROUND_STEP_UP_HEIGHT = 0.9;
 const GROUND_STEP_DOWN_HEIGHT = 1.8;
 const BLOCKING_TOP_EPSILON = 0.001;
@@ -299,6 +300,7 @@ export function usePlayerController({
     new THREE.Vector3(spawnPosition[0], spawnPosition[1], spawnPosition[2]),
   );
   const velocityRef = useRef(new THREE.Vector2(0, 0));
+  const desiredPlanarVelocityRef = useRef(new THREE.Vector2(0, 0));
   const moveInputRef = useRef(new THREE.Vector2(0, 0));
   const sprintPressedRef = useRef(false);
   const walkPressedRef = useRef(false);
@@ -321,6 +323,7 @@ export function usePlayerController({
   const groundedRef = useRef(true);
   const verticalVelocityRef = useRef(0);
   const airborneMomentumSpeedRef = useRef(0);
+  const sprintMomentumRef = useRef(false);
   const jumpQueuedRef = useRef(false);
   const lastLandedAtRef = useRef(0);
   const consecutiveJumpsRef = useRef(0);
@@ -717,6 +720,7 @@ export function usePlayerController({
           crouchHoldLatchRef.current = false;
           sprintPressedRef.current = false;
           walkPressedRef.current = false;
+          sprintMomentumRef.current = false;
           movementTierRef.current = 'jog';
           shootAlignUntilRef.current = 0;
           runFacingPhaseRef.current = 'off';
@@ -837,12 +841,12 @@ export function usePlayerController({
       sprintPressed &&
       groundedRef.current &&
       sprintEligible;
+    const previousMovementTier = movementTierRef.current;
     const movementTier: MovementTier = sprinting
       ? 'run'
       : walkPressed
         ? 'walk'
         : 'jog';
-    movementTierRef.current = movementTier;
 
     const moveSpeed =
       movementTier === 'run'
@@ -852,74 +856,59 @@ export function usePlayerController({
             ? movementProfile.walkScale
             : movementProfile.jogScale);
 
-    const sinYaw = Math.sin(yawRef.current);
-    const cosYaw = Math.cos(yawRef.current);
     const localX = moveInputRef.current.x;
     const localZ = moveInputRef.current.y;
-    const desiredX = localX * cosYaw - localZ * sinYaw;
-    const desiredZ = -localX * sinYaw - localZ * cosYaw;
+    resolveDesiredPlanarVelocity(desiredPlanarVelocityRef.current, {
+      moveX: localX,
+      moveY: localZ,
+      aimYaw: yawRef.current,
+      desiredSpeed: moveSpeed,
+    });
+    const allowSprintMomentum =
+      previousMovementTier === 'run' || sprintMomentumRef.current;
+    movementTierRef.current = movementTier;
 
     if (groundedRef.current) {
-      if (movementEnabled) {
-        const dvx = desiredX * moveSpeed;
-        const dvz = desiredZ * moveSpeed;
-        const dot =
-          velocityRef.current.x * dvx + velocityRef.current.y * dvz;
-        const desiredSq = dvx * dvx + dvz * dvz;
-        const currentSq =
-          velocityRef.current.x * velocityRef.current.x +
-          velocityRef.current.y * velocityRef.current.y;
-        const dampRate =
-          dot < 0
-            ? DIRECTION_REVERSAL_DECEL_RATE
-            : desiredSq < currentSq
-              ? GROUND_DECEL_RATE
-              : GROUND_ACCEL_RATE;
-        velocityRef.current.x = THREE.MathUtils.damp(
-          velocityRef.current.x,
-          dvx,
-          dampRate,
-          delta,
-        );
-        velocityRef.current.y = THREE.MathUtils.damp(
-          velocityRef.current.y,
-          dvz,
-          dampRate,
-          delta,
-        );
-      } else {
-        velocityRef.current.x = THREE.MathUtils.damp(
-          velocityRef.current.x,
-          0,
-          GROUND_DECEL_RATE,
-          delta,
-        );
-        velocityRef.current.y = THREE.MathUtils.damp(
-          velocityRef.current.y,
-          0,
-          GROUND_DECEL_RATE,
-          delta,
-        );
-      }
+      const groundedResponse = stepGroundedPlanarVelocity(
+        velocityRef.current,
+        desiredPlanarVelocityRef.current,
+        delta,
+        {
+          movementEnabled,
+          hasDirectionalInput,
+          sprinting,
+          allowSprintMomentum,
+        },
+      );
+      sprintMomentumRef.current = resolveSprintMomentumActive(
+        velocityRef.current,
+        desiredPlanarVelocityRef.current,
+        {
+          movementEnabled,
+          hasDirectionalInput,
+          sprinting,
+          allowSprintMomentum,
+        },
+        groundedResponse,
+      );
     } else if (!movementEnabled) {
       velocityRef.current.set(0, 0);
       airborneMomentumSpeedRef.current = 0;
-    } else if (hasDirectionalInput) {
-      const desiredHeadingYaw = Math.atan2(-desiredX, -desiredZ);
-      rotatePlanarVelocityTowards(
-        velocityRef.current,
+      sprintMomentumRef.current = false;
+    } else {
+      const desiredHeadingYaw = hasDirectionalInput
+        ? Math.atan2(
+            -desiredPlanarVelocityRef.current.x,
+            -desiredPlanarVelocityRef.current.y,
+          )
+        : yawRef.current;
+      stepAirbornePlanarVelocity(velocityRef.current, delta, {
+        hasDirectionalInput,
         desiredHeadingYaw,
-        AIR_STEER_TURN_RATE * delta,
-      );
-      const airborneSpeed = airborneMomentumSpeedRef.current;
-      if (airborneSpeed > 0.0001) {
-        velocityRef.current.setLength(airborneSpeed);
-      }
+        momentumSpeed: airborneMomentumSpeedRef.current,
+      });
     }
-    planarSpeedRef.current = Math.hypot(
-      velocityRef.current.x,
-      velocityRef.current.y,
-    );
+    planarSpeedRef.current = velocityRef.current.length();
 
     const fppLocked = firstPersonRef.current;
     const shootingAlignActive = nowMs < shootAlignUntilRef.current;
@@ -1090,12 +1079,10 @@ export function usePlayerController({
         consecutiveJumpsRef.current * JUMP_PENALTY_PER_CONSECUTIVE,
         MAX_CONSECUTIVE_JUMP_PENALTY,
       );
-      const jumpMomentumFloor = hasDirectionalInput
-        ? WALK_SPEED * movementProfile.jogScale * 0.7
-        : 0;
-      airborneMomentumSpeedRef.current = Math.max(
+      airborneMomentumSpeedRef.current = resolveJumpTakeoffMomentum(
         planarSpeedRef.current,
-        jumpMomentumFloor,
+        moveSpeed,
+        hasDirectionalInput,
       );
       groundedRef.current = false;
       verticalVelocityRef.current = JUMP_SPEED * (1 - jumpPenalty);
@@ -1461,6 +1448,7 @@ export function usePlayerController({
     getHeadYawOffset: () => headYawOffsetRef.current,
     getPitch: () => pitchRef.current + recoilPitchRef.current,
     getLeanValue: () => leanLerpRef.current,
+    getPlanarVelocity: () => velocityRef.current,
     getPlanarSpeed: () => planarSpeedRef.current,
     getMoveInput: () => moveInputRef.current,
     isFirstPerson: () =>
@@ -1531,9 +1519,11 @@ export function usePlayerController({
       positionRef.current.copy(position);
       resolvedXZRef.current.set(position.x, position.z);
       velocityRef.current.set(0, 0);
+      desiredPlanarVelocityRef.current.set(0, 0);
       moveInputRef.current.set(0, 0);
       verticalVelocityRef.current = 0;
       airborneMomentumSpeedRef.current = 0;
+      sprintMomentumRef.current = false;
       groundedRef.current = true;
       jumpQueuedRef.current = false;
       yawRef.current = yawRadians;
