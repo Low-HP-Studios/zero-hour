@@ -1260,6 +1260,7 @@ export const GameplayRuntime = forwardRef<
   const crouchTransitionUseRifleRef = useRef(false);
   const crouchTransitionPoseFromRef = useRef(0);
   const wasCrouchedRef = useRef(false);
+  const wasGroundedRef = useRef(true);
   const slideIntentHookRef = useRef<SlideIntentHookState>({
     eligible: false,
     lastIntentAtMs: -1,
@@ -2046,6 +2047,7 @@ export const GameplayRuntime = forwardRef<
     crouchTransitionUseRifleRef.current = false;
     crouchTransitionPoseFromRef.current = 0;
     wasCrouchedRef.current = false;
+    wasGroundedRef.current = true;
     slideIntentHookRef.current = {
       eligible: false,
       lastIntentAtMs: -1,
@@ -2497,6 +2499,12 @@ export const GameplayRuntime = forwardRef<
     const crouchEntered = crouched && !previousCrouched;
     const crouchExited = !crouched && previousCrouched;
     wasCrouchedRef.current = crouched;
+    const previousGrounded = wasGroundedRef.current;
+    const justLanded = grounded && !previousGrounded;
+    wasGroundedRef.current = grounded;
+    if (justLanded) {
+      audio.playLanding();
+    }
     const slideIntent = slideIntentHookRef.current;
     slideIntent.eligible = isWeaponHoldEquipped &&
       !adsActive &&

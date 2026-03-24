@@ -4,60 +4,75 @@ This document captures the full direction for improving character movement mecha
 
 ---
 
+## Current Status
+
+- Phase 1 is implemented in code.
+- Phase 2 is implemented in code.
+- `npm run typecheck` passes.
+- `npm run lint` passes with the current unrelated warnings still unchanged.
+- Manual School/Range feel validation is still recommended before calling these phases final.
+
+---
+
 ## Issues Identified
 
 | # | Issue | Status | Target Phase |
 |---|-------|--------|--------------|
-| 1 | Movement feels too quick/snappy | TODO | Phase 1 |
-| 2 | Animation transitions feel like teleporting | TODO | Phase 1 + 2 |
+| 1 | Movement feels too quick/snappy | Done | Phase 1 |
+| 2 | Animation transitions feel like teleporting | Done | Phase 1 + 2 |
 | 3 | Character faces crosshair unnaturally during movement | TODO | Phase 3 |
 | 4 | Peek/lean moves arms and upper body | TODO | Phase 3 |
 | 5 | Gun points at wrong angle vs bullet direction | TODO | Phase 4 |
 | 6 | Crouch posture has bad back arc | TODO | Phase 3 |
-| 7 | No stopping animation on sharp direction change | TODO | Phase 2 |
+| 7 | No stopping animation on sharp direction change | Done | Phase 2 |
 
 ---
 
-## Phase 1: Momentum & Inertia — TODO
+## Phase 1: Momentum & Inertia — DONE
 
 **Goal**: Character velocity lags behind input. Movement has weight.
 
-### What to change
+### What was done
 
-- Lowered `GROUND_ACCEL_RATE` from 18 → 10 (walk/jog reaches 90% speed in ~230ms)
-- Lowered `GROUND_DECEL_RATE` from 22 → 16 (stops in ~144ms)
-- Lowered `DIRECTION_REVERSAL_DECEL_RATE` from 30 → 20 (visible slowdown on 180° reversal)
-- Added `SPRINT_ACCEL_RATE = 7.5` (sprint ramp ~307ms — feels committed)
-- Added `SPRINT_DECEL_RATE = 11` (sprint wind-down ~209ms — carries momentum)
-- Added `VELOCITY_SNAP_THRESHOLD = 0.08` (prevents micro-velocity sliding)
-- Sprint-aware dampRate selection with `isSprintMomentum` for sprint→jog carry-through
-- Widened `RIFLE_LOCOMOTION_SCALE_MIN` from 0.9 → 0.55 (animations slow during accel ramp)
-- Widened `RIFLE_LOCOMOTION_SCALE_MAX` from 1.2 → 1.25
-- Lowered `LOCOMOTION_VISUAL_INPUT_DAMP` from 12 → 8 (direction blend matches momentum)
+- Added shared `PHASE1_MOVEMENT_CONFIG` in `src/game/movement.ts` with the tuned momentum values:
+  `groundAccelRate = 10`, `groundDecelRate = 16`, `directionReversalDecelRate = 20`,
+  `sprintAccelRate = 7.5`, `sprintDecelRate = 11`, `velocitySnapThreshold = 0.08`,
+  `locomotionVisualInputDamp = 8`, `locomotionScaleMin = 0.55`, `locomotionScaleMax = 1.25`.
+- Moved Phase 1 movement math into pure helpers for desired planar velocity, grounded response selection,
+  sprint carry, jump carry, airborne steering, and snap-to-zero.
+- Replaced the old inline grounded damp logic in `PlayerController` with shared momentum stepping.
+- Added explicit sprint-to-jog carry-through via `resolveSprintMomentumActive()` so sprint release no longer snaps straight into normal jog behavior.
+- Updated jump takeoff carry via `resolveJumpTakeoffMomentum()` and kept airborne steering committed to the current momentum model.
+- Exposed actual planar velocity on `PlayerControllerApi` so runtime locomotion visuals can follow real movement instead of raw input alone.
+- Updated runtime locomotion visuals to blend local planar velocity with input intent and use the widened locomotion scale range.
 
-### Files to touch
+### Files touched
 
-- `src/game/PlayerController.ts` — constants + velocity update logic
-- `src/game/scene/GameplayRuntime.tsx` — animation locomotion scale + visual input damp
+- `src/game/movement.ts` — shared Phase 1 movement core and tuned config
+- `src/game/PlayerController.ts` — grounded/air momentum stepping + sprint carry + planar velocity API
+- `src/game/scene/GameplayRuntime.tsx` — hybrid velocity/input locomotion visuals + updated locomotion scaling
 
 ---
 
-## Phase 2: Animation State Machine — Direction Change Pause — TODO
+## Phase 2: Animation State Machine — Direction Change Pause — DONE
 
 **Goal**: Transitions between movement states feel natural. Sharp direction changes blend through neutral instead of instant flipping.
 
-### What to change
+### What was done
 
-- Added direction change detection in local input space using `computeInputAngleDelta()`
-- When input direction changes >90°, a 180ms pause damps visual locomotion input toward zero
-- During pause: animation resolves to forward jog at reduced locomotion scale (deceleration visible)
-- After pause: visual input smoothly blends toward new direction (no snap)
-- Added `skipSnapFromZero` to `updateVisualLocomotionInput` to prevent instant snap after pause ends
-- Sprint stop → jog transition: 80ms recovery window prevents spurious pause triggering
-- Direction tracking clears on ADS/crouch/weapon-unequip state transitions
-- No new animation assets — works with existing directional clips + crossfading
+- Added direction-change pause constants in `GameplayRuntime` for threshold, pause duration, pause damp rate,
+  meaningful-input gating, and sprint-stop recovery.
+- Added runtime-only state for tracked raw local input, active pause timer, sprint-stop recovery timer, and post-pause snap suppression.
+- Added `computeInputAngleDelta()` and `isStandingRifleDirectionPauseEligible()` helpers in the runtime locomotion path.
+- Reordered the standing rifle locomotion flow so crouch/fire-prep/run state resolves first, then the direction-change pause is evaluated against the final per-frame state.
+- Standing rifle walk/jog now detects >90-degree local input changes and triggers a short pause that damps visual locomotion toward neutral.
+- During the pause, animation resolves to `rifleJog` with speed-driven locomotion scale so the transition reads as reduced-scale forward deceleration instead of a clip flip.
+- Added `skipSnapFromZero` handling inside `updateVisualLocomotionInput()` so the new direction blends back in cleanly after the pause ends.
+- Added sprint-stop recovery so coming out of `rifleRunStop` into jog does not falsely trigger the direction-change pause.
+- Reset tracking when scope is lost because of ADS, crouch, weapon/pose changes, sprint-state transitions, or loss of meaningful input.
+- No new animation assets were required; the feature works with the existing rifle jog/walk/run clips and current locomotion blending.
 
-### Constants to add
+### Constants added
 
 | Constant | Value | Purpose |
 |----------|-------|---------|
@@ -69,16 +84,16 @@ This document captures the full direction for improving character movement mecha
 
 ### Scope
 
-- Only rifle jog/walk when standing (not ADS, not crouched, not sprinting)
+- Only standing rifle jog/walk when grounded (not ADS, not crouched, not sprinting, not fire-prep)
 - ADS and crouch remain fully responsive
 
-### Files to touch
+### Files touched
 
 - `src/game/scene/GameplayRuntime.tsx` — all changes in this single file
 
 ---
 
-## Phase 3: Upper/Lower Body Split — TODO
+## Phase 3: Upper/Lower Body Split — NEXT
 
 **Goal**: Decouple upper and lower body for natural movement. Upper body handles aiming, lower body handles locomotion independently.
 
@@ -121,10 +136,10 @@ This document captures the full direction for improving character movement mecha
 
 ### Files touched
 
-- `src/game/GameplayRuntime.tsx` — body orientation logic, lean IK, crouch layering
+- `src/game/scene/GameplayRuntime.tsx` — body orientation logic, lean IK, crouch layering
 - `src/game/PlayerController.ts` — body yaw calculation
-- `src/game/CharacterModel.ts` — animation layer usage for crouch
-- `src/game/scene-constants.ts` — constants
+- `src/game/scene/CharacterModel.ts` — animation layer usage for crouch
+- `src/game/scene/scene-constants.ts` — constants
 
 ### Success criteria
 
@@ -159,8 +174,8 @@ This document captures the full direction for improving character movement mecha
 ### Files touched
 
 - `src/game/Weapon.ts` — weapon positioning, ADS blend, sway
-- `src/game/WeaponModels.tsx` — model offsets per weapon type
-- `src/game/scene-constants.ts` — weapon constants
+- `src/game/scene/WeaponModels.tsx` — model offsets per weapon type
+- `src/game/scene/scene-constants.ts` — weapon constants
 
 ### Success criteria
 
@@ -190,7 +205,7 @@ These are optional features that could make Zero Hour's movement feel unique rat
 
 ```
 Phase 1 (Momentum)  -->  Phase 2 (Anim State Machine)  -->  Phase 3 (Body Split)  -->  Phase 4 (Weapon)
-     TODO                    TODO                           TODO                      TODO
+     DONE                    DONE                           NEXT                      TODO
 ```
 
-All phases are currently reset to TODO after the movement changes were reverted. Start from Phase 1 again, then continue in order. Phase 4 remains largely independent once Phase 1 is back in place.
+Phase 1 and Phase 2 are now implemented in code. Phase 3 is the current next milestone. Phase 4 remains largely independent once weapon feel work becomes the priority.
