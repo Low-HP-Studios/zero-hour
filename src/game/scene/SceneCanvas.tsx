@@ -93,6 +93,7 @@ type SceneProps = {
   booting: boolean;
   deferredAssetsEnabled: boolean;
   presentation: ScenePresentation;
+  gameplayInputEnabled: boolean;
   onPlayerSnapshot: (snapshot: PlayerSnapshot) => void;
   onPerfMetrics: (metrics: PerfMetrics) => void;
   onHitMarker: (kind: HitMarkerKind, damage: number, targetId: string) => void;
@@ -241,6 +242,7 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
   booting,
   deferredAssetsEnabled,
   presentation,
+  gameplayInputEnabled,
   onPlayerSnapshot,
   onPerfMetrics,
   onHitMarker,
@@ -521,11 +523,13 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
         practiceMap={runtimePracticeMap}
         audioVolumes={audioVolumes}
         presentation={presentation}
-                sensitivity={settings.sensitivity}
-                keybinds={settings.keybinds}
-                crouchMode={settings.crouchMode}
-                inventoryOpenMode={settings.inventoryOpenMode}
-                fov={settings.fov}
+        gameplayInputEnabled={gameplayInputEnabled}
+        sensitivity={settings.sensitivity}
+        controllerSettings={settings.controller}
+        keybinds={settings.keybinds}
+        crouchMode={settings.crouchMode}
+        inventoryOpenMode={settings.inventoryOpenMode}
+        fov={settings.fov}
         weaponAlignment={settings.weaponAlignment}
         movement={settings.movement}
         weaponRecoilProfiles={settings.weaponRecoilProfiles}

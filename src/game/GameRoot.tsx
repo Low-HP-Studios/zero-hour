@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { sharedAudioManager, type AudioVolumeSettings } from "./Audio";
 import { preloadPracticeMapAssets } from "./boot-assets";
 import { getCharacterById } from "./characters";
+import { ControllerSettingsSection } from "./ControllerSettingsSection";
 import { ExperienceMenuOverlay } from "./ExperienceMenuOverlay";
 import { MinimalStatsBar } from "./hud/MinimalStatsBar";
 import { PubgHud } from "./hud/PubgHud";
@@ -31,6 +32,7 @@ import {
   menuTitle,
 } from "./SettingsPanels";
 import { PubgInventoryOverlay } from "./inventory/PubgInventoryOverlay";
+import { useControllerUiNavigation } from "./useControllerUiNavigation";
 import type { SniperRechamberState, WeaponKind } from "./Weapon";
 import {
   DEFAULT_PERF_METRICS,
@@ -161,6 +163,7 @@ function isPlayerSnapshotEqual(previous: PlayerSnapshot, next: PlayerSnapshot) {
     previous.movementTier === next.movementTier &&
     previous.crouched === next.crouched &&
     previous.pointerLocked === next.pointerLocked &&
+    previous.controllerConnected === next.controllerConnected &&
     previous.canInteract === next.canInteract &&
     previous.interactWeaponKind === next.interactWeaponKind &&
     previous.inventoryPanelOpen === next.inventoryPanelOpen &&
@@ -299,6 +302,8 @@ export function GameRoot({
   const [menuSettingsOpen, setMenuSettingsOpen] = useState(false);
   const [pauseMenuOpen, setPauseMenuOpen] = useState(false);
   const pauseMenuOpenRef = useRef(false);
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
   const [killPulseToken, setKillPulseToken] = useState(0);
   const [killPulseAmount, setKillPulseAmount] = useState(0);
   const [hitMarker, setHitMarker] = useState<
@@ -334,7 +339,10 @@ export function GameRoot({
     booting ||
     phase !== "playing" ||
     pauseMenuOpen ||
-    (phase === "playing" && needsPointerLock && !inventoryOpen);
+    (phase === "playing" &&
+      needsPointerLock &&
+      !inventoryOpen &&
+      !player.controllerConnected);
 
   useEffect(() => {
     pauseMenuOpenRef.current = pauseMenuOpen;
@@ -410,6 +418,10 @@ export function GameRoot({
   // suffices; in the browser the user will just need one click.
   useEffect(() => {
     if (!needsPointerLock) return;
+    if (phase !== "playing") {
+      setNeedsPointerLock(false);
+      return;
+    }
 
     const tryLock = () => {
       setNeedsPointerLock(false);
@@ -438,7 +450,7 @@ export function GameRoot({
       cancelAnimationFrame(raf2);
       document.removeEventListener("click", onClick);
     };
-  }, [needsPointerLock]);
+  }, [needsPointerLock, phase]);
 
   useEffect(() => {
     if (killPulseToken <= 0) {
@@ -467,14 +479,19 @@ export function GameRoot({
     phase === "returning";
   const showSettingsModal = menuSettingsOpen || showPauseMenu;
   const showClickToContinueOverlay =
-    phase === "playing" && needsPointerLock && !showSettingsModal;
+    phase === "playing" &&
+    needsPointerLock &&
+    !showSettingsModal &&
+    !player.controllerConnected;
 
   const handleCloseMenuAndResume = useCallback(() => {
     setBindingCapture(null);
     setMenuSettingsOpen(false);
     setPauseMenuOpen(false);
     window.focus();
-    setNeedsPointerLock(true);
+    if (phaseRef.current === "playing") {
+      setNeedsPointerLock(true);
+    }
   }, []);
 
   const handlePauseMenuToggle = useCallback(() => {
@@ -501,6 +518,25 @@ export function GameRoot({
     setBindingCapture(null);
     setMenuSettingsOpen(true);
   }, []);
+
+  const handleControllerOverlayBack = useCallback(() => {
+    if (bindingCaptureRef.current) {
+      setBindingCapture(null);
+      return;
+    }
+    if (showPauseMenu) {
+      handleCloseMenuAndResume();
+      return;
+    }
+    if (menuSettingsOpen) {
+      handleCloseSettingsModal();
+    }
+  }, [
+    handleCloseMenuAndResume,
+    handleCloseSettingsModal,
+    menuSettingsOpen,
+    showPauseMenu,
+  ]);
 
   const warmPracticeMapAssets = useCallback((mapToWarm = selectedMap) => {
     const existing = practiceMapWarmupsRef.current[mapToWarm.id];
@@ -1232,8 +1268,11 @@ export function GameRoot({
     : player.interactWeaponKind === "rifle"
     ? "Rifle"
     : "Item";
+  const pickupPromptLabel = player.controllerConnected
+    ? "X"
+    : formatKeyCode(settings.keybinds.pickup);
   const interactPromptLabel = player.canInteract
-    ? `Press ${formatKeyCode(settings.keybinds.pickup)} to loot ${
+    ? `Press ${pickupPromptLabel} to loot ${
       interactItemLabel
     }`
     : "";
@@ -1247,9 +1286,22 @@ export function GameRoot({
     player.canInteract;
   const combatHudVisible = gameplayHudVisible && !showInventoryOverlay;
   const uiOverlayClassName = "ui-overlay";
+
+  useControllerUiNavigation({
+    active: showSettingsModal,
+    rootRef: settingsModalRef,
+    onBack: handleControllerOverlayBack,
+  });
+
+  useControllerUiNavigation({
+    active: !showSettingsModal && (phase === "menu" || showInventoryOverlay),
+    rootRef: appShellRef,
+  });
+
   return (
     <div
       ref={appShellRef}
+      data-controller-nav-scope="true"
       className={`app-shell ${
         showInventoryOverlay ? "inventory-open" : isGameplayPaused ? "paused" : "playing"
       } phase-${phase}`}
@@ -1268,6 +1320,7 @@ export function GameRoot({
         booting={booting}
         deferredAssetsEnabled={deferredAssetsEnabled}
         presentation={renderedPresentation}
+        gameplayInputEnabled={!pauseMenuOpen && phase === "playing"}
         onPerfMetrics={setPerfMetrics}
         onPlayerSnapshot={setPlayer}
         onHitMarker={handleHitMarker}
@@ -1467,6 +1520,7 @@ export function GameRoot({
                 <div
                   className="lobby-settings-modal"
                   ref={settingsModalRef}
+                  data-controller-nav-scope="true"
                   onClick={(e) => e.stopPropagation()}
                   onMouseDown={(e) => e.stopPropagation()}
                   onKeyDown={(event) => {
@@ -1505,6 +1559,9 @@ export function GameRoot({
                           type="button"
                           role="tab"
                           aria-selected={menuTab === tab.id}
+                          data-controller-default-focus={menuTab === tab.id
+                            ? "true"
+                            : undefined}
                           className={`lobby-settings-tab ${
                             menuTab === tab.id ? "active" : ""
                           }`}
@@ -1520,9 +1577,11 @@ export function GameRoot({
                         <button
                           type="button"
                           className="lobby-settings-tab"
-                          onClick={handleCloseMenuAndResume}
+                          onClick={showPauseMenu
+                            ? handleCloseMenuAndResume
+                            : handleCloseSettingsModal}
                         >
-                          Resume
+                          {showPauseMenu ? "Resume" : "Close"}
                         </button>
                         {showPauseMenu ? (
                           <button
@@ -1860,6 +1919,11 @@ export function GameRoot({
                     {menuTab === "controls"
                       ? (
                         <div className="menu-sections">
+                          <ControllerSettingsSection
+                            settings={settings.controller}
+                            onChange={(controller) =>
+                              setSettings((prev) => ({ ...prev, controller }))}
+                          />
                           <MenuSection
                             title="Keyboard Shortcuts"
                             blurb="Click a row, press a key. Escape cancels capture."

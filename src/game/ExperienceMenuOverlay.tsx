@@ -318,7 +318,12 @@ export function ExperienceMenuOverlay({
                 </p>
               </div>
               <div className="lobby-card-actions-v2 lobby-card-actions-v3">
-                <button type="button" className="lobby-play-btn-v2" onClick={onEnterPractice}>
+                <button
+                  type="button"
+                  className="lobby-play-btn-v2"
+                  data-controller-default-focus="true"
+                  onClick={onEnterPractice}
+                >
                   <span>Enter Practice</span>
                   <ArrowIcon />
                 </button>

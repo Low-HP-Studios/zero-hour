@@ -22,6 +22,28 @@ export const DEFAULT_AIM_SENSITIVITY_SETTINGS: AimSensitivitySettings = {
   vertical: 1,
 };
 
+export type ControllerSettings = {
+  enabled: boolean;
+  moveDeadzone: number;
+  lookDeadzone: number;
+  lookSensitivityX: number;
+  lookSensitivityY: number;
+  toggleSprint: boolean;
+  invertMoveY: boolean;
+  invertY: boolean;
+};
+
+export const DEFAULT_CONTROLLER_SETTINGS: ControllerSettings = {
+  enabled: true,
+  moveDeadzone: 0.15,
+  lookDeadzone: 0.12,
+  lookSensitivityX: 1,
+  lookSensitivityY: 1,
+  toggleSprint: true,
+  invertMoveY: false,
+  invertY: false,
+};
+
 export type ControlBindings = {
   moveForward: string;
   moveBackward: string;
@@ -258,6 +280,7 @@ export type GameSettings = {
   pixelRatioScale: PixelRatioScale;
   showR3fPerf: boolean;
   sensitivity: AimSensitivitySettings;
+  controller: ControllerSettings;
   keybinds: ControlBindings;
   crouchMode: CrouchMode;
   inventoryOpenMode: InventoryOpenMode;
@@ -436,6 +459,7 @@ export type PlayerSnapshot = {
   moving: boolean;
   grounded: boolean;
   pointerLocked: boolean;
+  controllerConnected: boolean;
   canInteract: boolean;
   interactWeaponKind: WeaponSnapshotKind | null;
   inventoryPanelOpen: boolean;
@@ -456,6 +480,7 @@ export const DEFAULT_PLAYER_SNAPSHOT: PlayerSnapshot = {
   moving: false,
   grounded: true,
   pointerLocked: false,
+  controllerConnected: false,
   canInteract: false,
   interactWeaponKind: null,
   inventoryPanelOpen: false,

@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { toast } from "sonner";
 
 import { type AudioVolumeSettings } from "../game/Audio";
+import { ControllerSettingsSection } from "../game/ControllerSettingsSection";
 import {
   MenuSection,
   SwitchRow,
@@ -477,6 +478,11 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
                 )}
                 {settingsTab === "controls" && (
                   <div className="menu-sections">
+                    <ControllerSettingsSection
+                      settings={settings.controller}
+                      onChange={(controller) =>
+                        setSettings((prev) => ({ ...prev, controller }))}
+                    />
                     <MenuSection title="Keyboard Shortcuts">
                       <div className="keybind-grid">
                         {BINDING_ROWS.map((row) => {

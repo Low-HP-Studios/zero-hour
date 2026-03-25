@@ -26,10 +26,65 @@
   align-items: flex-end;
 }
 
+.pubg-hud--left {
+  left: 20px;
+  align-items: flex-start;
+}
+
 .pubg-hud--center {
   left: 50%;
   transform: translateX(-50%);
   align-items: center;
+}
+
+.pubg-controller-help {
+  width: min(240px, calc(100vw - 40px));
+  padding: 10px 12px;
+  background: var(--pubg-bg);
+  border: 1px solid var(--pubg-border);
+  border-left: 3px solid var(--pubg-accent);
+  border-radius: 2px;
+}
+
+.pubg-controller-title {
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--pubg-accent);
+}
+
+.pubg-controller-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pubg-controller-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pubg-controller-badge {
+  min-width: 52px;
+  padding: 4px 8px;
+  border: 1px solid var(--pubg-border-active);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--pubg-text);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.pubg-controller-action {
+  color: var(--pubg-text);
+  font-size: 13px;
+  font-weight: 500;
 }
 
 .pubg-weapon-slots {
@@ -195,4 +250,20 @@
   background: var(--pubg-health);
   border-radius: 1px;
   transition: width 0.15s ease;
+}
+
+@media (max-width: 960px) {
+  .pubg-controller-help {
+    width: min(200px, calc(100vw - 40px));
+    padding: 8px 10px;
+  }
+
+  .pubg-controller-badge {
+    min-width: 46px;
+    font-size: 10px;
+  }
+
+  .pubg-controller-action {
+    font-size: 12px;
+  }
 }

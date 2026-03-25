@@ -851,6 +851,13 @@ code {
   opacity: 1;
 }
 
+[data-controller-nav-scope='true']
+  :is(button, input, textarea, [tabindex]):focus-visible {
+  outline: 2px solid rgba(255, 171, 66, 0.82);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 3px rgba(255, 171, 66, 0.16);
+}
+
 /* ── Rifle ADS Overlay (PUBG-style red dot sight) ── */
 .rifle-ads-overlay {
   position: absolute;

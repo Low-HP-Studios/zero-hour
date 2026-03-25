@@ -2,6 +2,7 @@ import { type AudioVolumeSettings, DEFAULT_AUDIO_VOLUMES } from "../Audio";
 import {
   DEFAULT_PRACTICE_MAP_ID,
   DEFAULT_AIM_SENSITIVITY_SETTINGS,
+  DEFAULT_CONTROLLER_SETTINGS,
   DEFAULT_CROUCH_MODE,
   DEFAULT_CONTROL_BINDINGS,
   DEFAULT_CROSSHAIR_SETTINGS,
@@ -62,6 +63,7 @@ export const DEFAULT_GAME_SETTINGS: GameSettings = {
   pixelRatioScale: 1,
   showR3fPerf: false,
   sensitivity: { ...DEFAULT_AIM_SENSITIVITY_SETTINGS },
+  controller: { ...DEFAULT_CONTROLLER_SETTINGS },
   keybinds: { ...DEFAULT_CONTROL_BINDINGS },
   crouchMode: DEFAULT_CROUCH_MODE,
   inventoryOpenMode: DEFAULT_INVENTORY_OPEN_MODE,
@@ -91,6 +93,7 @@ export function createDefaultPersistedSettings(): PersistedSettings {
     settings: {
       ...DEFAULT_GAME_SETTINGS,
       sensitivity: { ...DEFAULT_AIM_SENSITIVITY_SETTINGS },
+      controller: { ...DEFAULT_CONTROLLER_SETTINGS },
       keybinds: { ...DEFAULT_CONTROL_BINDINGS },
       weaponAlignment: { ...DEFAULT_WEAPON_ALIGNMENT },
       crosshair: cloneDefaultCrosshairSettings(),
@@ -230,6 +233,7 @@ export function parsePersistedSettings(value: unknown): PersistedSettings {
   const sensitivity = isRecord(settings.sensitivity)
     ? settings.sensitivity
     : {};
+  const controller = isRecord(settings.controller) ? settings.controller : {};
   const keybinds = isRecord(settings.keybinds) ? settings.keybinds : {};
   const weaponAlignment = isRecord(settings.weaponAlignment)
     ? settings.weaponAlignment
@@ -319,6 +323,48 @@ export function parsePersistedSettings(value: unknown): PersistedSettings {
           0.3,
           2,
           defaults.settings.sensitivity.vertical,
+        ),
+      },
+      controller: {
+        enabled: readBoolean(
+          controller.enabled,
+          defaults.settings.controller.enabled,
+        ),
+        moveDeadzone: readClampedNumber(
+          controller.moveDeadzone,
+          0,
+          0.4,
+          defaults.settings.controller.moveDeadzone,
+        ),
+        lookDeadzone: readClampedNumber(
+          controller.lookDeadzone,
+          0,
+          0.35,
+          defaults.settings.controller.lookDeadzone,
+        ),
+        lookSensitivityX: readClampedNumber(
+          controller.lookSensitivityX,
+          0.2,
+          3,
+          defaults.settings.controller.lookSensitivityX,
+        ),
+        lookSensitivityY: readClampedNumber(
+          controller.lookSensitivityY,
+          0.2,
+          3,
+          defaults.settings.controller.lookSensitivityY,
+        ),
+        toggleSprint: readBoolean(
+          controller.toggleSprint,
+          defaults.settings.controller.toggleSprint,
+        ),
+        invertMoveY: readBoolean(
+          controller.invertMoveY,
+          defaults.settings.controller.invertMoveY,
+        ),
+        invertY: readBoolean(
+          controller.invertY,
+          defaults.settings.controller.invertY,
         ),
       },
       keybinds: {

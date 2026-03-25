@@ -116,7 +116,9 @@ type GameplayRuntimeProps = {
   practiceMap: PracticeMapDefinition;
   audioVolumes: AudioVolumeSettings;
   presentation: ScenePresentation;
+  gameplayInputEnabled: boolean;
   sensitivity: GameSettings["sensitivity"];
+  controllerSettings: GameSettings["controller"];
   keybinds: GameSettings["keybinds"];
   crouchMode: GameSettings["crouchMode"];
   inventoryOpenMode: GameSettings["inventoryOpenMode"];
@@ -175,7 +177,6 @@ const AIM_PITCH_TORSO_FRACTION = 0.55;
 const AIM_PITCH_HEAD_FRACTION = 0.35;
 const AIM_YAW_TORSO_FRACTION = 0.6;
 const RIFLE_READY_PITCH_TORSO_FRACTION = 0.82;
-const RIFLE_READY_YAW_TORSO_FRACTION = 0.92;
 const AIM_PITCH_TORSO_QUAT = new THREE.Quaternion();
 const AIM_PITCH_HEAD_QUAT = new THREE.Quaternion();
 const AIM_YAW_TORSO_QUAT = new THREE.Quaternion();
@@ -1147,7 +1148,9 @@ export const GameplayRuntime = forwardRef<
   practiceMap,
   audioVolumes,
   presentation,
+  gameplayInputEnabled,
   sensitivity,
+  controllerSettings,
   keybinds,
   crouchMode,
   inventoryOpenMode,
@@ -1992,11 +1995,13 @@ export const GameplayRuntime = forwardRef<
     spawnYaw,
     spawnPitch,
     sensitivity,
+    controllerSettings,
     keybinds,
     crouchMode,
     inventoryOpenMode,
     fov,
     inputEnabled: presentation.inputEnabled,
+    gameplayInputEnabled,
     cameraEnabled: presentation.phase === "playing",
     onAction: handleAction,
     onPlayerSnapshot: handlePlayerSnapshot,
@@ -3335,7 +3340,7 @@ export const GameplayRuntime = forwardRef<
           controller.getYaw() - controller.getBodyYaw(),
         );
         const torsoYawFraction = rifleReadyPoseActive
-          ? RIFLE_READY_YAW_TORSO_FRACTION
+          ? 1.0
           : AIM_YAW_TORSO_FRACTION;
         const torsoYawContrib = aimBodyYawOffset * torsoYawFraction;
         if (Math.abs(torsoYawContrib) > 0.001) {

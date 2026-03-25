@@ -18,6 +18,18 @@ type WeaponModelsState = {
   sniper: THREE.Group | null;
 };
 
+const CONTROLLER_HELP_ROWS = [
+  { button: "RT", action: "Fire" },
+  { button: "LT", action: "Aim / ADS" },
+  { button: "A", action: "Jump" },
+  { button: "B", action: "Crouch" },
+  { button: "L3", action: "Sprint / Toggle Run" },
+  { button: "Y", action: "Reload" },
+  { button: "X", action: "Loot / Pickup" },
+  { button: "View", action: "Inventory" },
+  { button: "Menu", action: "Pause" },
+] as const;
+
 function PubgHudInner({ player, visible }: PubgHudProps) {
   const [models, setModels] = useState<WeaponModelsState>({
     rifle: null,
@@ -54,6 +66,22 @@ function PubgHudInner({ player, visible }: PubgHudProps) {
 
   return (
     <>
+      {player.controllerConnected ? (
+        <div className="pubg-hud pubg-hud--left">
+          <div className="pubg-controller-help">
+            <div className="pubg-controller-title">Controller</div>
+            <div className="pubg-controller-list">
+              {CONTROLLER_HELP_ROWS.map((row) => (
+                <div key={row.button} className="pubg-controller-row">
+                  <span className="pubg-controller-badge">{row.button}</span>
+                  <span className="pubg-controller-action">{row.action}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <div className="pubg-hud pubg-hud--right">
         <div className="pubg-weapon-slots">
           <WeaponSlotCard
