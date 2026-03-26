@@ -175,7 +175,8 @@ function isPlayerSnapshotEqual(previous: PlayerSnapshot, next: PlayerSnapshot) {
     previous.weaponReload.active === next.weaponReload.active &&
     previous.weaponReload.weaponKind === next.weaponReload.weaponKind &&
     previous.weaponReload.progress === next.weaponReload.progress &&
-    previous.weaponReload.remainingMs === next.weaponReload.remainingMs;
+    previous.weaponReload.remainingMs === next.weaponReload.remainingMs &&
+    previous.singleWeaponMode === next.singleWeaponMode;
 }
 
 const BOOT_PRESENTATION: ScenePresentation = {
@@ -267,8 +268,11 @@ export function GameRoot({
     const def = getCharacterById(selectedCharacterId);
     return {
       modelUrl: def.modelUrl,
+      assetType: def.assetType,
+      animationMode: def.animationMode,
       textureBasePath: def.textureBasePath,
       textures: def.textures,
+      embeddedWeapon: def.embeddedWeapon,
     };
   }, [selectedCharacterId]);
   const [perfMetrics, setPerfMetrics] = useState<PerfMetrics>(
@@ -987,6 +991,7 @@ export function GameRoot({
       audioVolumes,
       selectedCharacterId,
       selectedMapId,
+      characterSelectionMigrated: true,
     });
   }, [
     settings,

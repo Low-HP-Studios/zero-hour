@@ -1,4 +1,7 @@
+import type { WeaponKind } from "./Weapon";
+
 const CHARACTER_BASE = '/assets/models/character';
+const CUSTOM_CHARACTER_MODEL_URL = '/assets/models/player_with_animations.glb';
 
 export type CharacterTextureEntry = {
   match: string;
@@ -6,23 +9,68 @@ export type CharacterTextureEntry = {
   normal?: string;
 };
 
+export type CharacterAssetType = "fbx" | "glb";
+export type CharacterAnimationMode = "external-fbx" | "embedded-glb";
+
+export type EmbeddedWeaponDefinition = {
+  meshName: string;
+  socketName: string;
+  weaponKind: WeaponKind;
+};
+
 export type CharacterDefinition = {
   id: string;
   displayName: string;
   modelUrl: string;
-  textureBasePath: string;
-  textures: CharacterTextureEntry[] | null;
+  assetType: CharacterAssetType;
+  animationMode: CharacterAnimationMode;
+  textureBasePath?: string | null;
+  textures?: CharacterTextureEntry[] | null;
+  embeddedWeapon?: EmbeddedWeaponDefinition | null;
 };
 
-export const DEFAULT_CHARACTER_ID = 'trooper';
+export const DEFAULT_CHARACTER_ID = 'custom-operator';
+
+function createFbxCharacter(
+  id: string,
+  displayName: string,
+  modelPath: string,
+  texturePath: string,
+  textures: CharacterTextureEntry[] | null,
+): CharacterDefinition {
+  return {
+    id,
+    displayName,
+    modelUrl: `${CHARACTER_BASE}/${modelPath}`,
+    assetType: "fbx",
+    animationMode: "external-fbx",
+    textureBasePath: `${CHARACTER_BASE}/${texturePath}`,
+    textures,
+    embeddedWeapon: null,
+  };
+}
 
 export const CHARACTER_REGISTRY: CharacterDefinition[] = [
   {
-    id: 'trooper',
-    displayName: 'Trooper',
-    modelUrl: `${CHARACTER_BASE}/Trooper/tactical guy.fbx`,
-    textureBasePath: `${CHARACTER_BASE}/Trooper/tactical guy.fbm/`,
-    textures: [
+    id: 'custom-operator',
+    displayName: 'Custom Operator',
+    modelUrl: CUSTOM_CHARACTER_MODEL_URL,
+    assetType: "glb",
+    animationMode: "embedded-glb",
+    textureBasePath: null,
+    textures: null,
+    embeddedWeapon: {
+      meshName: "M4",
+      socketName: "hand_r_wep",
+      weaponKind: "rifle",
+    },
+  },
+  createFbxCharacter(
+    'trooper',
+    'Trooper',
+    'Trooper/tactical guy.fbx',
+    'Trooper/tactical guy.fbm/',
+    [
       {
         match: 'Body',
         base: 'Body_baseColor_0.png',
@@ -59,13 +107,13 @@ export const CHARACTER_REGISTRY: CharacterDefinition[] = [
         normal: 'Shoes_normal_11.png',
       },
     ],
-  },
-  {
-    id: 'arabian-girl',
-    displayName: 'Arabian Girl',
-    modelUrl: `${CHARACTER_BASE}/Arabian Girl/arabian girl.fbx`,
-    textureBasePath: `${CHARACTER_BASE}/Arabian Girl/arabian girl.fbm/`,
-    textures: [
+  ),
+  createFbxCharacter(
+    'arabian-girl',
+    'Arabian Girl',
+    'Arabian Girl/arabian girl.fbx',
+    'Arabian Girl/arabian girl.fbm/',
+    [
       {
         match: 'arabian_girl',
         base: 'arabian_girl_baseColor_0.png',
@@ -74,33 +122,33 @@ export const CHARACTER_REGISTRY: CharacterDefinition[] = [
       { match: 'eyes', base: 'eyes_baseColor_3.png' },
       { match: 'teeth', base: 'teeth.002_baseColor_4.png' },
     ],
-  },
-  {
-    id: 'chinese-girl',
-    displayName: 'Chinese Girl',
-    modelUrl: `${CHARACTER_BASE}/Chinese Girl/chinese girl animated.fbx`,
-    textureBasePath: `${CHARACTER_BASE}/Chinese Girl/chinese girl animated.fbm/`,
-    textures: [
+  ),
+  createFbxCharacter(
+    'chinese-girl',
+    'Chinese Girl',
+    'Chinese Girl/chinese girl animated.fbx',
+    'Chinese Girl/chinese girl animated.fbm/',
+    [
       {
         match: '',
         base: 'chinese_girl_baseColor_0.png',
         normal: 'chinese_girl_normal_2.png',
       },
     ],
-  },
-  {
-    id: 'cyborg-girl',
-    displayName: 'Cyborg Girl',
-    modelUrl: `${CHARACTER_BASE}/Cyborg Girl/Cyborg Girl.fbx`,
-    textureBasePath: `${CHARACTER_BASE}/Cyborg Girl/Cyborg Girl.fbm/`,
-    textures: [{ match: '', base: '_0.png', normal: '_2.png' }],
-  },
-  {
-    id: 'elder-monty',
-    displayName: 'Elder Monty',
-    modelUrl: `${CHARACTER_BASE}/Elder Monty/dr monty.fbx`,
-    textureBasePath: `${CHARACTER_BASE}/Elder Monty/dr monty.fbm/`,
-    textures: [
+  ),
+  createFbxCharacter(
+    'cyborg-girl',
+    'Cyborg Girl',
+    'Cyborg Girl/Cyborg Girl.fbx',
+    'Cyborg Girl/Cyborg Girl.fbm/',
+    [{ match: '', base: '_0.png', normal: '_2.png' }],
+  ),
+  createFbxCharacter(
+    'elder-monty',
+    'Elder Monty',
+    'Elder Monty/dr monty.fbx',
+    'Elder Monty/dr monty.fbm/',
+    [
       {
         match: 'Body',
         base: 'Body_diffuse_3.png',
@@ -123,39 +171,39 @@ export const CHARACTER_REGISTRY: CharacterDefinition[] = [
         normal: 'Shoes_normal_9.png',
       },
     ],
-  },
-  {
-    id: 'indian-girl',
-    displayName: 'Indian Girl',
-    modelUrl: `${CHARACTER_BASE}/Indian Girl/india girl.fbx`,
-    textureBasePath: `${CHARACTER_BASE}/Indian Girl/india girl.fbm/`,
-    textures: [
+  ),
+  createFbxCharacter(
+    'indian-girl',
+    'Indian Girl',
+    'Indian Girl/india girl.fbx',
+    'Indian Girl/india girl.fbm/',
+    [
       {
         match: '',
         base: 'indian_girl_baseColor_0.png',
         normal: 'indian_girl_normal_2.png',
       },
     ],
-  },
-  {
-    id: 'katherine',
-    displayName: 'Katherine Langford',
-    modelUrl: `${CHARACTER_BASE}/Katherine Langford/Katherine Langford.fbx`,
-    textureBasePath: `${CHARACTER_BASE}/Katherine Langford/Katherine Langford.fbm/`,
-    textures: [
+  ),
+  createFbxCharacter(
+    'katherine',
+    'Katherine Langford',
+    'Katherine Langford/Katherine Langford.fbx',
+    'Katherine Langford/Katherine Langford.fbm/',
+    [
       {
         match: '',
         base: 'Wolf3D_Avatar.001_baseColor_0.png',
         normal: 'Wolf3D_Avatar.001_normal_2.png',
       },
     ],
-  },
-  {
-    id: 'stylish-man',
-    displayName: 'Stylish Man',
-    modelUrl: `${CHARACTER_BASE}/Stylish Man/undercover cop.fbx`,
-    textureBasePath: `${CHARACTER_BASE}/Stylish Man/undercover cop.fbm/`,
-    textures: [
+  ),
+  createFbxCharacter(
+    'stylish-man',
+    'Stylish Man',
+    'Stylish Man/undercover cop.fbx',
+    'Stylish Man/undercover cop.fbm/',
+    [
       { match: 'body', base: 'body_baseColor_0.png' },
       {
         match: 'bottom',
@@ -186,13 +234,13 @@ export const CHARACTER_REGISTRY: CharacterDefinition[] = [
       },
       { match: 'teeth', base: 'teeth_baseColor_14.png' },
     ],
-  },
-  {
-    id: 'terrorist',
-    displayName: 'Terrorist',
-    modelUrl: `${CHARACTER_BASE}/Terrorist/Terrorist.fbx`,
-    textureBasePath: `${CHARACTER_BASE}/Terrorist/Terrorist.fbm/`,
-    textures: [
+  ),
+  createFbxCharacter(
+    'terrorist',
+    'Terrorist',
+    'Terrorist/Terrorist.fbx',
+    'Terrorist/Terrorist.fbm/',
+    [
       {
         match: 'bivakface',
         base: 'bivakface1_baseColor_3.png',
@@ -204,13 +252,13 @@ export const CHARACTER_REGISTRY: CharacterDefinition[] = [
         normal: 'body1A_normal_2.png',
       },
     ],
-  },
-  {
-    id: 'winter-soldier',
-    displayName: 'Winter Soldier',
-    modelUrl: `${CHARACTER_BASE}/Winter Soldier/Male.fbx`,
-    textureBasePath: `${CHARACTER_BASE}/Winter Soldier/Male.fbm/`,
-    textures: [
+  ),
+  createFbxCharacter(
+    'winter-soldier',
+    'Winter Soldier',
+    'Winter Soldier/Male.fbx',
+    'Winter Soldier/Male.fbm/',
+    [
       {
         match: 'material_1',
         base: 'material_1_baseColor_3.png',
@@ -222,20 +270,20 @@ export const CHARACTER_REGISTRY: CharacterDefinition[] = [
         normal: 'material_normal_2.png',
       },
     ],
-  },
-  {
-    id: 'zombie',
-    displayName: 'Zombie',
-    modelUrl: `${CHARACTER_BASE}/Zombie/Zombie.fbx`,
-    textureBasePath: `${CHARACTER_BASE}/Zombie/Zombie.fbm/`,
-    textures: [
+  ),
+  createFbxCharacter(
+    'zombie',
+    'Zombie',
+    'Zombie/Zombie.fbx',
+    'Zombie/Zombie.fbm/',
+    [
       {
         match: '',
         base: 'Scene_-_Root_baseColor_0.png',
         normal: 'Scene_-_Root_normal_3.png',
       },
     ],
-  },
+  ),
 ];
 
 export function getCharacterById(id: string): CharacterDefinition {

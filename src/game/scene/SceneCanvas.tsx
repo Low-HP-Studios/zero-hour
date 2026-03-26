@@ -39,7 +39,10 @@ import {
   type ShotFiredState,
 } from "./GameplayRuntime";
 import type { BlockingVolume } from "../map-layout";
-import type { CharacterModelOverride } from "./CharacterModel";
+import {
+  isEmbeddedGlbCharacterOverride,
+  type CharacterModelOverride,
+} from "./CharacterModel";
 import { PracticeMapEnvironment, StressBoxes } from "./MapEnvironment";
 import {
   clonePracticeMapTargets,
@@ -67,6 +70,7 @@ const MENU_FRAME_RATE = 30;
 const TRANSITION_FRAME_RATE = 60;
 const MENU_FRAME_INTERVAL_MS = 1000 / MENU_FRAME_RATE;
 const TRANSITION_FRAME_INTERVAL_MS = 1000 / TRANSITION_FRAME_RATE;
+const EMPTY_TARGETS: TargetState[] = [];
 
 function clamp01(value: number) {
   return Math.max(0, Math.min(1, value));
@@ -259,14 +263,17 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
   const [targets, setTargets] = useState<TargetState[]>(() =>
     clonePracticeMapTargets(practiceMap.targets),
   );
+  const rawCharacterSandboxMode =
+    isEmbeddedGlbCharacterOverride(characterOverride);
+  const visibleTargets = rawCharacterSandboxMode ? EMPTY_TARGETS : targets;
   const targetVisualRegistryRef = useRef<Map<string, TargetVisualHandle>>(
     new Map(),
   );
-  const sceneTargetsRef = useRef(targets);
+  const sceneTargetsRef = useRef(visibleTargets);
   const runtimeRef = useRef<GameplayRuntimeHandle | null>(null);
   const recoveringContextRef = useRef(false);
   const [runtimeAssetsReady, setRuntimeAssetsReady] = useState(false);
-  sceneTargetsRef.current = targets;
+  sceneTargetsRef.current = visibleTargets;
   const resetTimeoutsRef = useRef<Map<string, number>>(new Map());
   const compileReady = booting && runtimeAssetsReady;
   const lobbyFrameCapEnabled = presentation.phase !== "playing";
@@ -506,14 +513,18 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
         onCollisionReady={handleCollisionReady}
         showSkyBackdrop={showSkyBackdrop}
       />
-      <Targets
-        targets={targets}
-        shadows={settings.shadows && worldTheme > 0.6}
-        reveal={presentation.targetReveal}
-        loadCharacterAsset={deferredAssetsEnabled}
-        characterOverride={characterOverride}
-        visualRegistryRef={targetVisualRegistryRef}
-      />
+      {rawCharacterSandboxMode ? null : (
+        <Targets
+          targets={visibleTargets}
+          shadows={settings.shadows && worldTheme > 0.6}
+          reveal={presentation.targetReveal}
+          loadCharacterAsset={deferredAssetsEnabled}
+          characterOverride={characterOverride?.assetType === "fbx"
+            ? characterOverride
+            : undefined}
+          visualRegistryRef={targetVisualRegistryRef}
+        />
+      )}
       <StressBoxes
         count={practiceMap.supportsStressMode ? stressCount : 0}
         shadows={settings.shadows}
@@ -533,7 +544,7 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
         weaponAlignment={settings.weaponAlignment}
         movement={settings.movement}
         weaponRecoilProfiles={settings.weaponRecoilProfiles}
-        targets={targets}
+        targets={visibleTargets}
         targetVisualRegistryRef={targetVisualRegistryRef}
         onTargetHit={handleTargetHit}
         onResetTargets={handleResetTargets}

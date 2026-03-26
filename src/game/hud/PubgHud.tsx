@@ -62,7 +62,7 @@ function PubgHudInner({ player, visible }: PubgHudProps) {
     weaponLoadout.activeSlot === "slotA";
   const isSlotBActive = weaponLoadout.weaponRaised &&
     weaponLoadout.activeSlot === "slotB";
-  const activeSlot = isSlotAActive ? slotA : slotB;
+  const activeSlot = isSlotAActive || player.singleWeaponMode ? slotA : slotB;
 
   return (
     <>
@@ -90,12 +90,14 @@ function PubgHudInner({ player, visible }: PubgHudProps) {
             isActive={isSlotAActive}
             weaponModel={models.rifle}
           />
-          <WeaponSlotCard
-            slot={slotB}
-            slotNumber={2}
-            isActive={isSlotBActive}
-            weaponModel={models.sniper}
-          />
+          {player.singleWeaponMode ? null : (
+            <WeaponSlotCard
+              slot={slotB}
+              slotNumber={2}
+              isActive={isSlotBActive}
+              weaponModel={models.sniper}
+            />
+          )}
         </div>
       </div>
 

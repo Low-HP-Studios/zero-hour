@@ -467,6 +467,7 @@ export type PlayerSnapshot = {
   inventory: InventoryPanelSnapshot;
   weaponLoadout: PlayerWeaponLoadoutSnapshot;
   weaponReload: PlayerWeaponReloadSnapshot;
+  singleWeaponMode: boolean;
 };
 
 export const DEFAULT_PLAYER_SNAPSHOT: PlayerSnapshot = {
@@ -518,6 +519,7 @@ export const DEFAULT_PLAYER_SNAPSHOT: PlayerSnapshot = {
     progress: 1,
     remainingMs: 0,
   },
+  singleWeaponMode: false,
 };
 
 export type CollisionRect = {

@@ -9,9 +9,17 @@ import * as THREE from "three";
 import {
   loadFbxAsset,
   loadFbxAnimation,
+  loadGlbWithAnimations,
   preloadTextureAsset,
 } from "../AssetLoader";
-import type { CharacterTextureEntry } from "../characters";
+import type {
+  CharacterAnimationMode,
+  CharacterAssetType,
+  CharacterTextureEntry,
+  EmbeddedWeaponDefinition,
+} from "../characters";
+import type { WeaponKind } from "../Weapon";
+import { computeWeaponMuzzleOffset } from "./WeaponModels";
 import {
   ANIM_CLIPS,
   CHARACTER_MODEL_URL,
@@ -28,6 +36,7 @@ import {
   WALK_ANIM_TIME_SCALE,
   type CharacterAnimState,
 } from "./scene-constants";
+import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 
 export type CharacterFootstepSample = {
   state: CharacterAnimState;
@@ -37,6 +46,7 @@ export type CharacterFootstepSample = {
 export type CharacterModelResult = {
   model: THREE.Group | null;
   ready: boolean;
+  embeddedWeapon: CharacterEmbeddedWeaponRuntime | null;
   setAnimState: (
     state: CharacterAnimState,
     options?: CharacterAnimPlaybackOptions,
@@ -46,20 +56,37 @@ export type CharacterModelResult = {
 };
 
 export type CharacterAnimPlaybackOptions = {
+  baseLoopMode?: CharacterAnimLoopMode;
   locomotionScale?: number;
   seekNormalizedTime?: number;
   desiredDurationSeconds?: number;
   fadeDurationSeconds?: number;
   lowerBodyState?: CharacterAnimState | null;
+  lowerBodyLoopMode?: CharacterAnimLoopMode;
   lowerBodyLocomotionScale?: number;
   lowerBodySeekNormalizedTime?: number;
   lowerBodyDesiredDurationSeconds?: number;
   lowerBodyFadeDurationSeconds?: number;
   upperBodyState?: CharacterAnimState | null;
+  upperBodyLoopMode?: CharacterAnimLoopMode;
   upperBodyLocomotionScale?: number;
   upperBodySeekNormalizedTime?: number;
   upperBodyDesiredDurationSeconds?: number;
   upperBodyFadeDurationSeconds?: number;
+};
+
+export type CharacterEmbeddedWeaponRuntime = {
+  kind: WeaponKind;
+  object: THREE.Object3D;
+  muzzleLocalOffset: THREE.Vector3;
+};
+
+type CharacterAnimLoopMode = "default" | "once" | "repeat";
+
+type PreparedCharacterModel = {
+  model: THREE.Group;
+  animations: THREE.AnimationClip[];
+  embeddedWeapon: CharacterEmbeddedWeaponRuntime | null;
 };
 
 function isUnarmedSharedLocomotionState(state: CharacterAnimState): boolean {
@@ -236,6 +263,211 @@ export function resolveFootstepPlaybackRate(
   return isScaledLocomotionState(state) ? baseRate * locomotionScale : baseRate;
 }
 
+const EMBEDDED_GLTF_CLIP_ALIASES: Partial<Record<CharacterAnimState, string>> = {
+  idle: "W2_Stand_Relaxed_Idle_v2_IPC",
+  walkStart: "W2_Walk_Aim_F_Loop_IPC",
+  walkStop: "W2_Stand_Relaxed_Idle_v2_IPC",
+  walk: "W2_Walk_Aim_F_Loop_IPC",
+  walkBack: "W2_Walk_Aim_F_Loop_IPC",
+  walkLeft: "W2_Walk_Aim_F_Loop_IPC",
+  walkRight: "W2_Walk_Aim_F_Loop_IPC",
+  walkForwardLeft: "W2_Walk_Aim_F_Loop_IPC",
+  walkForwardRight: "W2_Walk_Aim_F_Loop_IPC",
+  walkBackwardLeft: "W2_Walk_Aim_F_Loop_IPC",
+  walkBackwardRight: "W2_Walk_Aim_F_Loop_IPC",
+  crouchEnter: "W2_Stand_Relaxed_Idle_v2_IPC",
+  crouchExit: "W2_Stand_Relaxed_Idle_v2_IPC",
+  crouchIdle: "W2_Stand_Relaxed_Idle_v2_IPC",
+  crouchForward: "W2_Walk_Aim_F_Loop_IPC",
+  crouchBack: "W2_Walk_Aim_F_Loop_IPC",
+  crouchLeft: "W2_Walk_Aim_F_Loop_IPC",
+  crouchRight: "W2_Walk_Aim_F_Loop_IPC",
+  rifleIdle: "W2_Stand_Relaxed_Idle_v2_IPC",
+  rifleCrouchEnter: "W2_Stand_Relaxed_Idle_v2_IPC",
+  rifleCrouchExit: "W2_Stand_Relaxed_Idle_v2_IPC",
+  rifleCrouchIdle: "W2_Stand_Relaxed_Idle_v2_IPC",
+  rifleCrouchWalk: "W2_Walk_Aim_F_Loop_IPC",
+  rifleWalk: "W2_Walk_Aim_F_Loop_IPC",
+  rifleWalkBack: "W2_Walk_Aim_F_Loop_IPC",
+  rifleWalkLeft: "W2_Walk_Aim_F_Loop_IPC",
+  rifleWalkRight: "W2_Walk_Aim_F_Loop_IPC",
+  rifleWalkForwardLeft: "W2_Walk_Aim_F_Loop_IPC",
+  rifleWalkForwardRight: "W2_Walk_Aim_F_Loop_IPC",
+  rifleWalkBackwardLeft: "W2_Walk_Aim_F_Loop_IPC",
+  rifleWalkBackwardRight: "W2_Walk_Aim_F_Loop_IPC",
+  rifleAimHold: "W2_Stand_Relaxed_Idle_v2_IPC",
+  rifleAimWalk: "W2_Walk_Aim_F_Loop_IPC",
+  rifleAimWalkBack: "W2_Walk_Aim_F_Loop_IPC",
+  rifleAimWalkLeft: "W2_Walk_Aim_F_Loop_IPC",
+  rifleAimWalkRight: "W2_Walk_Aim_F_Loop_IPC",
+  rifleJog: "W2_Walk_Aim_F_Loop_IPC",
+  rifleJogBack: "W2_Walk_Aim_F_Loop_IPC",
+  rifleJogLeft: "W2_Walk_Aim_F_Loop_IPC",
+  rifleJogRight: "W2_Walk_Aim_F_Loop_IPC",
+  rifleJogForwardLeft: "W2_Walk_Aim_F_Loop_IPC",
+  rifleJogForwardRight: "W2_Walk_Aim_F_Loop_IPC",
+  rifleJogBackwardLeft: "W2_Walk_Aim_F_Loop_IPC",
+  rifleJogBackwardRight: "W2_Walk_Aim_F_Loop_IPC",
+  rifleRun: "W2_Walk_Aim_F_Loop_IPC",
+  rifleRunStart: "W2_Walk_Aim_F_Loop_IPC",
+  rifleRunStop: "W2_Walk_Aim_F_Loop_IPC",
+  rifleReload: "W2_Stand_Fire_Single_IPC",
+  sprint: "W2_Walk_Aim_F_Loop_IPC",
+};
+
+function finalizeCharacterModel(model: THREE.Group) {
+  const box = new THREE.Box3().setFromObject(model);
+  const size = new THREE.Vector3();
+  box.getSize(size);
+  const scale = size.y > 0 ? CHARACTER_TARGET_HEIGHT / size.y : 1;
+  model.scale.setScalar(scale);
+
+  const scaledBox = new THREE.Box3().setFromObject(model);
+  model.position.y = -scaledBox.min.y;
+
+  model.traverse((child) => {
+    if (!(child as THREE.Mesh).isMesh) {
+      return;
+    }
+    child.castShadow = true;
+    child.receiveShadow = true;
+    if ((child as THREE.SkinnedMesh).isSkinnedMesh) {
+      child.frustumCulled = false;
+    }
+  });
+}
+
+function markEmbeddedWeaponObject(object: THREE.Object3D) {
+  object.userData.characterEmbeddedWeapon = true;
+  object.traverse((child) => {
+    child.userData.characterEmbeddedWeapon = true;
+  });
+}
+
+function computeEmbeddedWeaponMuzzleLocalOffset(object: THREE.Object3D) {
+  const wrapper = new THREE.Group();
+  const clone = object.clone(true);
+  wrapper.add(clone);
+  wrapper.updateMatrixWorld(true);
+  const worldOffset = computeWeaponMuzzleOffset(wrapper, {
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    scale: 1,
+  });
+  return clone.worldToLocal(worldOffset.clone());
+}
+
+function attachEmbeddedWeapon(
+  model: THREE.Group,
+  embeddedWeaponDef?: EmbeddedWeaponDefinition | null,
+): CharacterEmbeddedWeaponRuntime | null {
+  if (!embeddedWeaponDef) {
+    return null;
+  }
+
+  const weaponObject = model.getObjectByName(embeddedWeaponDef.meshName);
+  const socketObject = model.getObjectByName(embeddedWeaponDef.socketName);
+  if (!weaponObject || !socketObject) {
+    console.warn(
+      "[Character] Embedded weapon setup failed",
+      embeddedWeaponDef.meshName,
+      embeddedWeaponDef.socketName,
+    );
+    return null;
+  }
+
+  weaponObject.updateWorldMatrix(true, false);
+  socketObject.updateWorldMatrix(true, false);
+  const weaponWorldPosition = new THREE.Vector3();
+  const weaponWorldQuaternion = new THREE.Quaternion();
+  const socketWorldQuaternion = new THREE.Quaternion();
+  const authoredLocalPosition = new THREE.Vector3();
+  const authoredLocalQuaternion = new THREE.Quaternion();
+  const authoredLocalScale = new THREE.Vector3();
+  const authoredLocalMatrix = new THREE.Matrix4();
+  weaponObject.getWorldQuaternion(weaponWorldQuaternion);
+  weaponObject.getWorldPosition(weaponWorldPosition);
+  socketObject.getWorldQuaternion(socketWorldQuaternion);
+  authoredLocalMatrix.copy(socketObject.matrixWorld).invert().multiply(
+    weaponObject.matrixWorld,
+  );
+  authoredLocalMatrix.decompose(
+    authoredLocalPosition,
+    authoredLocalQuaternion,
+    authoredLocalScale,
+  );
+
+  if (weaponObject.parent !== socketObject) {
+    weaponObject.parent?.remove(weaponObject);
+    socketObject.add(weaponObject);
+  }
+  // Preserve the authored local weapon offset relative to the socket, but avoid
+  // compounding the armature's global 0.01 scale onto the mesh.
+  weaponObject.position.copy(authoredLocalPosition);
+  weaponObject.quaternion.copy(authoredLocalQuaternion);
+  weaponObject.scale.copy(authoredLocalScale);
+  weaponObject.updateWorldMatrix(true, true);
+  markEmbeddedWeaponObject(weaponObject);
+
+  return {
+    kind: embeddedWeaponDef.weaponKind,
+    object: weaponObject,
+    muzzleLocalOffset: computeEmbeddedWeaponMuzzleLocalOffset(weaponObject),
+  };
+}
+
+export async function loadPreparedCharacterModel(
+  override?: CharacterModelOverride,
+): Promise<PreparedCharacterModel | null> {
+  const modelUrl = override?.modelUrl ?? CHARACTER_MODEL_URL;
+  const assetType = override?.assetType ?? "fbx";
+  const animationMode = override?.animationMode ?? "external-fbx";
+
+  if (assetType === "glb" || animationMode === "embedded-glb") {
+    const gltf = await loadGlbWithAnimations(modelUrl);
+    if (!gltf) {
+      return null;
+    }
+    const model = SkeletonUtils.clone(gltf.scene) as THREE.Group;
+    finalizeCharacterModel(model);
+    return {
+      model,
+      animations: gltf.animations.map((clip) => clip.clone()),
+      embeddedWeapon: attachEmbeddedWeapon(model, override?.embeddedWeapon),
+    };
+  }
+
+  const model = await loadFbxAsset(modelUrl);
+  if (!model) {
+    return null;
+  }
+
+  const clone = SkeletonUtils.clone(model) as THREE.Group;
+  finalizeCharacterModel(clone);
+  await applyCharacterTextures(
+    clone,
+    override?.textureBasePath,
+    override?.textures,
+  );
+  return {
+    model: clone,
+    animations: [],
+    embeddedWeapon: null,
+  };
+}
+
+function resolveEmbeddedAnimationClip(
+  state: CharacterAnimState,
+  clips: readonly THREE.AnimationClip[],
+): THREE.AnimationClip | null {
+  const alias = EMBEDDED_GLTF_CLIP_ALIASES[state];
+  if (!alias) {
+    return null;
+  }
+
+  return clips.find((clip) => clip.name === alias) ?? null;
+}
+
 export function normalizeBoneName(name: string): string {
   return name
     .replace(/^mixamorig:/, "")
@@ -357,6 +589,26 @@ function configureActionLooping(
   }
 }
 
+function applyActionLoopMode(
+  clipName: string,
+  action: THREE.AnimationAction,
+  loopMode: CharacterAnimLoopMode | undefined,
+): void {
+  if (!loopMode || loopMode === "default") {
+    configureActionLooping(clipName, action);
+    return;
+  }
+
+  if (loopMode === "once") {
+    action.setLoop(THREE.LoopOnce, 1);
+    action.clampWhenFinished = true;
+    return;
+  }
+
+  action.setLoop(THREE.LoopRepeat, Infinity);
+  action.clampWhenFinished = false;
+}
+
 export function remapAnimationClip(
   clip: THREE.AnimationClip,
   modelBoneNames: Set<string>,
@@ -443,7 +695,7 @@ export function removeRootMotion(clip: THREE.AnimationClip): void {
 
 export async function applyCharacterTextures(
   model: THREE.Group,
-  textureBase?: string,
+  textureBase?: string | null,
   dynamicTextures?: CharacterTextureEntry[] | null,
 ): Promise<void> {
   const useBase = textureBase ?? CHARACTER_TEXTURE_BASE;
@@ -523,15 +775,34 @@ function findDynamicTextureEntry(
 
 export type CharacterModelOverride = {
   modelUrl: string;
-  textureBasePath: string;
-  textures: CharacterTextureEntry[] | null;
+  assetType: CharacterAssetType;
+  animationMode: CharacterAnimationMode;
+  textureBasePath?: string | null;
+  textures?: CharacterTextureEntry[] | null;
+  embeddedWeapon?: EmbeddedWeaponDefinition | null;
 };
+
+export function isEmbeddedGlbCharacterOverride(
+  override?: CharacterModelOverride,
+): boolean {
+  return override?.assetType === "glb" ||
+    override?.animationMode === "embedded-glb";
+}
+
+export function isSingleWeaponCharacterOverride(
+  override?: CharacterModelOverride,
+): boolean {
+  return isEmbeddedGlbCharacterOverride(override) &&
+    override?.embeddedWeapon?.weaponKind === "rifle";
+}
 
 export function useCharacterModel(
   override?: CharacterModelOverride,
 ): CharacterModelResult {
   const [model, setModel] = useState<THREE.Group | null>(null);
   const [ready, setReady] = useState(false);
+  const [embeddedWeapon, setEmbeddedWeapon] =
+    useState<CharacterEmbeddedWeaponRuntime | null>(null);
   const mixerRef = useRef<THREE.AnimationMixer | null>(null);
   const fullActionsRef = useRef<Map<string, THREE.AnimationAction>>(new Map());
   const lowerBodyBaseActionsRef = useRef<Map<string, THREE.AnimationAction>>(
@@ -552,47 +823,36 @@ export function useCharacterModel(
 
   useEffect(() => {
     let disposed = false;
+    setReady(false);
+    setModel(null);
+    setEmbeddedWeapon(null);
+    fullActionsRef.current = new Map();
+    lowerBodyBaseActionsRef.current = new Map();
+    lowerBodyOverlayActionsRef.current = new Map();
+    upperBodyActionsRef.current = new Map();
+    currentBaseActionRef.current = null;
+    currentLowerBodyActionRef.current = null;
+    currentUpperBodyActionRef.current = null;
+    currentBaseStateRef.current = null;
+    currentLowerBodyStateRef.current = null;
+    currentUpperBodyStateRef.current = null;
 
     (async () => {
       try {
-        const modelUrl = override?.modelUrl ?? CHARACTER_MODEL_URL;
-        const [fbxModel, SkeletonUtils, ...clips] = await Promise.all([
-          loadFbxAsset(modelUrl),
-          import("three/examples/jsm/utils/SkeletonUtils.js"),
-          ...ANIM_CLIPS.map((a) => loadFbxAnimation(a.url, a.name)),
-        ]);
+        const preparedModel = await loadPreparedCharacterModel(override);
 
         if (disposed) return;
-        if (!fbxModel) {
+        if (!preparedModel) {
           setReady(true);
           return;
         }
 
-        const clone = SkeletonUtils.clone(fbxModel) as THREE.Group;
-
-        const box = new THREE.Box3().setFromObject(clone);
-        const size = new THREE.Vector3();
-        box.getSize(size);
-        const scale = size.y > 0 ? CHARACTER_TARGET_HEIGHT / size.y : 1;
-        clone.scale.setScalar(scale);
-
-        const scaledBox = new THREE.Box3().setFromObject(clone);
-        clone.position.y = -scaledBox.min.y;
-
-        clone.traverse((child) => {
-          if (!(child as THREE.Mesh).isMesh) return;
-          child.castShadow = true;
-          child.receiveShadow = true;
-          if ((child as THREE.SkinnedMesh).isSkinnedMesh) {
-            child.frustumCulled = false;
-          }
-        });
-
-        await applyCharacterTextures(
-          clone,
-          override?.textureBasePath,
-          override?.textures,
-        );
+        const clone = preparedModel.model;
+        const externalFbxClips = override?.animationMode === "embedded-glb"
+          ? []
+          : await Promise.all(
+            ANIM_CLIPS.map((a) => loadFbxAnimation(a.url, a.name)),
+          );
 
         const modelBoneNames = new Set<string>();
         clone.traverse((child) => {
@@ -614,10 +874,17 @@ export function useCharacterModel(
         const lowerBodyOverlayActions = new Map<string, THREE.AnimationAction>();
         const upperBodyActions = new Map<string, THREE.AnimationAction>();
         for (let i = 0; i < ANIM_CLIPS.length; i++) {
-          const clip = clips[i];
+          const clip = override?.animationMode === "embedded-glb"
+            ? resolveEmbeddedAnimationClip(
+              ANIM_CLIPS[i].name as CharacterAnimState,
+              preparedModel.animations,
+            )
+            : externalFbxClips[i];
           if (!clip) continue;
           const clipName = ANIM_CLIPS[i].name;
-          const remapped = remapAnimationClip(clip, modelBoneNames).clone();
+          const remapped = override?.animationMode === "embedded-glb"
+            ? clip.clone()
+            : remapAnimationClip(clip, modelBoneNames).clone();
           removeRootMotion(remapped);
           remapped.tracks = remapped.tracks.filter((track) => {
             const boneName = splitTrackName(track.name).nodeName;
@@ -664,6 +931,7 @@ export function useCharacterModel(
         }
 
         setModel(clone);
+        setEmbeddedWeapon(preparedModel.embeddedWeapon);
       } catch (error) {
         console.warn("[Character] Model warm-up failed", error);
       } finally {
@@ -680,9 +948,15 @@ export function useCharacterModel(
         mixerRef.current.uncacheRoot(mixerRef.current.getRoot());
         mixerRef.current = null;
       }
+      currentBaseActionRef.current = null;
+      currentLowerBodyActionRef.current = null;
+      currentUpperBodyActionRef.current = null;
+      currentBaseStateRef.current = null;
+      currentLowerBodyStateRef.current = null;
+      currentUpperBodyStateRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [override?.modelUrl]);
+  }, [override]);
 
   const setAnimState = useCallback((
     state: CharacterAnimState,
@@ -695,6 +969,7 @@ export function useCharacterModel(
       target: THREE.AnimationAction | null,
       targetState: CharacterAnimState | null,
       layerOptions: {
+        loopMode?: CharacterAnimLoopMode;
         desiredDurationSeconds?: number;
         fadeDurationSeconds: number;
         locomotionScale?: number;
@@ -721,6 +996,8 @@ export function useCharacterModel(
           : resolveCharacterAnimTimeScale(targetState, {
             locomotionScale: layerOptions.locomotionScale,
           });
+
+      applyActionLoopMode(targetState, target, layerOptions.loopMode);
 
       if (currentAction && currentAction !== target) {
         // Phase sync: carry over gait cycle position between looping locomotion states
@@ -784,6 +1061,7 @@ export function useCharacterModel(
       : fullActionsRef.current.get(state) ?? null;
 
     playLayer(currentBaseActionRef, currentBaseStateRef, baseAction, state, {
+      loopMode: options?.baseLoopMode,
       desiredDurationSeconds: options?.desiredDurationSeconds,
       fadeDurationSeconds: fadeDuration,
       locomotionScale: options?.locomotionScale,
@@ -798,6 +1076,7 @@ export function useCharacterModel(
         : null,
       lowerOverlayState,
       {
+        loopMode: options?.lowerBodyLoopMode,
         desiredDurationSeconds: options?.lowerBodyDesiredDurationSeconds,
         fadeDurationSeconds: Math.max(
           0,
@@ -816,6 +1095,7 @@ export function useCharacterModel(
         : null,
       upperOverlayState,
       {
+        loopMode: options?.upperBodyLoopMode,
         desiredDurationSeconds: options?.upperBodyDesiredDurationSeconds,
         fadeDurationSeconds: Math.max(
           0,
@@ -857,5 +1137,12 @@ export function useCharacterModel(
     [],
   );
 
-  return { model, ready, setAnimState, getFootstepSample, getCurrentAnimState };
+  return {
+    model,
+    ready,
+    embeddedWeapon,
+    setAnimState,
+    getFootstepSample,
+    getCurrentAnimState,
+  };
 }

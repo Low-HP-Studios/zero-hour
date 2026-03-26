@@ -1,4 +1,5 @@
 import { type AudioVolumeSettings, DEFAULT_AUDIO_VOLUMES } from "../Audio";
+import { DEFAULT_CHARACTER_ID } from "../characters";
 import {
   DEFAULT_PRACTICE_MAP_ID,
   DEFAULT_AIM_SENSITIVITY_SETTINGS,
@@ -86,6 +87,7 @@ export type PersistedSettings = {
   audioVolumes: AudioVolumeSettings;
   selectedCharacterId: string;
   selectedMapId: MapId;
+  characterSelectionMigrated: boolean;
 };
 
 export function createDefaultPersistedSettings(): PersistedSettings {
@@ -106,8 +108,9 @@ export function createDefaultPersistedSettings(): PersistedSettings {
     hudPanels: { ...DEFAULT_HUD_OVERLAY_TOGGLES },
     stressCount: 0,
     audioVolumes: { ...DEFAULT_AUDIO_VOLUMES },
-    selectedCharacterId: "trooper",
+    selectedCharacterId: DEFAULT_CHARACTER_ID,
     selectedMapId: DEFAULT_PRACTICE_MAP_ID,
+    characterSelectionMigrated: true,
   };
 }
 
@@ -751,11 +754,13 @@ export function parsePersistedSettings(value: unknown): PersistedSettings {
     },
     hudPanels: readHudOverlayToggles(value.hudPanels, defaults.hudPanels),
     stressCount: readStressModeCount(value.stressCount, defaults.stressCount),
-    selectedCharacterId: readString(
+    selectedCharacterId: resolveSelectedCharacterId(
       value.selectedCharacterId,
       defaults.selectedCharacterId,
+      value.characterSelectionMigrated,
     ),
     selectedMapId: readMapId(value.selectedMapId, defaults.selectedMapId),
+    characterSelectionMigrated: true,
     audioVolumes: {
       master: readClampedNumber(
         audioVolumes.master,
@@ -785,6 +790,19 @@ export function parsePersistedSettings(value: unknown): PersistedSettings {
       ui: readClampedNumber(audioVolumes.ui, 0, 1, defaults.audioVolumes.ui),
     },
   };
+}
+
+function resolveSelectedCharacterId(
+  rawValue: unknown,
+  fallback: string,
+  migratedValue: unknown,
+) {
+  const selectedCharacterId = readString(rawValue, fallback);
+  const migrated = readBoolean(migratedValue, false);
+  if (!migrated && selectedCharacterId === "trooper") {
+    return fallback;
+  }
+  return selectedCharacterId;
 }
 
 export function loadPersistedSettings(): PersistedSettings {

@@ -262,11 +262,15 @@ export class InventorySystem {
   }
 
   ensurePracticeAmmoStock(rifleAmount = 120, sniperAmount = 30) {
-    const nextRifleAmount = Math.max(1, Math.floor(rifleAmount));
-    const nextSniperAmount = Math.max(1, Math.floor(sniperAmount));
+    const nextRifleAmount = Math.max(0, Math.floor(rifleAmount));
+    const nextSniperAmount = Math.max(0, Math.floor(sniperAmount));
 
     let changed = false;
-    if (!this.hasGroundItemWithId("ammo_rifle") && this.practiceAmmoSpawnPoints.rifle) {
+    if (
+      nextRifleAmount > 0 &&
+      !this.hasGroundItemWithId("ammo_rifle") &&
+      this.practiceAmmoSpawnPoints.rifle
+    ) {
       this.addGroundItem(
         this.createStack("ammo_rifle", nextRifleAmount),
         this.practiceAmmoSpawnPoints.rifle,
@@ -274,7 +278,11 @@ export class InventorySystem {
       changed = true;
     }
 
-    if (!this.hasGroundItemWithId("ammo_sniper") && this.practiceAmmoSpawnPoints.sniper) {
+    if (
+      nextSniperAmount > 0 &&
+      !this.hasGroundItemWithId("ammo_sniper") &&
+      this.practiceAmmoSpawnPoints.sniper
+    ) {
       this.addGroundItem(
         this.createStack("ammo_sniper", nextSniperAmount),
         this.practiceAmmoSpawnPoints.sniper,

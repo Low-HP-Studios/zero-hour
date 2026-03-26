@@ -1,80 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
-import { loadFbxAsset, preloadTextureAsset } from "../game/AssetLoader";
 import { MapEnvironment } from "../game/scene/MapEnvironment";
-import type {
-  CharacterDefinition,
-  CharacterTextureEntry,
-} from "../game/characters";
-
-const CHARACTER_TARGET_HEIGHT = 1.65;
-
-async function applyTextures(
-  model: THREE.Group,
-  textureBasePath: string,
-  textures: CharacterTextureEntry[] | null,
-) {
-  if (!textures || textures.length === 0) return;
-
-  const tasks: Promise<void>[] = [];
-
-  model.traverse((child) => {
-    if (!(child as THREE.Mesh).isMesh) return;
-    const mesh = child as THREE.Mesh;
-    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-
-    const task = (async () => {
-      const newMats = await Promise.all(
-        mats.map(async (mat) => {
-          const name = mat.name || mesh.name;
-          const entry = textures.find(
-            (t) => t.match === "" || name.includes(t.match),
-          );
-
-          const phong = mat as THREE.MeshPhongMaterial;
-
-          let baseTex: THREE.Texture | null = null;
-          let normalTex: THREE.Texture | null = null;
-          if (entry) {
-            const loads: Promise<THREE.Texture | null>[] = [
-              preloadTextureAsset(textureBasePath + entry.base),
-            ];
-            if (entry.normal) {
-              loads.push(preloadTextureAsset(textureBasePath + entry.normal));
-            }
-            const [b, n] = await Promise.all(loads);
-            baseTex = b;
-            normalTex = n ?? null;
-          }
-
-          const stdMat = new THREE.MeshStandardMaterial({
-            name: mat.name,
-            color: phong.color ?? new THREE.Color(0xffffff),
-            roughness: 0.75,
-            metalness: 0.05,
-          });
-
-          if (baseTex) {
-            baseTex.colorSpace = THREE.SRGBColorSpace;
-            stdMat.map = baseTex;
-          }
-          if (normalTex) {
-            stdMat.normalMap = normalTex;
-          }
-
-          mat.dispose();
-          return stdMat;
-        }),
-      );
-      mesh.material = newMats.length === 1 ? newMats[0] : newMats;
-    })();
-
-    tasks.push(task);
-  });
-
-  await Promise.all(tasks);
-}
+import type { CharacterDefinition } from "../game/characters";
+import {
+  loadPreparedCharacterModel,
+  type CharacterModelOverride,
+} from "../game/scene/CharacterModel";
 
 function disposeModel(model: THREE.Group) {
   model.traverse((child) => {
@@ -94,54 +26,66 @@ function disposeModel(model: THREE.Group) {
 }
 
 type LobbyModelProps = {
-  modelUrl: string;
-  textureBasePath: string;
-  textures: CharacterTextureEntry[] | null;
+  characterDef: CharacterDefinition;
 };
 
-function LobbyModel({ modelUrl, textureBasePath, textures }: LobbyModelProps) {
+function LobbyModel({ characterDef }: LobbyModelProps) {
   const groupRef = useRef<THREE.Group>(null);
   const [model, setModel] = useState<THREE.Group | null>(null);
+  const mixerRef = useRef<THREE.AnimationMixer | null>(null);
 
   useEffect(() => {
     let disposed = false;
+    let loadedModel: THREE.Group | null = null;
+    let idleMixer: THREE.AnimationMixer | null = null;
     setModel(null);
 
     (async () => {
-      const [fbx, SkeletonUtils] = await Promise.all([
-        loadFbxAsset(modelUrl),
-        import("three/examples/jsm/utils/SkeletonUtils.js"),
-      ]);
-      if (disposed || !fbx) return;
+      const override: CharacterModelOverride = {
+        modelUrl: characterDef.modelUrl,
+        assetType: characterDef.assetType,
+        animationMode: characterDef.animationMode,
+        textureBasePath: characterDef.textureBasePath,
+        textures: characterDef.textures,
+        embeddedWeapon: characterDef.embeddedWeapon,
+      };
+      const prepared = await loadPreparedCharacterModel(override);
+      if (disposed || !prepared) return;
 
-      const clone = SkeletonUtils.clone(fbx) as THREE.Group;
+      loadedModel = prepared.model;
+      const idleClip = characterDef.animationMode === "embedded-glb"
+        ? prepared.animations.find((clip) =>
+          clip.name === "W2_Stand_Relaxed_Idle_v2_IPC"
+        ) ?? null
+        : null;
+      if (idleClip) {
+        idleMixer = new THREE.AnimationMixer(prepared.model);
+        const action = idleMixer.clipAction(idleClip.clone());
+        action.play();
+        mixerRef.current = idleMixer;
+      } else {
+        mixerRef.current = null;
+      }
 
-      const box = new THREE.Box3().setFromObject(clone);
-      const size = new THREE.Vector3();
-      box.getSize(size);
-      const scale = size.y > 0 ? CHARACTER_TARGET_HEIGHT / size.y : 1;
-      clone.scale.setScalar(scale);
-
-      const scaledBox = new THREE.Box3().setFromObject(clone);
-      clone.position.y = -scaledBox.min.y;
-
-      clone.traverse((child) => {
-        if ((child as THREE.Mesh).isMesh) {
-          child.castShadow = true;
-          child.receiveShadow = true;
-        }
-      });
-
-      await applyTextures(clone, textureBasePath, textures);
-
-      setModel(clone);
+      setModel(prepared.model);
     })();
+
     return () => {
       disposed = true;
-      if (model) disposeModel(model);
+      mixerRef.current?.stopAllAction();
+      if (idleMixer) {
+        idleMixer.uncacheRoot(idleMixer.getRoot());
+      }
+      mixerRef.current = null;
+      if (loadedModel) {
+        disposeModel(loadedModel);
+      }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modelUrl]);
+  }, [characterDef]);
+
+  useFrame((_, delta) => {
+    mixerRef.current?.update(delta);
+  });
 
   if (!model) return null;
 
@@ -301,9 +245,7 @@ function LobbySceneContent({
       <MapEnvironment shadows={false} theme={1} floorGridOpacity={0} />
       <SlowOrbit>
         <LobbyModel
-          modelUrl={characterDef.modelUrl}
-          textureBasePath={characterDef.textureBasePath}
-          textures={characterDef.textures}
+          characterDef={characterDef}
         />
       </SlowOrbit>
       <LobbyCamera
@@ -372,9 +314,7 @@ export function CharacterPreviewCanvas({
         />
         <pointLight position={[0, 1.5, 4]} intensity={0.6} color="#ffab42" />
         <LobbyModel
-          modelUrl={characterDef.modelUrl}
-          textureBasePath={characterDef.textureBasePath}
-          textures={characterDef.textures}
+          characterDef={characterDef}
         />
         <PreviewCamera />
         <LobbyFramePacer />

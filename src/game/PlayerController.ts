@@ -65,6 +65,7 @@ type UsePlayerControllerOptions = {
   inputEnabled: boolean;
   gameplayInputEnabled: boolean;
   cameraEnabled: boolean;
+  allowLean?: boolean;
   onAction: (action: PlayerAction) => void;
   onPlayerSnapshot: (snapshot: PlayerSnapshot) => void;
   onTriggerChange: (firing: boolean) => void;
@@ -292,6 +293,7 @@ export function usePlayerController({
   inputEnabled,
   gameplayInputEnabled,
   cameraEnabled,
+  allowLean = true,
   onAction,
   onPlayerSnapshot,
   onTriggerChange,
@@ -1522,9 +1524,9 @@ export function usePlayerController({
     const peekRightHeld =
       movementEnabled && isBindingDown(keys, bindings.peekRight);
     leanTargetRef.current =
-      !sprinting && peekLeftHeld && !peekRightHeld
+      allowLean && !sprinting && peekLeftHeld && !peekRightHeld
         ? -1
-        : !sprinting && peekRightHeld && !peekLeftHeld
+        : allowLean && !sprinting && peekRightHeld && !peekLeftHeld
           ? 1
           : 0;
     leanLerpRef.current = THREE.MathUtils.damp(

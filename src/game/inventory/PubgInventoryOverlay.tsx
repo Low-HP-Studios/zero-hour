@@ -95,6 +95,9 @@ export function PubgInventoryOverlay({
   onQuickMove,
 }: PubgInventoryOverlayProps) {
   const backpackSlots = inventory.backpack.slots;
+  const weaponSlots = player.singleWeaponMode
+    ? (["primary"] as const)
+    : (["primary", "secondary"] as const);
 
   const usageLabel = useMemo(() => {
     const used = backpackSlots
@@ -237,7 +240,7 @@ export function PubgInventoryOverlay({
           </header>
 
           <div className="inventory-weapon-blocks">
-            {(["primary", "secondary"] as const).map((weaponSlot) => {
+            {weaponSlots.map((weaponSlot) => {
               const isActive = player.weaponLoadout.weaponRaised &&
                 (
                   (weaponSlot === "primary" &&

@@ -123,6 +123,7 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
       stressCount: 0,
       selectedCharacterId,
       selectedMapId,
+      characterSelectionMigrated: true,
     });
   }, [settings, hudPanels, audioVolumes, selectedCharacterId, selectedMapId]);
 
