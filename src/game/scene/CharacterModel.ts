@@ -53,22 +53,26 @@ export type CharacterModelResult = {
   ) => void;
   getFootstepSample: () => CharacterFootstepSample | null;
   getCurrentAnimState: () => CharacterAnimState | null;
+  getClipDuration: (clipName: string) => number | null;
 };
 
 export type CharacterAnimPlaybackOptions = {
   baseLoopMode?: CharacterAnimLoopMode;
+  baseClipNameOverride?: string | null;
   locomotionScale?: number;
   seekNormalizedTime?: number;
   desiredDurationSeconds?: number;
   fadeDurationSeconds?: number;
   lowerBodyState?: CharacterAnimState | null;
   lowerBodyLoopMode?: CharacterAnimLoopMode;
+  lowerBodyClipNameOverride?: string | null;
   lowerBodyLocomotionScale?: number;
   lowerBodySeekNormalizedTime?: number;
   lowerBodyDesiredDurationSeconds?: number;
   lowerBodyFadeDurationSeconds?: number;
   upperBodyState?: CharacterAnimState | null;
   upperBodyLoopMode?: CharacterAnimLoopMode;
+  upperBodyClipNameOverride?: string | null;
   upperBodyLocomotionScale?: number;
   upperBodySeekNormalizedTime?: number;
   upperBodyDesiredDurationSeconds?: number;
@@ -159,7 +163,10 @@ function resolveCharacterAnimTimeScale(
   } else if (
     state === "idle" ||
     state === "rifleIdle" ||
-    state === "rifleAimHold"
+    state === "rifleAimHold" ||
+    state === "rifleJumpStart" ||
+    state === "rifleJumpAir" ||
+    state === "rifleJumpLand"
   ) {
     baseScale = 1;
   } else if (
@@ -275,18 +282,18 @@ const EMBEDDED_GLTF_CLIP_ALIASES: Partial<Record<CharacterAnimState, string>> = 
   walkForwardRight: "W2_Walk_Aim_F_Loop_IPC",
   walkBackwardLeft: "W2_Walk_Aim_F_Loop_IPC",
   walkBackwardRight: "W2_Walk_Aim_F_Loop_IPC",
-  crouchEnter: "W2_Stand_Relaxed_Idle_v2_IPC",
-  crouchExit: "W2_Stand_Relaxed_Idle_v2_IPC",
-  crouchIdle: "W2_Stand_Relaxed_Idle_v2_IPC",
-  crouchForward: "W2_Walk_Aim_F_Loop_IPC",
-  crouchBack: "W2_Walk_Aim_F_Loop_IPC",
-  crouchLeft: "W2_Walk_Aim_F_Loop_IPC",
-  crouchRight: "W2_Walk_Aim_F_Loop_IPC",
-  rifleIdle: "W2_Stand_Relaxed_Idle_v2_IPC",
-  rifleCrouchEnter: "W2_Stand_Relaxed_Idle_v2_IPC",
-  rifleCrouchExit: "W2_Stand_Relaxed_Idle_v2_IPC",
-  rifleCrouchIdle: "W2_Stand_Relaxed_Idle_v2_IPC",
-  rifleCrouchWalk: "W2_Walk_Aim_F_Loop_IPC",
+  crouchEnter: "W2_Crouch_Idle_v2_IPC",
+  crouchExit: "W2_Crouch_Idle_v2_IPC",
+  crouchIdle: "W2_Crouch_Idle_v2_IPC",
+  crouchForward: "W2_CrouchWalk_Aim_F_Loop_IPC",
+  crouchBack: "W2_CrouchWalk_Aim_F_Loop_IPC",
+  crouchLeft: "W2_CrouchWalk_Aim_F_Loop_IPC",
+  crouchRight: "W2_CrouchWalk_Aim_F_Loop_IPC",
+  rifleIdle: "W2_Stand_Aim_Idle_v2_IPC",
+  rifleCrouchEnter: "W2_Crouch_Aim_Idle_v2_IPC",
+  rifleCrouchExit: "W2_Crouch_Aim_Idle_v2_IPC",
+  rifleCrouchIdle: "W2_Crouch_Aim_Idle_v2_IPC",
+  rifleCrouchWalk: "W2_CrouchWalk_Aim_F_Loop_IPC",
   rifleWalk: "W2_Walk_Aim_F_Loop_IPC",
   rifleWalkBack: "W2_Walk_Aim_F_Loop_IPC",
   rifleWalkLeft: "W2_Walk_Aim_F_Loop_IPC",
@@ -295,24 +302,27 @@ const EMBEDDED_GLTF_CLIP_ALIASES: Partial<Record<CharacterAnimState, string>> = 
   rifleWalkForwardRight: "W2_Walk_Aim_F_Loop_IPC",
   rifleWalkBackwardLeft: "W2_Walk_Aim_F_Loop_IPC",
   rifleWalkBackwardRight: "W2_Walk_Aim_F_Loop_IPC",
-  rifleAimHold: "W2_Stand_Relaxed_Idle_v2_IPC",
+  rifleAimHold: "W2_Stand_Aim_Idle_v2_IPC",
   rifleAimWalk: "W2_Walk_Aim_F_Loop_IPC",
   rifleAimWalkBack: "W2_Walk_Aim_F_Loop_IPC",
   rifleAimWalkLeft: "W2_Walk_Aim_F_Loop_IPC",
   rifleAimWalkRight: "W2_Walk_Aim_F_Loop_IPC",
-  rifleJog: "W2_Walk_Aim_F_Loop_IPC",
-  rifleJogBack: "W2_Walk_Aim_F_Loop_IPC",
-  rifleJogLeft: "W2_Walk_Aim_F_Loop_IPC",
-  rifleJogRight: "W2_Walk_Aim_F_Loop_IPC",
-  rifleJogForwardLeft: "W2_Walk_Aim_F_Loop_IPC",
-  rifleJogForwardRight: "W2_Walk_Aim_F_Loop_IPC",
-  rifleJogBackwardLeft: "W2_Walk_Aim_F_Loop_IPC",
-  rifleJogBackwardRight: "W2_Walk_Aim_F_Loop_IPC",
-  rifleRun: "W2_Walk_Aim_F_Loop_IPC",
-  rifleRunStart: "W2_Walk_Aim_F_Loop_IPC",
-  rifleRunStop: "W2_Walk_Aim_F_Loop_IPC",
+  rifleJog: "W2_Jog_Aim_F_Loop_IPC",
+  rifleJogBack: "W2_Jog_Aim_F_Loop_IPC",
+  rifleJogLeft: "W2_Jog_Aim_F_Loop_IPC",
+  rifleJogRight: "W2_Jog_Aim_F_Loop_IPC",
+  rifleJogForwardLeft: "W2_Jog_Aim_F_Loop_IPC",
+  rifleJogForwardRight: "W2_Jog_Aim_F_Loop_IPC",
+  rifleJogBackwardLeft: "W2_Jog_Aim_F_Loop_IPC",
+  rifleJogBackwardRight: "W2_Jog_Aim_F_Loop_IPC",
+  rifleRun: "W2_Jog_Aim_F_Loop_IPC",
+  rifleRunStart: "W2_Jog_Aim_F_Loop_IPC",
+  rifleRunStop: "W2_Jog_Aim_F_Loop_IPC",
+  rifleJumpStart: "W2_Stand_Aim_Jump_Start_IPC",
+  rifleJumpAir: "W2_Stand_Aim_Jump_Air_IPC",
+  rifleJumpLand: "W2_Stand_Aim_Jump_End_IPC",
   rifleReload: "W2_Stand_Fire_Single_IPC",
-  sprint: "W2_Walk_Aim_F_Loop_IPC",
+  sprint: "W2_Jog_Aim_F_Loop_IPC",
 };
 
 function finalizeCharacterModel(model: THREE.Group) {
@@ -580,6 +590,8 @@ function configureActionLooping(
     clipName === "rifleCrouchExit" ||
     clipName === "rifleRunStart" ||
     clipName === "rifleRunStop" ||
+    clipName === "rifleJumpStart" ||
+    clipName === "rifleJumpLand" ||
     clipName === "rifleReload"
   ) {
     action.setLoop(THREE.LoopOnce, 1);
@@ -803,6 +815,7 @@ export function useCharacterModel(
   const [ready, setReady] = useState(false);
   const [embeddedWeapon, setEmbeddedWeapon] =
     useState<CharacterEmbeddedWeaponRuntime | null>(null);
+  const clipDurationsRef = useRef<Map<string, number>>(new Map());
   const mixerRef = useRef<THREE.AnimationMixer | null>(null);
   const fullActionsRef = useRef<Map<string, THREE.AnimationAction>>(new Map());
   const lowerBodyBaseActionsRef = useRef<Map<string, THREE.AnimationAction>>(
@@ -826,6 +839,7 @@ export function useCharacterModel(
     setReady(false);
     setModel(null);
     setEmbeddedWeapon(null);
+    clipDurationsRef.current = new Map();
     fullActionsRef.current = new Map();
     lowerBodyBaseActionsRef.current = new Map();
     lowerBodyOverlayActionsRef.current = new Map();
@@ -873,26 +887,18 @@ export function useCharacterModel(
         const lowerBodyBaseActions = new Map<string, THREE.AnimationAction>();
         const lowerBodyOverlayActions = new Map<string, THREE.AnimationAction>();
         const upperBodyActions = new Map<string, THREE.AnimationAction>();
-        for (let i = 0; i < ANIM_CLIPS.length; i++) {
-          const clip = override?.animationMode === "embedded-glb"
-            ? resolveEmbeddedAnimationClip(
-              ANIM_CLIPS[i].name as CharacterAnimState,
-              preparedModel.animations,
-            )
-            : externalFbxClips[i];
-          if (!clip) continue;
-          const clipName = ANIM_CLIPS[i].name;
-          const remapped = override?.animationMode === "embedded-glb"
-            ? clip.clone()
-            : remapAnimationClip(clip, modelBoneNames).clone();
-          removeRootMotion(remapped);
-          remapped.tracks = remapped.tracks.filter((track) => {
-            const boneName = splitTrackName(track.name).nodeName;
-            return modelBoneNames.has(boneName);
-          });
+        const registerActionVariant = (
+          actionKey: string,
+          clipName: string,
+          remapped: THREE.AnimationClip,
+        ) => {
+          clipDurationsRef.current.set(actionKey, remapped.duration);
+          if (actionKey !== clipName) {
+            clipDurationsRef.current.set(clipName, remapped.duration);
+          }
           const fullAction = mixer.clipAction(remapped);
           configureActionLooping(clipName, fullAction);
-          fullActions.set(clipName, fullAction);
+          fullActions.set(actionKey, fullAction);
 
           const lowerBodyClip = cloneFilteredClip(
             remapped,
@@ -901,11 +907,11 @@ export function useCharacterModel(
           if (lowerBodyClip) {
             const lowerBodyBaseAction = mixer.clipAction(lowerBodyClip);
             configureActionLooping(clipName, lowerBodyBaseAction);
-            lowerBodyBaseActions.set(clipName, lowerBodyBaseAction);
+            lowerBodyBaseActions.set(actionKey, lowerBodyBaseAction);
 
             const lowerBodyOverlayAction = mixer.clipAction(lowerBodyClip.clone());
             configureActionLooping(clipName, lowerBodyOverlayAction);
-            lowerBodyOverlayActions.set(clipName, lowerBodyOverlayAction);
+            lowerBodyOverlayActions.set(actionKey, lowerBodyOverlayAction);
           }
 
           const upperBodyClip = cloneFilteredClip(
@@ -915,7 +921,61 @@ export function useCharacterModel(
           if (upperBodyClip) {
             const upperBodyAction = mixer.clipAction(upperBodyClip);
             configureActionLooping(clipName, upperBodyAction);
-            upperBodyActions.set(clipName, upperBodyAction);
+            upperBodyActions.set(actionKey, upperBodyAction);
+          }
+        };
+
+        for (let i = 0; i < ANIM_CLIPS.length; i++) {
+          const clipName = ANIM_CLIPS[i].name;
+          const clip = override?.animationMode === "embedded-glb"
+            ? resolveEmbeddedAnimationClip(
+              clipName as CharacterAnimState,
+              preparedModel.animations,
+            )
+            : externalFbxClips[i];
+          if (!clip) continue;
+          const remapped = override?.animationMode === "embedded-glb"
+            ? clip.clone()
+            : remapAnimationClip(clip, modelBoneNames).clone();
+          removeRootMotion(remapped);
+          remapped.tracks = remapped.tracks.filter((track) => {
+            const boneName = splitTrackName(track.name).nodeName;
+            return modelBoneNames.has(boneName);
+          });
+          registerActionVariant(clipName, clipName, remapped);
+        }
+
+        if (override?.animationMode === "embedded-glb") {
+          const embeddedOnlyStates: CharacterAnimState[] = [
+            "rifleJumpStart",
+            "rifleJumpAir",
+            "rifleJumpLand",
+          ];
+          for (const state of embeddedOnlyStates) {
+            const clip = resolveEmbeddedAnimationClip(state, preparedModel.animations);
+            if (!clip || fullActions.has(state)) {
+              continue;
+            }
+            const remapped = clip.clone();
+            removeRootMotion(remapped);
+            remapped.tracks = remapped.tracks.filter((track) => {
+              const boneName = splitTrackName(track.name).nodeName;
+              return modelBoneNames.has(boneName);
+            });
+            registerActionVariant(state, state, remapped);
+          }
+
+          for (const clip of preparedModel.animations) {
+            if (fullActions.has(clip.name)) {
+              continue;
+            }
+            const remapped = clip.clone();
+            removeRootMotion(remapped);
+            remapped.tracks = remapped.tracks.filter((track) => {
+              const boneName = splitTrackName(track.name).nodeName;
+              return modelBoneNames.has(boneName);
+            });
+            registerActionVariant(clip.name, clip.name, remapped);
           }
         }
         fullActionsRef.current = fullActions;
@@ -969,6 +1029,7 @@ export function useCharacterModel(
       target: THREE.AnimationAction | null,
       targetState: CharacterAnimState | null,
       layerOptions: {
+        clipNameOverride?: string | null;
         loopMode?: CharacterAnimLoopMode;
         desiredDurationSeconds?: number;
         fadeDurationSeconds: number;
@@ -1054,13 +1115,15 @@ export function useCharacterModel(
     const lowerOverlayState = options?.lowerBodyState ?? null;
     const upperOverlayState = options?.upperBodyState ?? null;
     const useLowerBodyBase = upperOverlayState && !lowerOverlayState;
+    const baseActionKey = options?.baseClipNameOverride ?? state;
     const baseAction = useLowerBodyBase
-      ? lowerBodyBaseActionsRef.current.get(state) ??
-        fullActionsRef.current.get(state) ??
+      ? lowerBodyBaseActionsRef.current.get(baseActionKey) ??
+        fullActionsRef.current.get(baseActionKey) ??
         null
-      : fullActionsRef.current.get(state) ?? null;
+      : fullActionsRef.current.get(baseActionKey) ?? null;
 
     playLayer(currentBaseActionRef, currentBaseStateRef, baseAction, state, {
+      clipNameOverride: options?.baseClipNameOverride,
       loopMode: options?.baseLoopMode,
       desiredDurationSeconds: options?.desiredDurationSeconds,
       fadeDurationSeconds: fadeDuration,
@@ -1072,10 +1135,13 @@ export function useCharacterModel(
       currentLowerBodyActionRef,
       currentLowerBodyStateRef,
       lowerOverlayState
-        ? lowerBodyOverlayActionsRef.current.get(lowerOverlayState) ?? null
+        ? lowerBodyOverlayActionsRef.current.get(
+          options?.lowerBodyClipNameOverride ?? lowerOverlayState,
+        ) ?? null
         : null,
       lowerOverlayState,
       {
+        clipNameOverride: options?.lowerBodyClipNameOverride,
         loopMode: options?.lowerBodyLoopMode,
         desiredDurationSeconds: options?.lowerBodyDesiredDurationSeconds,
         fadeDurationSeconds: Math.max(
@@ -1091,10 +1157,13 @@ export function useCharacterModel(
       currentUpperBodyActionRef,
       currentUpperBodyStateRef,
       upperOverlayState
-        ? upperBodyActionsRef.current.get(upperOverlayState) ?? null
+        ? upperBodyActionsRef.current.get(
+          options?.upperBodyClipNameOverride ?? upperOverlayState,
+        ) ?? null
         : null,
       upperOverlayState,
       {
+        clipNameOverride: options?.upperBodyClipNameOverride,
         loopMode: options?.upperBodyLoopMode,
         desiredDurationSeconds: options?.upperBodyDesiredDurationSeconds,
         fadeDurationSeconds: Math.max(
@@ -1137,6 +1206,12 @@ export function useCharacterModel(
     [],
   );
 
+  const getClipDuration = useCallback(
+    (clipName: string): number | null =>
+      clipDurationsRef.current.get(clipName) ?? null,
+    [],
+  );
+
   return {
     model,
     ready,
@@ -1144,5 +1219,6 @@ export function useCharacterModel(
     setAnimState,
     getFootstepSample,
     getCurrentAnimState,
+    getClipDuration,
   };
 }

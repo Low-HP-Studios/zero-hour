@@ -55,7 +55,7 @@ function LobbyModel({ characterDef }: LobbyModelProps) {
       loadedModel = prepared.model;
       const idleClip = characterDef.animationMode === "embedded-glb"
         ? prepared.animations.find((clip) =>
-          clip.name === "W2_Stand_Relaxed_Idle_v2_IPC"
+          clip.name === "W2_Stand_Aim_Idle_v2_IPC"
         ) ?? null
         : null;
       if (idleClip) {

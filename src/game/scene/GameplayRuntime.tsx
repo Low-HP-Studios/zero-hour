@@ -189,6 +189,9 @@ const Y_AXIS = new THREE.Vector3(0, 1, 0);
 const PRACTICE_AMMO_RESPAWN_MS = 5_000;
 const PRACTICE_AMMO_RIFLE_REFILL = 240;
 const PRACTICE_AMMO_SNIPER_REFILL = 120;
+const FALLBACK_JUMP_START_DURATION_MS = 220;
+const FALLBACK_JUMP_LAND_DURATION_MS = 260;
+const STANDING_LANDING_SPEED_THRESHOLD = 0.75;
 
 // ADS weapon positioning: camera-local offsets so the sight aligns with screen center.
 // x = right, y = up, z = forward (in camera space). Will be tuned iteratively.
@@ -260,6 +263,7 @@ function resolveCrouchTransitionTargetPose(
 type RifleRunVisualState = "idle" | "start" | "running" | "stop";
 type UnarmedWalkVisualState = "idle" | "start" | "moving" | "stop";
 type CrouchTransitionState = "idle" | "enter" | "exit";
+type JumpVisualState = "none" | "start" | "air" | "land";
 type CharacterVisibilityCategory = "glove" | "shoe" | "hidden";
 type CharacterVisibilityMaterialEntry = {
   material: THREE.Material;
@@ -419,6 +423,31 @@ function filterPracticeGroundSpawns(
     spawn.itemId !== "weapon_sniper" &&
     spawn.itemId !== "ammo_sniper"
   );
+}
+
+function resolveEmbeddedJumpLandingClip(
+  planarSpeed: number,
+  movementTier: "walk" | "jog" | "run",
+): string {
+  if (planarSpeed <= STANDING_LANDING_SPEED_THRESHOLD) {
+    return "W2_Stand_Aim_Jump_End_IPC";
+  }
+  if (movementTier === "walk") {
+    return "W2_Walk_Aim_F_Jump_RU_End_IPC";
+  }
+  return "W2_Jog_Aim_F_Jump_RU_End_IPC";
+}
+
+function resolveClipDurationMs(
+  getClipDuration: (clipName: string) => number | null,
+  clipName: string,
+  fallbackMs: number,
+): number {
+  const durationSeconds = getClipDuration(clipName);
+  if (!(durationSeconds && durationSeconds > 0)) {
+    return fallbackMs;
+  }
+  return Math.max(1, Math.round(durationSeconds * 1000));
 }
 
 function resolveRifleWalkState(
@@ -1218,6 +1247,7 @@ export const GameplayRuntime = forwardRef<
     embeddedWeapon,
     setAnimState: setCharacterAnim,
     getFootstepSample,
+    getClipDuration,
   } = useCharacterModel(characterOverride);
   const rawCharacterSandboxMode =
     isEmbeddedGlbCharacterOverride(characterOverride);
@@ -1320,6 +1350,9 @@ export const GameplayRuntime = forwardRef<
   const skipDirectionChangeSnapRef = useRef(false);
   const unarmedWalkStateRef = useRef<UnarmedWalkVisualState>("idle");
   const unarmedWalkStateUntilRef = useRef(0);
+  const jumpVisualStateRef = useRef<JumpVisualState>("none");
+  const jumpVisualStateUntilRef = useRef(0);
+  const jumpLandingClipNameRef = useRef<string | null>(null);
   const lastCharacterAnimStateRef = useRef<CharacterAnimState>("idle");
 
   const worldRiflePickupRef = useRef<THREE.Group>(null);
@@ -2124,6 +2157,9 @@ export const GameplayRuntime = forwardRef<
     skipDirectionChangeSnapRef.current = false;
     unarmedWalkStateRef.current = "idle";
     unarmedWalkStateUntilRef.current = 0;
+    jumpVisualStateRef.current = "none";
+    jumpVisualStateUntilRef.current = 0;
+    jumpLandingClipNameRef.current = null;
     footstepPhaseRef.current = {
       cycle: 0,
       lastNormalizedTime: 0,
@@ -2701,6 +2737,71 @@ export const GameplayRuntime = forwardRef<
     crouchTransitionUseRifleRef.current = crouchTransitionUseRifle;
     crouchTransitionPoseFromRef.current = crouchTransitionPoseFrom;
 
+    if (singleWeaponMode && presentation.phase === "playing") {
+      const verticalVelocity = controller.getVerticalVelocity();
+      const previousJumpVisualState = jumpVisualStateRef.current;
+
+      if (!grounded && previousGrounded) {
+        jumpVisualStateRef.current = "start";
+        jumpVisualStateUntilRef.current = nowMs + resolveClipDurationMs(
+          getClipDuration,
+          "W2_Stand_Aim_Jump_Start_IPC",
+          FALLBACK_JUMP_START_DURATION_MS,
+        );
+        jumpLandingClipNameRef.current = null;
+      } else if (!grounded) {
+        if (
+          previousJumpVisualState === "start" &&
+          (
+            nowMs >= jumpVisualStateUntilRef.current ||
+            verticalVelocity <= 0
+          )
+        ) {
+          jumpVisualStateRef.current = "air";
+          jumpVisualStateUntilRef.current = 0;
+        } else if (
+          previousJumpVisualState !== "start" &&
+          previousJumpVisualState !== "air"
+        ) {
+          jumpVisualStateRef.current = "air";
+          jumpVisualStateUntilRef.current = 0;
+        }
+      } else if (justLanded) {
+        const landingClipName = resolveEmbeddedJumpLandingClip(
+          planarSpeed,
+          movementTier,
+        );
+        jumpVisualStateRef.current = "land";
+        jumpLandingClipNameRef.current = landingClipName;
+        jumpVisualStateUntilRef.current = nowMs + resolveClipDurationMs(
+          getClipDuration,
+          landingClipName,
+          FALLBACK_JUMP_LAND_DURATION_MS,
+        );
+      } else if (
+        previousJumpVisualState === "land" &&
+        nowMs >= jumpVisualStateUntilRef.current
+      ) {
+        jumpVisualStateRef.current = "none";
+        jumpVisualStateUntilRef.current = 0;
+        jumpLandingClipNameRef.current = null;
+      } else if (
+        grounded &&
+        (
+          previousJumpVisualState === "start" ||
+          previousJumpVisualState === "air"
+        )
+      ) {
+        jumpVisualStateRef.current = "none";
+        jumpVisualStateUntilRef.current = 0;
+        jumpLandingClipNameRef.current = null;
+      }
+    } else if (jumpVisualStateRef.current !== "none") {
+      jumpVisualStateRef.current = "none";
+      jumpVisualStateUntilRef.current = 0;
+      jumpLandingClipNameRef.current = null;
+    }
+
     const activeQuickSlot = inventoryRef.current.getActiveQuickSlot();
     const weaponControlEnabled = activeQuickSlot === "primary" ||
       activeQuickSlot === "secondary";
@@ -2944,6 +3045,9 @@ export const GameplayRuntime = forwardRef<
       : "idle";
     let lowerBodyOverlayState: CharacterAnimState | null = null;
     let upperBodyOverlayState: CharacterAnimState | null = null;
+    let baseClipNameOverride: string | undefined;
+    let baseLoopMode: "once" | "repeat" | undefined;
+    let upperBodyClipNameOverride: string | undefined;
     if (crouchTransitionState === "enter") {
       nextAnimState = crouchAimCompositeActive
         ? "rifleAimHold"
@@ -3052,6 +3156,28 @@ export const GameplayRuntime = forwardRef<
       nextAnimState = weaponEquipped ? "rifleAimHold" : "idle";
     }
 
+    const jumpVisualState = jumpVisualStateRef.current;
+    const jumpAnimationActive = singleWeaponMode &&
+      presentation.phase === "playing" &&
+      jumpVisualState !== "none";
+    if (jumpAnimationActive) {
+      lowerBodyOverlayState = null;
+      upperBodyOverlayState = null;
+      upperBodyClipNameOverride = undefined;
+      if (jumpVisualState === "start") {
+        nextAnimState = "rifleJumpStart";
+        baseLoopMode = "once";
+      } else if (jumpVisualState === "air") {
+        nextAnimState = "rifleJumpAir";
+        baseLoopMode = "repeat";
+      } else {
+        nextAnimState = "rifleJumpLand";
+        baseClipNameOverride = jumpLandingClipNameRef.current ??
+          "W2_Stand_Aim_Jump_End_IPC";
+        baseLoopMode = "once";
+      }
+    }
+
     // Rifle ready-pose: blend rifleAimHold upper body during standing rifle locomotion
     // so the weapon is raised to a ready position (like PUBG/Apex).
     let rifleReadyPoseActive = false;
@@ -3059,6 +3185,7 @@ export const GameplayRuntime = forwardRef<
     //           crouch (has own overlay), aim-walk (already raised).
     if (
       isWeaponHoldEquipped &&
+      !jumpAnimationActive &&
       !firePrepVisual &&
       !crouched &&
       crouchTransitionState === "idle" &&
@@ -3075,17 +3202,22 @@ export const GameplayRuntime = forwardRef<
       }
     }
 
-    const embeddedFireLoopActive = singleWeaponMode &&
+    const embeddedFireLoopActive = !jumpAnimationActive &&
+      singleWeaponMode &&
       isWeaponHoldEquipped &&
       fireAnimationIntent &&
       !reloadVisible &&
       presentation.phase === "playing";
     if (embeddedFireLoopActive) {
       upperBodyOverlayState = "rifleReload";
+      upperBodyClipNameOverride = crouched || crouchTransitionState !== "idle"
+        ? "W2_Crouch_Fire_Single_IPC"
+        : "W2_Stand_Fire_Single_IPC";
       rifleReadyPoseActive = false;
     }
 
-    if (reloadVisible) {
+    const reloadAnimationActive = reloadVisible && !jumpAnimationActive;
+    if (reloadAnimationActive) {
       if (lowerBodyOverlayState) {
         nextAnimState = lowerBodyOverlayState;
         lowerBodyOverlayState = null;
@@ -3212,6 +3344,8 @@ export const GameplayRuntime = forwardRef<
     const audioAnimState = lowerBodyOverlayState ?? nextAnimState;
 
     setCharacterAnim(nextAnimState, {
+      baseClipNameOverride,
+      baseLoopMode,
       locomotionScale: characterLocomotionScale,
       seekNormalizedTime: crouchTransitionSeekNormalized,
       desiredDurationSeconds:
@@ -3232,19 +3366,20 @@ export const GameplayRuntime = forwardRef<
         ? CROUCH_ENTER_BLEND_SECONDS
         : 0.12,
       upperBodyState: upperBodyOverlayState,
-      upperBodyLoopMode: reloadVisible
+      upperBodyClipNameOverride,
+      upperBodyLoopMode: reloadAnimationActive
         ? "once"
         : embeddedFireLoopActive
         ? "repeat"
         : undefined,
       upperBodyLocomotionScale: characterLocomotionScale,
-      upperBodySeekNormalizedTime: reloadVisible
+      upperBodySeekNormalizedTime: reloadAnimationActive
         ? weaponReload.progress
         : undefined,
-      upperBodyDesiredDurationSeconds: reloadVisible
+      upperBodyDesiredDurationSeconds: reloadAnimationActive
         ? reloadDurationSeconds
         : undefined,
-      upperBodyFadeDurationSeconds: reloadVisible
+      upperBodyFadeDurationSeconds: reloadAnimationActive
         ? 0.08
         : embeddedFireLoopActive
         ? 0.06

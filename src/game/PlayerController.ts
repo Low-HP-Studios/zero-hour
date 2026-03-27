@@ -88,6 +88,7 @@ export type PlayerControllerApi = {
   getHeadYawOffset: () => number;
   getPitch: () => number;
   getLeanValue: () => number;
+  getVerticalVelocity: () => number;
   getPlanarVelocity: () => THREE.Vector2;
   getPlanarSpeed: () => number;
   getMoveInput: () => THREE.Vector2;
@@ -1772,6 +1773,7 @@ export function usePlayerController({
     getHeadYawOffset: () => headYawOffsetRef.current,
     getPitch: () => pitchRef.current + recoilPitchRef.current,
     getLeanValue: () => leanLerpRef.current,
+    getVerticalVelocity: () => verticalVelocityRef.current,
     getPlanarVelocity: () => velocityRef.current,
     getPlanarSpeed: () => planarSpeedRef.current,
     getMoveInput: () => moveInputRef.current,

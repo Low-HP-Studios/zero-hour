@@ -467,6 +467,9 @@ export type CharacterAnimState =
   | 'rifleRun'
   | 'rifleRunStart'
   | 'rifleRunStop'
+  | 'rifleJumpStart'
+  | 'rifleJumpAir'
+  | 'rifleJumpLand'
   | 'rifleReload'
   | 'sprint';
 
