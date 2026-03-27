@@ -15,7 +15,7 @@ import {
 import type { GameSettings, HudOverlayToggles } from "../game/types";
 import {
   type BindingKey,
-  type PauseMenuTab,
+  type SettingsTabId,
   PIXEL_RATIO_OPTIONS,
   BINDING_ROWS,
   loadPersistedSettings,
@@ -41,8 +41,8 @@ const NAV_ITEMS: NavItem[] = [
   { id: "store", label: "Store" },
 ];
 
-const SETTINGS_TABS: Array<{ id: PauseMenuTab; label: string }> = [
-  { id: "gameplay", label: "Gameplay" },
+const SETTINGS_TABS: Array<{ id: SettingsTabId; label: string }> = [
+  { id: "sensitivity", label: "Sensitivity" },
   { id: "audio", label: "Audio" },
   { id: "controls", label: "Controls" },
   { id: "graphics", label: "Graphics" },
@@ -105,7 +105,7 @@ function ArrowIcon() {
 export function MainMenu({ onStartGame }: MainMenuProps) {
   const [activeTab, setActiveTab] = useState<LobbyTab>("play");
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<PauseMenuTab>("gameplay");
+  const [settingsTab, setSettingsTab] = useState<SettingsTabId>("sensitivity");
   const [bindingCapture, setBindingCapture] = useState<BindingKey | null>(null);
 
   const persisted = useMemo(loadPersistedSettings, []);
@@ -418,7 +418,7 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
                 </div>
               </aside>
               <section className="lobby-settings-content">
-                {settingsTab === "gameplay" && (
+                {settingsTab === "sensitivity" && (
                   <div className="menu-sections">
                     <MenuSection title="Look Sensitivity">
                       <RangeField

@@ -2,6 +2,7 @@ import { type AudioVolumeSettings, DEFAULT_AUDIO_VOLUMES } from "../Audio";
 import {
   DEFAULT_PRACTICE_MAP_ID,
   DEFAULT_AIM_SENSITIVITY_SETTINGS,
+  DEFAULT_CONTROLLER_BINDINGS,
   DEFAULT_CONTROLLER_SETTINGS,
   DEFAULT_CROUCH_MODE,
   DEFAULT_CONTROL_BINDINGS,
@@ -46,6 +47,26 @@ function cloneDefaultCrosshairSettings() {
   };
 }
 
+function cloneDefaultControllerBindings() {
+  return { ...DEFAULT_CONTROLLER_BINDINGS };
+}
+
+const LEGACY_STICK_CLICK_CONTROLLER_BINDINGS = {
+  fire: 7,
+  ads: 6,
+  jump: 0,
+  crouch: 1,
+  pickup: 2,
+  reload: 3,
+  inventory: 8,
+  pause: 9,
+  sprint: 10,
+  toggleView: 11,
+  drop: 13,
+  equipRifle: 14,
+  equipSniper: 15,
+} as const;
+
 const CROSSHAIR_COLORS: CrosshairColor[] = [
   "white",
   "green",
@@ -64,6 +85,7 @@ export const DEFAULT_GAME_SETTINGS: GameSettings = {
   showR3fPerf: false,
   sensitivity: { ...DEFAULT_AIM_SENSITIVITY_SETTINGS },
   controller: { ...DEFAULT_CONTROLLER_SETTINGS },
+  controllerBindings: cloneDefaultControllerBindings(),
   keybinds: { ...DEFAULT_CONTROL_BINDINGS },
   crouchMode: DEFAULT_CROUCH_MODE,
   inventoryOpenMode: DEFAULT_INVENTORY_OPEN_MODE,
@@ -94,6 +116,7 @@ export function createDefaultPersistedSettings(): PersistedSettings {
       ...DEFAULT_GAME_SETTINGS,
       sensitivity: { ...DEFAULT_AIM_SENSITIVITY_SETTINGS },
       controller: { ...DEFAULT_CONTROLLER_SETTINGS },
+      controllerBindings: cloneDefaultControllerBindings(),
       keybinds: { ...DEFAULT_CONTROL_BINDINGS },
       weaponAlignment: { ...DEFAULT_WEAPON_ALIGNMENT },
       crosshair: cloneDefaultCrosshairSettings(),
@@ -153,6 +176,13 @@ function readClampedNumber(
     return fallback;
   }
   return Math.min(max, Math.max(min, value));
+}
+
+function readGamepadButtonIndex(value: unknown, fallback: number) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.min(15, Math.max(0, Math.round(value)));
 }
 
 function migratePercent(value: unknown): unknown {
@@ -234,6 +264,9 @@ export function parsePersistedSettings(value: unknown): PersistedSettings {
     ? settings.sensitivity
     : {};
   const controller = isRecord(settings.controller) ? settings.controller : {};
+  const controllerBindings = isRecord(settings.controllerBindings)
+    ? settings.controllerBindings
+    : {};
   const keybinds = isRecord(settings.keybinds) ? settings.keybinds : {};
   const weaponAlignment = isRecord(settings.weaponAlignment)
     ? settings.weaponAlignment
@@ -278,6 +311,93 @@ export function parsePersistedSettings(value: unknown): PersistedSettings {
       parsedResetBinding === "KeyR"
     ? defaults.settings.keybinds.reset
     : parsedResetBinding;
+
+  const hasPeekLeftBinding = Object.prototype.hasOwnProperty.call(
+    controllerBindings,
+    "peekLeft",
+  );
+  const hasPeekRightBinding = Object.prototype.hasOwnProperty.call(
+    controllerBindings,
+    "peekRight",
+  );
+  const parsedControllerBindings = {
+    fire: readGamepadButtonIndex(
+      controllerBindings.fire,
+      defaults.settings.controllerBindings.fire,
+    ),
+    ads: readGamepadButtonIndex(
+      controllerBindings.ads,
+      defaults.settings.controllerBindings.ads,
+    ),
+    jump: readGamepadButtonIndex(
+      controllerBindings.jump,
+      defaults.settings.controllerBindings.jump,
+    ),
+    crouch: readGamepadButtonIndex(
+      controllerBindings.crouch,
+      defaults.settings.controllerBindings.crouch,
+    ),
+    peekLeft: readGamepadButtonIndex(
+      controllerBindings.peekLeft,
+      defaults.settings.controllerBindings.peekLeft,
+    ),
+    peekRight: readGamepadButtonIndex(
+      controllerBindings.peekRight,
+      defaults.settings.controllerBindings.peekRight,
+    ),
+    pickup: readGamepadButtonIndex(
+      controllerBindings.pickup,
+      defaults.settings.controllerBindings.pickup,
+    ),
+    reload: readGamepadButtonIndex(
+      controllerBindings.reload,
+      defaults.settings.controllerBindings.reload,
+    ),
+    inventory: readGamepadButtonIndex(
+      controllerBindings.inventory,
+      defaults.settings.controllerBindings.inventory,
+    ),
+    pause: readGamepadButtonIndex(
+      controllerBindings.pause,
+      defaults.settings.controllerBindings.pause,
+    ),
+    sprint: readGamepadButtonIndex(
+      controllerBindings.sprint,
+      defaults.settings.controllerBindings.sprint,
+    ),
+    toggleView: readGamepadButtonIndex(
+      controllerBindings.toggleView,
+      defaults.settings.controllerBindings.toggleView,
+    ),
+    drop: readGamepadButtonIndex(
+      controllerBindings.drop,
+      defaults.settings.controllerBindings.drop,
+    ),
+    equipRifle: readGamepadButtonIndex(
+      controllerBindings.equipRifle,
+      defaults.settings.controllerBindings.equipRifle,
+    ),
+    equipSniper: readGamepadButtonIndex(
+      controllerBindings.equipSniper,
+      defaults.settings.controllerBindings.equipSniper,
+    ),
+  };
+  const isLegacyStickClickLayout = (
+    Object.entries(LEGACY_STICK_CLICK_CONTROLLER_BINDINGS) as Array<
+      [keyof typeof LEGACY_STICK_CLICK_CONTROLLER_BINDINGS, number]
+    >
+  ).every(([key, value]) => parsedControllerBindings[key] === value);
+  if (
+    !hasPeekLeftBinding &&
+    !hasPeekRightBinding &&
+    isLegacyStickClickLayout
+  ) {
+    parsedControllerBindings.sprint = DEFAULT_CONTROLLER_BINDINGS.sprint;
+    parsedControllerBindings.toggleView =
+      DEFAULT_CONTROLLER_BINDINGS.toggleView;
+    parsedControllerBindings.peekLeft = DEFAULT_CONTROLLER_BINDINGS.peekLeft;
+    parsedControllerBindings.peekRight = DEFAULT_CONTROLLER_BINDINGS.peekRight;
+  }
 
   return {
     settings: {
@@ -330,6 +450,10 @@ export function parsePersistedSettings(value: unknown): PersistedSettings {
           controller.enabled,
           defaults.settings.controller.enabled,
         ),
+        vibrationEnabled: readBoolean(
+          controller.vibrationEnabled,
+          defaults.settings.controller.vibrationEnabled,
+        ),
         moveDeadzone: readClampedNumber(
           controller.moveDeadzone,
           0,
@@ -367,6 +491,7 @@ export function parsePersistedSettings(value: unknown): PersistedSettings {
           defaults.settings.controller.invertY,
         ),
       },
+      controllerBindings: parsedControllerBindings,
       keybinds: {
         moveForward: readString(
           keybinds.moveForward,

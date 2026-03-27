@@ -1,4 +1,8 @@
 import { useEffect, useRef, type RefObject } from "react";
+import {
+  controllerCursorActive,
+  controllerCursorInputSuspended,
+} from "./ControllerCursor";
 import { findCompatibleGamepad } from "./GamepadManager";
 
 const UI_AXIS_THRESHOLD = 0.55;
@@ -249,16 +253,6 @@ export function useControllerUiNavigation({
         return;
       }
 
-      const focusable = getFocusableElements(root);
-      if (
-        !autoFocusedRef.current &&
-        focusable.length > 0 &&
-        getActiveElementWithin(root) === null
-      ) {
-        focusElement(resolveDefaultFocus(root));
-        autoFocusedRef.current = true;
-      }
-
       const gamepad = findCompatibleGamepad();
       if (!gamepad) {
         directionStateRef.current = { ...EMPTY_DIRECTION_STATE };
@@ -267,6 +261,27 @@ export function useControllerUiNavigation({
         backHeldRef.current = false;
         frameId = window.requestAnimationFrame(tick);
         return;
+      }
+
+      if (controllerCursorActive || controllerCursorInputSuspended) {
+        directionStateRef.current = { ...EMPTY_DIRECTION_STATE };
+        directionRepeatRef.current = { ...EMPTY_DIRECTION_REPEAT };
+        confirmHeldRef.current = false;
+        backHeldRef.current = false;
+        autoFocusedRef.current = false;
+
+        frameId = window.requestAnimationFrame(tick);
+        return;
+      }
+
+      const focusable = getFocusableElements(root);
+      if (
+        !autoFocusedRef.current &&
+        focusable.length > 0 &&
+        getActiveElementWithin(root) === null
+      ) {
+        focusElement(resolveDefaultFocus(root));
+        autoFocusedRef.current = true;
       }
 
       const axesX = gamepad.axes[0] ?? 0;
