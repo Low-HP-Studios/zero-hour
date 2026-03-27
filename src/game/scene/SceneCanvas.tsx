@@ -526,6 +526,7 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
         gameplayInputEnabled={gameplayInputEnabled}
         sensitivity={settings.sensitivity}
         controllerSettings={settings.controller}
+        controllerBindings={settings.controllerBindings}
         keybinds={settings.keybinds}
         crouchMode={settings.crouchMode}
         inventoryOpenMode={settings.inventoryOpenMode}

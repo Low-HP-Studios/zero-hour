@@ -1,4 +1,9 @@
-import type { ControllerSettings } from "./types";
+import {
+  DEFAULT_CONTROLLER_BINDINGS,
+  type ControllerBindingKey,
+  type ControllerBindings,
+  type ControllerSettings,
+} from "./types";
 
 const STANDARD_GAMEPAD_MAPPING = "standard";
 const LOOK_RESPONSE_EXPONENT = 1.6;
@@ -6,23 +11,7 @@ const TRIGGER_PRESS_THRESHOLD = 0.2;
 const MIN_FALLBACK_AXES = 4;
 const MIN_FALLBACK_BUTTONS = 16;
 
-const BUTTON_INDEX = {
-  jump: 0,
-  crouch: 1,
-  pickup: 2,
-  reload: 3,
-  inventory: 8,
-  pause: 9,
-  sprint: 10,
-  toggleView: 11,
-  drop: 13,
-  equipRifle: 14,
-  equipSniper: 15,
-  ads: 6,
-  fire: 7,
-} as const;
-
-type ButtonState = Record<keyof typeof BUTTON_INDEX, boolean>;
+type ButtonState = Record<ControllerBindingKey, boolean>;
 
 export type GamepadFrameState = {
   connected: boolean;
@@ -36,6 +25,8 @@ export type GamepadFrameState = {
   adsHeld: boolean;
   sprintHeld: boolean;
   crouchHeld: boolean;
+  peekLeftHeld: boolean;
+  peekRightHeld: boolean;
   inventoryHeld: boolean;
   jumpPressed: boolean;
   sprintPressed: boolean;
@@ -53,6 +44,8 @@ export type GamepadFrameState = {
 const EMPTY_BUTTON_STATE: ButtonState = {
   jump: false,
   crouch: false,
+  peekLeft: false,
+  peekRight: false,
   reload: false,
   inventory: false,
   pause: false,
@@ -78,6 +71,8 @@ const DISCONNECTED_GAMEPAD_STATE: GamepadFrameState = {
   adsHeld: false,
   sprintHeld: false,
   crouchHeld: false,
+  peekLeftHeld: false,
+  peekRightHeld: false,
   inventoryHeld: false,
   jumpPressed: false,
   sprintPressed: false,
@@ -157,28 +152,36 @@ function isButtonDown(
   return Boolean(button && (button.pressed || button.value >= threshold));
 }
 
-function readButtonState(gamepad: Gamepad): ButtonState {
+function readButtonState(
+  gamepad: Gamepad,
+  bindings: ControllerBindings,
+): ButtonState {
   return {
-    jump: isButtonDown(gamepad, BUTTON_INDEX.jump),
-    crouch: isButtonDown(gamepad, BUTTON_INDEX.crouch),
-    reload: isButtonDown(gamepad, BUTTON_INDEX.reload),
-    inventory: isButtonDown(gamepad, BUTTON_INDEX.inventory),
-    pause: isButtonDown(gamepad, BUTTON_INDEX.pause),
-    sprint: isButtonDown(gamepad, BUTTON_INDEX.sprint),
-    toggleView: isButtonDown(gamepad, BUTTON_INDEX.toggleView),
-    pickup: isButtonDown(gamepad, BUTTON_INDEX.pickup),
-    drop: isButtonDown(gamepad, BUTTON_INDEX.drop),
-    equipRifle: isButtonDown(gamepad, BUTTON_INDEX.equipRifle),
-    equipSniper: isButtonDown(gamepad, BUTTON_INDEX.equipSniper),
-    ads: isButtonDown(gamepad, BUTTON_INDEX.ads, TRIGGER_PRESS_THRESHOLD),
-    fire: isButtonDown(gamepad, BUTTON_INDEX.fire, TRIGGER_PRESS_THRESHOLD),
+    jump: isButtonDown(gamepad, bindings.jump),
+    crouch: isButtonDown(gamepad, bindings.crouch),
+    peekLeft: isButtonDown(gamepad, bindings.peekLeft),
+    peekRight: isButtonDown(gamepad, bindings.peekRight),
+    reload: isButtonDown(gamepad, bindings.reload),
+    inventory: isButtonDown(gamepad, bindings.inventory),
+    pause: isButtonDown(gamepad, bindings.pause),
+    sprint: isButtonDown(gamepad, bindings.sprint),
+    toggleView: isButtonDown(gamepad, bindings.toggleView),
+    pickup: isButtonDown(gamepad, bindings.pickup),
+    drop: isButtonDown(gamepad, bindings.drop),
+    equipRifle: isButtonDown(gamepad, bindings.equipRifle),
+    equipSniper: isButtonDown(gamepad, bindings.equipSniper),
+    ads: isButtonDown(gamepad, bindings.ads, TRIGGER_PRESS_THRESHOLD),
+    fire: isButtonDown(gamepad, bindings.fire, TRIGGER_PRESS_THRESHOLD),
   };
 }
 
 export class GamepadManager {
   private previousButtons: ButtonState = { ...EMPTY_BUTTON_STATE };
 
-  poll(settings: ControllerSettings): GamepadFrameState {
+  poll(
+    settings: ControllerSettings,
+    bindings: ControllerBindings = DEFAULT_CONTROLLER_BINDINGS,
+  ): GamepadFrameState {
     if (!settings.enabled) {
       this.previousButtons = { ...EMPTY_BUTTON_STATE };
       return DISCONNECTED_GAMEPAD_STATE;
@@ -190,7 +193,7 @@ export class GamepadManager {
       return DISCONNECTED_GAMEPAD_STATE;
     }
 
-    const buttonState = readButtonState(gamepad);
+    const buttonState = readButtonState(gamepad, bindings);
     const moveX = normalizeStickAxis(gamepad.axes[0] ?? 0, settings.moveDeadzone);
     const invertMoveY =
       hasInvertedMoveYAxisQuirk(gamepad) !== settings.invertMoveY;
@@ -224,6 +227,8 @@ export class GamepadManager {
       adsHeld: buttonState.ads,
       sprintHeld: buttonState.sprint,
       crouchHeld: buttonState.crouch,
+      peekLeftHeld: buttonState.peekLeft,
+      peekRightHeld: buttonState.peekRight,
       inventoryHeld: buttonState.inventory,
       jumpPressed: buttonState.jump && !this.previousButtons.jump,
       sprintPressed: buttonState.sprint && !this.previousButtons.sprint,

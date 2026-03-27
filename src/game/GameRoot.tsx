@@ -11,8 +11,10 @@ import { toast } from "sonner";
 import { sharedAudioManager, type AudioVolumeSettings } from "./Audio";
 import { preloadPracticeMapAssets } from "./boot-assets";
 import { getCharacterById } from "./characters";
-import { ControllerSettingsSection } from "./ControllerSettingsSection";
+import { ControllerCursor } from "./ControllerCursor";
 import { ExperienceMenuOverlay } from "./ExperienceMenuOverlay";
+import { playControllerRumble } from "./GamepadHaptics";
+import { findCompatibleGamepad } from "./GamepadManager";
 import { MinimalStatsBar } from "./hud/MinimalStatsBar";
 import { PubgHud } from "./hud/PubgHud";
 import {
@@ -24,7 +26,6 @@ import {
 } from "./scene/SceneCanvas";
 import {
   MenuSection,
-  MetricCard,
   SwitchRow,
   RangeField,
   VolumeSlider,
@@ -52,21 +53,24 @@ import {
 } from "./types";
 import {
   getPracticeMapById,
-  PRACTICE_MAP_OPTIONS,
 } from "./scene/practice-maps";
 import { LobbyMusicController } from "./LobbyMusicController";
 import {
   type BindingKey,
-  type PauseMenuTab,
-  STRESS_STEPS,
+  type SettingsTabId,
   PIXEL_RATIO_OPTIONS,
   MENU_TABS,
   BINDING_ROWS,
-  OVERLAY_ROWS,
+  CONTROLLER_BINDING_GROUPS,
+  formatControllerButtonIndex,
   loadPersistedSettings,
   parsePersistedSettings,
   savePersistedSettings,
 } from "./settings";
+import {
+  DEFAULT_CONTROLLER_BINDINGS,
+  type ControllerBindingKey,
+} from "./types";
 
 const DEFAULT_UPDATER_STATUS: UpdaterStatusPayload = {
   phase: "idle",
@@ -83,6 +87,37 @@ const UPDATE_AVAILABLE_TOAST_ID = "greytrace-updater-available";
 const READY_TO_INSTALL_TOAST_ID = "greytrace-updater-ready";
 const MENU_AUTO_UPDATE_CHECK_COOLDOWN_MS = 30_000;
 const MAX_SHOT_BLOOM = 24;
+const CONTROLLER_CAPTURE_CANCEL_HOLD_MS = 800;
+const RIFLE_FIRE_RUMBLE = {
+  durationMs: 24,
+  weakMagnitude: 0.12,
+  strongMagnitude: 0.22,
+  throttleMs: 55,
+} as const;
+const SNIPER_FIRE_RUMBLE = {
+  durationMs: 42,
+  weakMagnitude: 0.2,
+  strongMagnitude: 0.48,
+  throttleMs: 120,
+} as const;
+const BODY_HIT_RUMBLE = {
+  durationMs: 34,
+  weakMagnitude: 0.16,
+  strongMagnitude: 0.28,
+  throttleMs: 40,
+} as const;
+const HEAD_HIT_RUMBLE = {
+  durationMs: 50,
+  weakMagnitude: 0.22,
+  strongMagnitude: 0.44,
+  throttleMs: 60,
+} as const;
+const KILL_HIT_RUMBLE = {
+  durationMs: 92,
+  weakMagnitude: 0.28,
+  strongMagnitude: 0.78,
+  throttleMs: 120,
+} as const;
 
 const CROSSHAIR_COLOR_HEX: Record<CrosshairColor, string> = {
   white: "#eff7ff",
@@ -120,6 +155,17 @@ function resolveKillPulseAmount(progress: number) {
     return easeInOutCubic(progress / 0.35);
   }
   return 1 - easeInOutCubic((progress - 0.35) / 0.65);
+}
+
+function isControllerCaptureButtonPressed(
+  button: GamepadButton | undefined,
+  index: number,
+) {
+  if (!button) {
+    return false;
+  }
+  const threshold = index === 6 || index === 7 ? 0.2 : 0.5;
+  return button.pressed || button.value >= threshold;
 }
 
 function resolveUiAudioButton(target: EventTarget | null) {
@@ -236,9 +282,13 @@ export function GameRoot({
   const [hudPanels, setHudPanels] = useState<HudOverlayToggles>(
     persistedSettings.hudPanels,
   );
-  const [menuTab, setMenuTab] = useState<PauseMenuTab>("gameplay");
+  const [menuTab, setMenuTab] = useState<SettingsTabId>("sensitivity");
   const [bindingCapture, setBindingCapture] = useState<BindingKey | null>(null);
   const bindingCaptureRef = useRef<BindingKey | null>(null);
+  const [controllerBindingCapture, setControllerBindingCapture] = useState<
+    ControllerBindingKey | null
+  >(null);
+  const controllerBindingCaptureRef = useRef<ControllerBindingKey | null>(null);
   const [stressCount, setStressCount] = useState<StressModeCount>(
     persistedSettings.stressCount,
   );
@@ -286,7 +336,7 @@ export function GameRoot({
     playerRef.current = snapshot;
     setPlayerRaw(snapshot);
   }, []);
-  const [weaponEquipped, setWeaponEquipped] = useState(false);
+  const [, setWeaponEquipped] = useState(false);
   const [activeWeapon, setActiveWeapon] = useState<WeaponKind>("rifle");
   const [sniperRechamber, setSniperRechamber] = useState<SniperRechamberState>({
     active: false,
@@ -351,6 +401,10 @@ export function GameRoot({
   useEffect(() => {
     bindingCaptureRef.current = bindingCapture;
   }, [bindingCapture]);
+
+  useEffect(() => {
+    controllerBindingCaptureRef.current = controllerBindingCapture;
+  }, [controllerBindingCapture]);
 
   const previousUpdaterPhaseRef = useRef<UpdaterPhase | null>(null);
   const lastMenuAutoCheckAtRef = useRef(0);
@@ -486,6 +540,7 @@ export function GameRoot({
 
   const handleCloseMenuAndResume = useCallback(() => {
     setBindingCapture(null);
+    setControllerBindingCapture(null);
     setMenuSettingsOpen(false);
     setPauseMenuOpen(false);
     window.focus();
@@ -495,7 +550,7 @@ export function GameRoot({
   }, []);
 
   const handlePauseMenuToggle = useCallback(() => {
-    if (bindingCaptureRef.current) {
+    if (bindingCaptureRef.current || controllerBindingCaptureRef.current) {
       return;
     }
     if (pauseMenuOpenRef.current) {
@@ -504,6 +559,7 @@ export function GameRoot({
     }
     setNeedsPointerLock(false);
     setBindingCapture(null);
+    setControllerBindingCapture(null);
     setMenuSettingsOpen(false);
     setPauseMenuOpen(true);
     sceneRef.current?.releasePointerLock();
@@ -511,17 +567,24 @@ export function GameRoot({
 
   const handleCloseSettingsModal = useCallback(() => {
     setBindingCapture(null);
+    setControllerBindingCapture(null);
     setMenuSettingsOpen(false);
   }, []);
 
   const handleOpenSettingsModal = useCallback(() => {
     setBindingCapture(null);
+    setControllerBindingCapture(null);
+    setMenuTab("sensitivity");
     setMenuSettingsOpen(true);
   }, []);
 
   const handleControllerOverlayBack = useCallback(() => {
     if (bindingCaptureRef.current) {
       setBindingCapture(null);
+      return;
+    }
+    if (controllerBindingCaptureRef.current) {
+      setControllerBindingCapture(null);
       return;
     }
     if (showPauseMenu) {
@@ -593,6 +656,7 @@ export function GameRoot({
       setMenuSettingsOpen(false);
       setPauseMenuOpen(false);
       setBindingCapture(null);
+      setControllerBindingCapture(null);
       setHitMarker({ until: 0, kind: "body" });
       enteredPlayingAtRef.current = performance.now();
       setPhase("playing");
@@ -626,6 +690,7 @@ export function GameRoot({
   const handleReturnToLobby = useCallback(() => {
     setNeedsPointerLock(false);
     setBindingCapture(null);
+    setControllerBindingCapture(null);
     setMenuSettingsOpen(false);
     setPauseMenuOpen(false);
     sceneRef.current?.releasePointerLock();
@@ -665,6 +730,18 @@ export function GameRoot({
 
   const handleHitMarker = useCallback(
     (kind: HitMarkerKind, damage: number, targetId: string) => {
+      playControllerRumble(
+        kind === "kill"
+          ? KILL_HIT_RUMBLE
+          : kind === "head"
+          ? HEAD_HIT_RUMBLE
+          : BODY_HIT_RUMBLE,
+        {
+          enabled: settings.controller.vibrationEnabled,
+          channel: "impact",
+        },
+      );
+
       const now = performance.now();
       setHitMarker({
         kind,
@@ -700,13 +777,22 @@ export function GameRoot({
         setKillPulseToken((previous) => previous + 1);
       }
     },
-    [phase],
+    [phase, settings.controller.vibrationEnabled],
   );
 
   const handleShotFired = useCallback((state: ShotFiredState) => {
     if (phase !== "playing") {
       return;
     }
+
+    playControllerRumble(
+      state.weaponType === "sniper" ? SNIPER_FIRE_RUMBLE : RIFLE_FIRE_RUMBLE,
+      {
+        enabled: settings.controller.vibrationEnabled,
+        channel: "fire",
+      },
+    );
+
     if (!settings.crosshair.dynamic.enabled) {
       return;
     }
@@ -720,7 +806,12 @@ export function GameRoot({
       return next;
     });
     shotBloomLastTimeRef.current = state.nowMs;
-  }, [phase, settings.crosshair.dynamic.enabled, settings.crosshair.dynamic.shotKick]);
+  }, [
+    phase,
+    settings.controller.vibrationEnabled,
+    settings.crosshair.dynamic.enabled,
+    settings.crosshair.dynamic.shotKick,
+  ]);
 
   const settingsProfileJson = useMemo(
     () =>
@@ -1073,10 +1164,100 @@ export function GameRoot({
   }, [bindingCapture]);
 
   useEffect(() => {
-    if (!isGameplayPaused && bindingCapture) {
-      setBindingCapture(null);
+    if (!controllerBindingCapture) {
+      return;
     }
-  }, [bindingCapture, isGameplayPaused]);
+
+    let frameId = 0;
+    let waitingForRelease = true;
+    let pauseCandidateStartedAt = 0;
+
+    const tick = () => {
+      const gamepad = findCompatibleGamepad();
+      if (!gamepad) {
+        frameId = window.requestAnimationFrame(tick);
+        return;
+      }
+
+      const pressedIndices = gamepad.buttons.flatMap((button, index) =>
+        isControllerCaptureButtonPressed(button, index) ? [index] : []
+      );
+
+      if (waitingForRelease) {
+        if (pressedIndices.length === 0) {
+          waitingForRelease = false;
+        }
+        frameId = window.requestAnimationFrame(tick);
+        return;
+      }
+
+      const now = performance.now();
+      const firstNonPauseButton = pressedIndices.find((index) => index !== 9);
+      if (typeof firstNonPauseButton === "number") {
+        setSettings((prev) => ({
+          ...prev,
+          controllerBindings: {
+            ...prev.controllerBindings,
+            [controllerBindingCapture]: firstNonPauseButton,
+          },
+        }));
+        setControllerBindingCapture(null);
+        return;
+      }
+
+      if (pressedIndices.includes(9)) {
+        if (pauseCandidateStartedAt === 0) {
+          pauseCandidateStartedAt = now;
+        } else if (now - pauseCandidateStartedAt >= CONTROLLER_CAPTURE_CANCEL_HOLD_MS) {
+          setControllerBindingCapture(null);
+          return;
+        }
+      } else if (pauseCandidateStartedAt > 0) {
+        setSettings((prev) => ({
+          ...prev,
+          controllerBindings: {
+            ...prev.controllerBindings,
+            [controllerBindingCapture]: 9,
+          },
+        }));
+        setControllerBindingCapture(null);
+        return;
+      }
+
+      frameId = window.requestAnimationFrame(tick);
+    };
+
+    frameId = window.requestAnimationFrame(tick);
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [controllerBindingCapture]);
+
+  useEffect(() => {
+    if (!controllerBindingCapture) {
+      return;
+    }
+
+    const onCancelCapture = (event: KeyboardEvent) => {
+      if (event.code !== "Escape") {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
+      setControllerBindingCapture(null);
+    };
+
+    window.addEventListener("keydown", onCancelCapture, true);
+    return () => window.removeEventListener("keydown", onCancelCapture, true);
+  }, [controllerBindingCapture]);
+
+  useEffect(() => {
+    if (!isGameplayPaused && (bindingCapture || controllerBindingCapture)) {
+      setBindingCapture(null);
+      setControllerBindingCapture(null);
+    }
+  }, [bindingCapture, controllerBindingCapture, isGameplayPaused]);
 
   useEffect(() => {
     if (phase !== "playing" && pauseMenuOpen) {
@@ -1209,7 +1390,6 @@ export function GameRoot({
       ? sniperRechamber.progress
       : 1;
   const sceneStressCount = selectedMap.supportsStressMode ? stressCount : 0;
-  const practiceMapLocked = phase !== "menu";
   const movementSpread = !settings.crosshair.dynamic.enabled
     ? 0
     : player.grounded && player.moving
@@ -1253,16 +1433,22 @@ export function GameRoot({
       ),
     );
   }, [settings.keybinds]);
+  const duplicateControllerButtonIndices = useMemo(() => {
+    const buttonCounts = new Map<number, number>();
+    for (const index of Object.values(settings.controllerBindings)) {
+      buttonCounts.set(index, (buttonCounts.get(index) ?? 0) + 1);
+    }
+    return new Set(
+      [...buttonCounts.entries()].filter(([, count]) => count > 1).map(([index]) =>
+        index
+      ),
+    );
+  }, [settings.controllerBindings]);
 
   const effectiveRifleAds =
     (settings.sensitivity.look * settings.sensitivity.rifleAds).toFixed(2);
   const effectiveSniperAds =
     (settings.sensitivity.look * settings.sensitivity.sniperAds).toFixed(2);
-  const movementTierLabel = player.movementTier === "run"
-    ? "Run"
-    : player.movementTier === "walk"
-    ? "Walk"
-    : "Jog";
   const interactItemLabel = player.interactWeaponKind === "sniper"
     ? "Sniper"
     : player.interactWeaponKind === "rifle"
@@ -1286,6 +1472,45 @@ export function GameRoot({
     player.canInteract;
   const combatHudVisible = gameplayHudVisible && !showInventoryOverlay;
   const uiOverlayClassName = "ui-overlay";
+  const renderCrosshair = (
+    className = "",
+    showProgress = false,
+  ) => (
+    <div
+      className={`crosshair ${className}`.trim()}
+      style={crosshairStyle}
+    >
+      {settings.crosshair.centerDot.enabled
+        ? (
+          <div className="crosshair-center" aria-hidden="true">
+            <span className="crosshair-center-line horizontal" />
+            <span className="crosshair-center-line vertical" />
+          </div>
+        )
+        : null}
+      {settings.crosshair.innerLines.enabled
+        ? (
+          <div className="crosshair-lines inner" aria-hidden="true">
+            <span className="line top" />
+            <span className="line right" />
+            <span className="line bottom" />
+            <span className="line left" />
+          </div>
+        )
+        : null}
+      {settings.crosshair.outerLines.enabled
+        ? (
+          <div className="crosshair-lines outer" aria-hidden="true">
+            <span className="line top" />
+            <span className="line right" />
+            <span className="line bottom" />
+            <span className="line left" />
+          </div>
+        )
+        : null}
+      {showProgress ? <div className="crosshair-progress active" /> : null}
+    </div>
+  );
 
   useControllerUiNavigation({
     active: showSettingsModal,
@@ -1369,52 +1594,12 @@ export function GameRoot({
         <div className="center-stack">
           {combatHudVisible && !isGameplayPaused && (!isAimingDownSight || activeWeapon === "rifle")
             ? (
-              <div
-                className={`crosshair ${
-                  activeWeapon === "sniper" && sniperRechamber.active
-                    ? "rechambering"
-                    : ""
-                }`}
-                style={crosshairStyle}
-              >
-                {settings.crosshair.centerDot.enabled
-                  ? (
-                    <div className="crosshair-center" aria-hidden="true">
-                      <span className="crosshair-center-line horizontal" />
-                      <span className="crosshair-center-line vertical" />
-                    </div>
-                  )
-                  : null}
-                {settings.crosshair.innerLines.enabled
-                  ? (
-                    <div className="crosshair-lines inner" aria-hidden="true">
-                      <span className="line top" />
-                      <span className="line right" />
-                      <span className="line bottom" />
-                      <span className="line left" />
-                    </div>
-                  )
-                  : null}
-                {settings.crosshair.outerLines.enabled
-                  ? (
-                    <div className="crosshair-lines outer" aria-hidden="true">
-                      <span className="line top" />
-                      <span className="line right" />
-                      <span className="line bottom" />
-                      <span className="line left" />
-                    </div>
-                  )
-                  : null}
-                {activeWeapon === "sniper" && sniperRechamber.active
-                  ? (
-                    <div
-                      className={`crosshair-progress ${
-                        sniperRechamber.active ? "active" : ""
-                      }`}
-                    />
-                  )
-                  : null}
-              </div>
+              renderCrosshair(
+                activeWeapon === "sniper" && sniperRechamber.active
+                  ? "rechambering"
+                  : "",
+                activeWeapon === "sniper" && sniperRechamber.active,
+              )
             )
             : null}
           {isAimingDownSight && activeWeapon === "sniper" && combatHudVisible
@@ -1568,9 +1753,13 @@ export function GameRoot({
                           onClick={() => {
                             setMenuTab(tab.id);
                             setBindingCapture(null);
+                            setControllerBindingCapture(null);
                           }}
                         >
-                          {tab.label}
+                          <span className="settings-tab-copy">
+                            <span className="settings-tab-label">{tab.label}</span>
+                            <span className="settings-tab-hint">{tab.hint}</span>
+                          </span>
                         </button>
                       ))}
                       <div style={{ marginTop: "auto" }}>
@@ -1608,122 +1797,21 @@ export function GameRoot({
                         </button>
                       </div>
                     </aside>
-                    <section className="lobby-settings-content">
+                    <section
+                      className="lobby-settings-content"
+                      data-controller-scroll-container="true"
+                    >
 
-                    {menuTab === "practice"
+                    {menuTab === "sensitivity"
                       ? (
                         <div className="menu-sections">
                           <MenuSection
-                            title="Map"
-                            blurb="Choose the practice map before you drop into the run."
-                          >
-                            <div className="segmented-row">
-                              {PRACTICE_MAP_OPTIONS.map((option) => (
-                                <button
-                                  key={option.id}
-                                  type="button"
-                                  className={`chip-btn ${
-                                    selectedMapId === option.id ? "active" : ""
-                                  }`}
-                                  onClick={() => setSelectedMapId(option.id)}
-                                  disabled={practiceMapLocked}
-                                >
-                                  {option.label}
-                                </button>
-                              ))}
-                            </div>
-                            <p className="muted compact-note">
-                              {selectedMap.description}
-                            </p>
-                            {practiceMapLocked ? (
-                              <p className="muted compact-note">
-                                Map changes are locked during a run. Return to the lobby to switch.
-                              </p>
-                            ) : null}
-                          </MenuSection>
-
-                          {selectedMap.supportsStressMode ? (
-                            <MenuSection
-                              title="Range Load"
-                              blurb="Stress mode scales target-box clutter and draw-call pain."
-                            >
-                              <div className="segmented-row">
-                                {STRESS_STEPS.map((value) => (
-                                  <button
-                                    key={value}
-                                    type="button"
-                                    className={`chip-btn ${
-                                      stressCount === value ? "active" : ""
-                                    }`}
-                                    onClick={() => setStressCount(value)}
-                                  >
-                                    {value === 0 ? "Off" : `${value} boxes`}
-                                  </button>
-                                ))}
-                              </div>
-                              <p className="muted compact-note">
-                                Reset targets uses your bound key:{" "}
-                                <code>
-                                  {formatKeyCode(settings.keybinds.reset)}
-                                </code>
-                              </p>
-                            </MenuSection>
-                          ) : (
-                            <MenuSection
-                              title="Traversal"
-                              blurb="School is a clean movement sandbox while you block out the map."
-                            >
-                              <p className="muted compact-note">
-                                No bots, no weapon spawns, and no stress boxes. This lane is movement-only for now.
-                              </p>
-                            </MenuSection>
-                          )}
-
-                          <MenuSection
-                            title="Combat Snapshot"
-                            blurb="Quick readout while you pretend this is a real lobby."
-                          >
-                            <div className="metric-cards">
-                              <MetricCard
-                                label="Weapon"
-                                value={weaponEquipped
-                                  ? (activeWeapon === "sniper"
-                                    ? "Sniper"
-                                    : "Rifle")
-                                  : "None"}
-                              />
-                              <MetricCard
-                                label="Movement"
-                                value={player.crouched
-                                  ? (player.moving ? "Crouch Move" : "Crouch Idle")
-                                  : player.moving
-                                  ? movementTierLabel
-                                  : "Idle"}
-                              />
-                              <MetricCard
-                                label="Pointer"
-                                value={player.pointerLocked ? "Locked" : "Menu"}
-                              />
-                              <MetricCard
-                                label="Interact"
-                                value={player.canInteract ? "Ready" : "None"}
-                              />
-                            </div>
-                          </MenuSection>
-
-                        </div>
-                      )
-                      : null}
-
-                    {menuTab === "gameplay"
-                      ? (
-                        <div className="menu-sections">
-                          <MenuSection
-                            title="Look Sensitivity"
-                            blurb="Valorant-style decimals: lower = slower. Great for high-DPI mice."
+                            title="Mouse look"
+                            blurb="Tune mouse aim speed and ADS multipliers. Changes apply live."
                           >
                             <RangeField
-                              label="Camera / Free Look"
+                              label="Look speed"
+                              hint="Base mouse speed while hip-firing."
                               value={settings.sensitivity.look}
                               min={0.05}
                               max={3}
@@ -1738,7 +1826,8 @@ export function GameRoot({
                                 }))}
                             />
                             <RangeField
-                              label="Rifle ADS"
+                              label="Rifle ADS multiplier"
+                              hint="Mouse speed multiplier while aiming the rifle."
                               value={settings.sensitivity.rifleAds}
                               min={0.05}
                               max={2.5}
@@ -1753,7 +1842,8 @@ export function GameRoot({
                                 }))}
                             />
                             <RangeField
-                              label="Sniper ADS"
+                              label="Sniper ADS multiplier"
+                              hint="Mouse speed multiplier while aiming the sniper."
                               value={settings.sensitivity.sniperAds}
                               min={0.05}
                               max={2}
@@ -1769,6 +1859,7 @@ export function GameRoot({
                             />
                             <RangeField
                               label="Vertical Multiplier"
+                              hint="Adjust vertical mouse speed without changing horizontal aim."
                               value={settings.sensitivity.vertical}
                               min={0.3}
                               max={2}
@@ -1794,11 +1885,98 @@ export function GameRoot({
                               </span>
                             </div>
                           </MenuSection>
-
-
                           <MenuSection
-                            title="Settings Profile JSON"
-                            blurb="Copy your full profile or import someone else's object for instant presets."
+                            title="Controller look"
+                            blurb="Make the sticks feel predictable instead of mushy."
+                          >
+                            <RangeField
+                              label="Look sensitivity X"
+                              hint="Horizontal camera speed on the right stick."
+                              value={settings.controller.lookSensitivityX}
+                              min={0.2}
+                              max={3}
+                              step={0.05}
+                              onChange={(value) =>
+                                setSettings((prev) => ({
+                                  ...prev,
+                                  controller: {
+                                    ...prev.controller,
+                                    lookSensitivityX: value,
+                                  },
+                                }))}
+                            />
+                            <RangeField
+                              label="Look sensitivity Y"
+                              hint="Vertical camera speed on the right stick."
+                              value={settings.controller.lookSensitivityY}
+                              min={0.2}
+                              max={3}
+                              step={0.05}
+                              onChange={(value) =>
+                                setSettings((prev) => ({
+                                  ...prev,
+                                  controller: {
+                                    ...prev.controller,
+                                    lookSensitivityY: value,
+                                  },
+                                }))}
+                            />
+                            <RangeField
+                              label="Move deadzone"
+                              hint="How far the left stick must move before movement starts."
+                              value={settings.controller.moveDeadzone}
+                              min={0}
+                              max={0.4}
+                              step={0.01}
+                              onChange={(value) =>
+                                setSettings((prev) => ({
+                                  ...prev,
+                                  controller: {
+                                    ...prev.controller,
+                                    moveDeadzone: value,
+                                  },
+                                }))}
+                            />
+                            <RangeField
+                              label="Look deadzone"
+                              hint="How far the right stick must move before camera look starts."
+                              value={settings.controller.lookDeadzone}
+                              min={0}
+                              max={0.35}
+                              step={0.01}
+                              onChange={(value) =>
+                                setSettings((prev) => ({
+                                  ...prev,
+                                  controller: {
+                                    ...prev.controller,
+                                    lookDeadzone: value,
+                                  },
+                                }))}
+                            />
+                            <SwitchRow
+                              label="Invert look Y"
+                              hint="Push up on the right stick to look down."
+                              checked={settings.controller.invertY}
+                              onChange={(checked) =>
+                                setSettings((prev) => ({
+                                  ...prev,
+                                  controller: {
+                                    ...prev.controller,
+                                    invertY: checked,
+                                  },
+                                }))}
+                            />
+                          </MenuSection>
+                        </div>
+                      )
+                      : null}
+
+                    {menuTab === "imports"
+                      ? (
+                        <div className="menu-sections">
+                          <MenuSection
+                            title="Settings profile"
+                            blurb="Copy the current profile or import one from JSON."
                           >
                             <div className="settings-json-actions">
                               <button
@@ -1855,7 +2033,7 @@ export function GameRoot({
                         <div className="menu-sections">
                           <MenuSection
                             title="Volume Mixer"
-                            blurb="Separate sliders so menu music and rifle noise stop fighting like divorced parents."
+                            blurb="Set the mix for music, weapons, footsteps, hit sounds, and UI."
                           >
                             <VolumeSlider
                               label="Master"
@@ -1919,20 +2097,67 @@ export function GameRoot({
                     {menuTab === "controls"
                       ? (
                         <div className="menu-sections">
-                          <ControllerSettingsSection
-                            settings={settings.controller}
-                            onChange={(controller) =>
-                              setSettings((prev) => ({ ...prev, controller }))}
-                          />
                           <MenuSection
-                            title="Keyboard Shortcuts"
-                            blurb="Click a row, press a key. Escape cancels capture."
+                            title="Input behavior"
+                            blurb="Set the basics for movement, controller support, and how the inventory behaves."
                           >
+                            <SwitchRow
+                              label="Enable controller input"
+                              hint="Allow gameplay input from the first compatible controller."
+                              checked={settings.controller.enabled}
+                              onChange={(checked) =>
+                                setSettings((prev) => ({
+                                  ...prev,
+                                  controller: {
+                                    ...prev.controller,
+                                    enabled: checked,
+                                  },
+                                }))}
+                            />
+                            <SwitchRow
+                              label="Controller vibration"
+                              hint="Rumble on UI confirm, shots, hits, and reloads when the controller supports it."
+                              checked={settings.controller.vibrationEnabled}
+                              onChange={(checked) =>
+                                setSettings((prev) => ({
+                                  ...prev,
+                                  controller: {
+                                    ...prev.controller,
+                                    vibrationEnabled: checked,
+                                  },
+                                }))}
+                            />
+                            <SwitchRow
+                              label="Toggle sprint"
+                              hint="Press the sprint button once to keep sprinting until you press it again."
+                              checked={settings.controller.toggleSprint}
+                              onChange={(checked) =>
+                                setSettings((prev) => ({
+                                  ...prev,
+                                  controller: {
+                                    ...prev.controller,
+                                    toggleSprint: checked,
+                                  },
+                                }))}
+                            />
+                            <SwitchRow
+                              label="Invert move Y"
+                              hint="Flip forward and backward on the left stick for controllers with odd axis reporting."
+                              checked={settings.controller.invertMoveY}
+                              onChange={(checked) =>
+                                setSettings((prev) => ({
+                                  ...prev,
+                                  controller: {
+                                    ...prev.controller,
+                                    invertMoveY: checked,
+                                  },
+                                }))}
+                            />
                             <div className="field-row">
                               <div>
-                                <div className="field-label">Crouch Mode</div>
+                                <div className="field-label">Crouch mode</div>
                                 <div className="field-hint">
-                                  Hold keeps crouch active while pressed. Toggle flips state per key press.
+                                  Hold keeps crouch active while the button is down. Toggle switches stance each press.
                                 </div>
                               </div>
                               <div className="segmented-row compact">
@@ -1966,9 +2191,9 @@ export function GameRoot({
                             </div>
                             <div className="field-row">
                               <div>
-                                <div className="field-label">Inventory Open Mode</div>
+                                <div className="field-label">Inventory open mode</div>
                                 <div className="field-hint">
-                                  Toggle keeps TAB inventory open until pressed again. Hold closes on key release.
+                                  Toggle keeps the inventory open until you press again. Hold closes it on release.
                                 </div>
                               </div>
                               <div className="segmented-row compact">
@@ -2000,6 +2225,105 @@ export function GameRoot({
                                 </button>
                               </div>
                             </div>
+                          </MenuSection>
+                          <MenuSection
+                            title="Controller bindings"
+                            blurb="Gameplay remaps live here. Menu confirm and back stay fixed to A and B so the UI does not eat itself."
+                          >
+                            {CONTROLLER_BINDING_GROUPS.map((group) => (
+                              <div key={group.title} className="binding-group">
+                                <div className="binding-group-header">
+                                  <div className="field-label">{group.title}</div>
+                                  <div className="field-hint">{group.blurb}</div>
+                                </div>
+                                <div className="keybind-grid controller-bind-grid">
+                                  {group.bindings.map((binding) => {
+                                    const buttonIndex = settings.controllerBindings[binding.key];
+                                    const duplicated = duplicateControllerButtonIndices.has(
+                                      buttonIndex,
+                                    );
+                                    const capturing = controllerBindingCapture === binding.key;
+                                    return (
+                                      <div
+                                        key={binding.key}
+                                        className={`keybind-row ${
+                                          capturing ? "capturing" : ""
+                                        } ${duplicated ? "duplicate" : ""}`}
+                                      >
+                                        <div>
+                                          <div className="keybind-label">
+                                            {binding.label}
+                                          </div>
+                                          <div className="keybind-hint">
+                                            {binding.hint}
+                                          </div>
+                                        </div>
+                                        <div className="binding-action-buttons">
+                                          <button
+                                            type="button"
+                                            className={`keybind-btn ${
+                                              capturing ? "active" : ""
+                                            }`}
+                                            onClick={() => {
+                                              setBindingCapture(null);
+                                              setControllerBindingCapture((prev) =>
+                                                prev === binding.key ? null : binding.key
+                                              );
+                                            }}
+                                          >
+                                            {capturing
+                                              ? "Press button..."
+                                              : formatControllerButtonIndex(buttonIndex)}
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="keybind-btn keybind-btn-secondary"
+                                            onClick={() => {
+                                              setControllerBindingCapture((prev) =>
+                                                prev === binding.key ? null : prev
+                                              );
+                                              setSettings((prev) => ({
+                                                ...prev,
+                                                controllerBindings: {
+                                                  ...prev.controllerBindings,
+                                                  [binding.key]:
+                                                    DEFAULT_CONTROLLER_BINDINGS[binding.key],
+                                                },
+                                              }));
+                                            }}
+                                          >
+                                            Reset
+                                          </button>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ))}
+                            <div className="settings-chip-wrap">
+                              <span className="pill-chip">
+                                Click the highlighted bind button again to cancel
+                              </span>
+                              <span className="pill-chip">
+                                Hold Menu / Options for 0.8s to cancel from controller
+                              </span>
+                              <span className="pill-chip">
+                                Triggers still use the lower trigger threshold in gameplay
+                              </span>
+                            </div>
+                            {duplicateControllerButtonIndices.size > 0
+                              ? (
+                                <p className="warning-note">
+                                  Duplicate controller bindings are allowed, but they will happily cause overlap.
+                                </p>
+                              )
+                              : null}
+                          </MenuSection>
+                          <MenuSection
+                            title="Keyboard bindings"
+                            blurb="Click a row, press a key, and press Escape to cancel."
+                          >
                             <div className="keybind-grid">
                               {BINDING_ROWS.map((row) => {
                                 const code = settings.keybinds[row.key];
@@ -2030,13 +2354,15 @@ export function GameRoot({
                                           ? "active"
                                           : ""
                                       }`}
-                                      onClick={() =>
+                                      onClick={() => {
+                                        setControllerBindingCapture(null);
                                         setBindingCapture((
                                           prev,
                                         ) => (prev === row.key
                                           ? null
                                           : row.key)
-                                        )}
+                                        );
+                                      }}
                                     >
                                       {bindingCapture === row.key
                                         ? "Press key..."
@@ -2048,20 +2374,19 @@ export function GameRoot({
                             </div>
                             <div className="settings-chip-wrap">
                               <span className="pill-chip">
-                                Mouse Left: Fire (fixed)
+                                Mouse Left: Fire
                               </span>
                               <span className="pill-chip">
-                                Mouse Right: ADS (fixed)
+                                Mouse Right: ADS
                               </span>
                               <span className="pill-chip">
-                                P: Perf panel toggle (global)
+                                Escape cancels key capture
                               </span>
                             </div>
                             {duplicateBindingCodes.size > 0
                               ? (
                                 <p className="warning-note">
-                                  Duplicate keys are allowed, but you are
-                                  volunteering for weirdness.
+                                  Duplicate keys are allowed, but they can still create chaos.
                                 </p>
                               )
                               : null}
@@ -2074,12 +2399,12 @@ export function GameRoot({
                       ? (
                         <div className="menu-sections">
                           <MenuSection
-                            title="Render Quality"
-                            blurb="Enough knobs to tune performance without pretending this is a benchmark suite."
+                            title="Render quality"
+                            blurb="Adjust the scene quality and the in-game performance readout."
                           >
                             <SwitchRow
                               label="Shadows"
-                              hint="Sun shadow maps for scene and targets"
+                              hint="Enable real-time sun shadows for the scene and targets."
                               checked={settings.shadows}
                               onChange={(checked) =>
                                 setSettings((prev) => ({
@@ -2088,13 +2413,13 @@ export function GameRoot({
                                 }))}
                             />
                             <SwitchRow
-                              label="r3f-perf Overlay"
-                              hint="Developer perf overlay (separate from GreyTrace perf panel)"
-                              checked={settings.showR3fPerf}
+                              label="Performance HUD"
+                              hint="Show the top-right panel with FPS and hardware timings."
+                              checked={hudPanels.statsBar}
                               onChange={(checked) =>
-                                setSettings((prev) => ({
+                                setHudPanels((prev) => ({
                                   ...prev,
-                                  showR3fPerf: checked,
+                                  statsBar: checked,
                                 }))}
                             />
                             <div className="field-row">
@@ -2130,31 +2455,36 @@ export function GameRoot({
                       )
                       : null}
 
-                    {menuTab === "hud"
+                    {menuTab === "crosshair"
                       ? (
                         <div className="menu-sections">
                           <MenuSection
-                            title="In-game overlay"
-                            blurb="Top-right network and performance readout."
+                            title="Preview"
+                            blurb="This updates live so you can see the current shape before going back in-game."
                           >
-                            {OVERLAY_ROWS.map((row) => (
-                              <SwitchRow
-                                key={row.key}
-                                label={row.label}
-                                hint={row.hint}
-                                checked={hudPanels[row.key]}
-                                onChange={(checked) =>
-                                  setHudPanels((prev) => ({
-                                    ...prev,
-                                    [row.key]: checked,
-                                  }))}
-                              />
-                            ))}
+                            <div className="crosshair-preview-panel">
+                              <div className="crosshair-preview-stage">
+                                {renderCrosshair("crosshair-preview-instance")}
+                              </div>
+                              <div className="settings-chip-wrap">
+                                <span className="pill-chip">
+                                  Color: {CROSSHAIR_COLOR_OPTIONS.find((option) =>
+                                    option.id === settings.crosshair.color
+                                  )?.label ?? "White"}
+                                </span>
+                                <span className="pill-chip">
+                                  Dynamic spread: {settings.crosshair.dynamic.enabled ? "On" : "Off"}
+                                </span>
+                                <span className="pill-chip">
+                                  Outline: {settings.crosshair.outline.enabled ? "On" : "Off"}
+                                </span>
+                              </div>
+                            </div>
                           </MenuSection>
 
                           <MenuSection
-                            title="Crosshair"
-                            blurb="Valorant-style base profile with weapon modifiers."
+                            title="Base crosshair"
+                            blurb="Choose the shape, color, and spacing for the main reticle."
                           >
                             <div className="field-row">
                               <div>
@@ -2483,11 +2813,11 @@ export function GameRoot({
 
                           <MenuSection
                             title="Dynamic Spread"
-                            blurb="Movement + firing bloom feedback. Visual only."
+                            blurb="Optional visual bloom that reacts to movement and shots. It does not change weapon accuracy."
                           >
                             <SwitchRow
                               label="Dynamic Spread"
-                              hint="Enable idle/walk/run + shot bloom expansion"
+                              hint="Expand the crosshair while moving and firing."
                               checked={settings.crosshair.dynamic.enabled}
                               onChange={(checked) =>
                                 setSettings((prev) => ({
@@ -2595,8 +2925,8 @@ export function GameRoot({
                           </MenuSection>
 
                           <MenuSection
-                            title="Sniper Scope"
-                            blurb="Sniper scope center-dot tuning."
+                            title="Sniper scope"
+                            blurb="Adjust the center dot used while aiming the sniper."
                           >
                             <RangeField
                               label="Sniper Dot Size"
@@ -2670,7 +3000,7 @@ export function GameRoot({
                         <div className="menu-sections">
                           <MenuSection
                             title="Repair Installation"
-                            blurb="Re-runs the update/reinstall flow to fix corrupted files. Not a full disk scan."
+                            blurb="Re-run the repair flow if files are missing or broken."
                           >
                             <div className="update-action-row">
                               <button
@@ -2719,6 +3049,16 @@ export function GameRoot({
           <p className="click-to-continue-label">Click to continue</p>
         </div>
       ) : null}
+      <ControllerCursor
+        enabled={settings.controller.enabled &&
+          !practiceLoading &&
+          (phase === "menu" || showSettingsModal || showInventoryOverlay)}
+        scopeRef={showSettingsModal ? settingsModalRef : appShellRef}
+        moveDeadzone={settings.controller.moveDeadzone}
+        inputSuspended={controllerBindingCapture !== null}
+        vibrationEnabled={settings.controller.vibrationEnabled}
+        onBack={showSettingsModal ? handleControllerOverlayBack : undefined}
+      />
       <div
         className="kill-pulse-overlay"
         style={{

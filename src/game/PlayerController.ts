@@ -13,6 +13,7 @@ import {
   type CollisionCircle,
   type CollisionRect,
   type ControlBindings,
+  type ControllerBindings,
   type ControllerSettings,
   type CrouchMode,
   DEFAULT_PLAYER_SNAPSHOT,
@@ -58,6 +59,7 @@ type UsePlayerControllerOptions = {
   spawnPitch: number;
   sensitivity: AimSensitivitySettings;
   controllerSettings: ControllerSettings;
+  controllerBindings: ControllerBindings;
   keybinds: ControlBindings;
   crouchMode: CrouchMode;
   inventoryOpenMode: InventoryOpenMode;
@@ -285,6 +287,7 @@ export function usePlayerController({
   spawnPitch,
   sensitivity,
   controllerSettings,
+  controllerBindings,
   keybinds,
   crouchMode,
   inventoryOpenMode,
@@ -389,6 +392,7 @@ export function usePlayerController({
   const weaponBusyGetterRef = useRef(getIsWeaponBusy);
   const sensitivityRef = useRef(sensitivity);
   const controllerSettingsRef = useRef(controllerSettings);
+  const controllerBindingsRef = useRef(controllerBindings);
   const keybindsRef = useRef(keybinds);
   const crouchModeSettingRef = useRef(crouchMode);
   const inventoryOpenModeSettingRef = useRef(inventoryOpenMode);
@@ -413,6 +417,8 @@ export function usePlayerController({
     adsHeld: false,
     sprintHeld: false,
     crouchHeld: false,
+    peekLeftHeld: false,
+    peekRightHeld: false,
     inventoryHeld: false,
     jumpPressed: false,
     sprintPressed: false,
@@ -521,6 +527,10 @@ export function usePlayerController({
       controllerSprintToggleRef.current = false;
     }
   }, [controllerSettings]);
+
+  useEffect(() => {
+    controllerBindingsRef.current = controllerBindings;
+  }, [controllerBindings]);
 
   useEffect(() => {
     keybindsRef.current = keybinds;
@@ -875,6 +885,7 @@ export function usePlayerController({
     const keys = keyStateRef.current;
     const controllerState = gamepadManagerRef.current.poll(
       controllerSettingsRef.current,
+      controllerBindingsRef.current,
     );
     gamepadFrameStateRef.current = controllerState;
     const gameplayInputEnabled = gameplayInputEnabledRef.current;
@@ -903,7 +914,9 @@ export function usePlayerController({
         controllerState.dropPressed ||
         controllerState.fireHeld ||
         controllerState.adsHeld ||
-        controllerState.sprintHeld)
+        controllerState.sprintHeld ||
+        controllerState.peekLeftHeld ||
+        controllerState.peekRightHeld)
     ) {
       userGestureCallbackRef.current();
     }
@@ -1518,9 +1531,11 @@ export function usePlayerController({
     const crouchLookHeightOffset =
       TPP_CROUCH_LOOK_HEIGHT_OFFSET * crouchCameraLerpRef.current;
     const peekLeftHeld =
-      movementEnabled && isBindingDown(keys, bindings.peekLeft);
+      (keyboardMovementEnabled && isBindingDown(keys, bindings.peekLeft)) ||
+      (controllerActionEnabled && controllerState.peekLeftHeld);
     const peekRightHeld =
-      movementEnabled && isBindingDown(keys, bindings.peekRight);
+      (keyboardMovementEnabled && isBindingDown(keys, bindings.peekRight)) ||
+      (controllerActionEnabled && controllerState.peekRightHeld);
     leanTargetRef.current =
       !sprinting && peekLeftHeld && !peekRightHeld
         ? -1

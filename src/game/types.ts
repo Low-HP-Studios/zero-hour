@@ -24,6 +24,7 @@ export const DEFAULT_AIM_SENSITIVITY_SETTINGS: AimSensitivitySettings = {
 
 export type ControllerSettings = {
   enabled: boolean;
+  vibrationEnabled: boolean;
   moveDeadzone: number;
   lookDeadzone: number;
   lookSensitivityX: number;
@@ -35,6 +36,7 @@ export type ControllerSettings = {
 
 export const DEFAULT_CONTROLLER_SETTINGS: ControllerSettings = {
   enabled: true,
+  vibrationEnabled: true,
   moveDeadzone: 0.15,
   lookDeadzone: 0.12,
   lookSensitivityX: 1,
@@ -42,6 +44,43 @@ export const DEFAULT_CONTROLLER_SETTINGS: ControllerSettings = {
   toggleSprint: true,
   invertMoveY: false,
   invertY: false,
+};
+
+export type ControllerBindingKey =
+  | "fire"
+  | "ads"
+  | "jump"
+  | "crouch"
+  | "peekLeft"
+  | "peekRight"
+  | "pickup"
+  | "reload"
+  | "inventory"
+  | "pause"
+  | "sprint"
+  | "toggleView"
+  | "drop"
+  | "equipRifle"
+  | "equipSniper";
+
+export type ControllerBindings = Record<ControllerBindingKey, number>;
+
+export const DEFAULT_CONTROLLER_BINDINGS: ControllerBindings = {
+  fire: 7,
+  ads: 6,
+  jump: 0,
+  crouch: 1,
+  peekLeft: 10,
+  peekRight: 11,
+  pickup: 2,
+  reload: 3,
+  inventory: 8,
+  pause: 9,
+  sprint: 4,
+  toggleView: 5,
+  drop: 13,
+  equipRifle: 14,
+  equipSniper: 15,
 };
 
 export type ControlBindings = {
@@ -281,6 +320,7 @@ export type GameSettings = {
   showR3fPerf: boolean;
   sensitivity: AimSensitivitySettings;
   controller: ControllerSettings;
+  controllerBindings: ControllerBindings;
   keybinds: ControlBindings;
   crouchMode: CrouchMode;
   inventoryOpenMode: InventoryOpenMode;

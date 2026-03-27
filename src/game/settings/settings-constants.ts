@@ -1,23 +1,24 @@
 import type {
   ControlBindings,
+  ControllerBindingKey,
   HudOverlayToggles,
   PixelRatioScale,
   StressModeCount,
 } from "../types";
 
-export type PauseMenuTab =
-  | "practice"
-  | "gameplay"
+export type SettingsTabId =
+  | "sensitivity"
   | "audio"
   | "controls"
   | "graphics"
-  | "hud"
+  | "crosshair"
+  | "imports"
   | "system";
 
 export type BindingKey = keyof ControlBindings;
 
 export type MenuTabOption = {
-  id: PauseMenuTab;
+  id: SettingsTabId;
   label: string;
   hint: string;
 };
@@ -26,6 +27,18 @@ export type BindingDefinition = {
   key: BindingKey;
   label: string;
   hint: string;
+};
+
+export type ControllerBindingDefinition = {
+  key: ControllerBindingKey;
+  label: string;
+  hint: string;
+};
+
+export type ControllerBindingGroup = {
+  title: string;
+  blurb: string;
+  bindings: ControllerBindingDefinition[];
 };
 
 export const STRESS_STEPS: StressModeCount[] = [0, 50, 100, 200];
@@ -38,12 +51,12 @@ export const PIXEL_RATIO_OPTIONS: Array<{ value: PixelRatioScale; label: string 
 
 
 export const MENU_TABS: MenuTabOption[] = [
-  { id: "practice", label: "Practice", hint: "Range presets" },
-  { id: "gameplay", label: "Gameplay", hint: "Look & ADS" },
+  { id: "sensitivity", label: "Sensitivity", hint: "Mouse and controller aim" },
   { id: "audio", label: "Audio", hint: "Mix levels" },
-  { id: "controls", label: "Controls", hint: "Keybinds" },
-  { id: "graphics", label: "Graphics", hint: "Render" },
-  { id: "hud", label: "HUD", hint: "Stats bar & crosshair" },
+  { id: "controls", label: "Controls", hint: "Bindings and behavior" },
+  { id: "graphics", label: "Graphics", hint: "Render and performance" },
+  { id: "crosshair", label: "Crosshair", hint: "Preview and tuning" },
+  { id: "imports", label: "Imports", hint: "Profiles and presets" },
   { id: "system", label: "System", hint: "Maintenance" },
 ];
 
@@ -78,3 +91,62 @@ export const OVERLAY_ROWS: Array<
     hint: "Ping, FPS, CPU, GPU (top-right)",
   },
 ];
+
+export const CONTROLLER_BINDING_GROUPS: ControllerBindingGroup[] = [
+  {
+    title: "Combat",
+    blurb: "Choose which buttons handle shooting, aiming, and weapon actions.",
+    bindings: [
+      { key: "fire", label: "Fire Weapon", hint: "Shoot the active weapon" },
+      { key: "ads", label: "Aim Down Sights", hint: "Aim with the active weapon" },
+      { key: "reload", label: "Reload", hint: "Reload the active weapon" },
+      { key: "pickup", label: "Pick Up Item", hint: "Pick up nearby gear" },
+      { key: "drop", label: "Drop Weapon", hint: "Drop the current weapon" },
+    ],
+  },
+  {
+    title: "Movement",
+    blurb: "Set the buttons used for movement actions and stance changes.",
+    bindings: [
+      { key: "jump", label: "Jump", hint: "Jump or vault" },
+      { key: "crouch", label: "Crouch", hint: "Crouch or stand" },
+      { key: "sprint", label: "Sprint", hint: "Sprint modifier or toggle" },
+      { key: "peekLeft", label: "Peek Left", hint: "Lean left while held" },
+      { key: "peekRight", label: "Peek Right", hint: "Lean right while held" },
+    ],
+  },
+  {
+    title: "Menus and equipment",
+    blurb: "Configure inventory, pause, view, and quick weapon actions.",
+    bindings: [
+      { key: "inventory", label: "Inventory", hint: "Open the inventory panel" },
+      { key: "pause", label: "Pause Menu", hint: "Open the pause menu" },
+      { key: "toggleView", label: "Toggle View", hint: "Switch first or third person" },
+      { key: "equipRifle", label: "Equip Rifle", hint: "Raise the primary weapon" },
+      { key: "equipSniper", label: "Equip Sniper", hint: "Raise the secondary weapon" },
+    ],
+  },
+];
+
+const CONTROLLER_BUTTON_LABELS: Record<number, string> = {
+  0: "A / Cross",
+  1: "B / Circle",
+  2: "X / Square",
+  3: "Y / Triangle",
+  4: "Left Bumper",
+  5: "Right Bumper",
+  6: "Left Trigger",
+  7: "Right Trigger",
+  8: "View / Share",
+  9: "Menu / Options",
+  10: "Left Stick Press",
+  11: "Right Stick Press",
+  12: "D-pad Up",
+  13: "D-pad Down",
+  14: "D-pad Left",
+  15: "D-pad Right",
+};
+
+export function formatControllerButtonIndex(index: number) {
+  return CONTROLLER_BUTTON_LABELS[index] ?? `Button ${index}`;
+}

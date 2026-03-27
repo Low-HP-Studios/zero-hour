@@ -12,6 +12,7 @@ import {
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { type AudioVolumeSettings, sharedAudioManager } from "../Audio";
+import { playControllerRumble } from "../GamepadHaptics";
 import {
   type PlayerControllerApi,
   type RunFacingPhase,
@@ -119,6 +120,7 @@ type GameplayRuntimeProps = {
   gameplayInputEnabled: boolean;
   sensitivity: GameSettings["sensitivity"];
   controllerSettings: GameSettings["controller"];
+  controllerBindings: GameSettings["controllerBindings"];
   keybinds: GameSettings["keybinds"];
   crouchMode: GameSettings["crouchMode"];
   inventoryOpenMode: GameSettings["inventoryOpenMode"];
@@ -186,6 +188,12 @@ const Y_AXIS = new THREE.Vector3(0, 1, 0);
 const PRACTICE_AMMO_RESPAWN_MS = 5_000;
 const PRACTICE_AMMO_RIFLE_REFILL = 240;
 const PRACTICE_AMMO_SNIPER_REFILL = 120;
+const RELOAD_RUMBLE = {
+  durationMs: 58,
+  weakMagnitude: 0.18,
+  strongMagnitude: 0.34,
+  throttleMs: 140,
+} as const;
 
 // ADS weapon positioning: camera-local offsets so the sight aligns with screen center.
 // x = right, y = up, z = forward (in camera space). Will be tuned iteratively.
@@ -1151,6 +1159,7 @@ export const GameplayRuntime = forwardRef<
   gameplayInputEnabled,
   sensitivity,
   controllerSettings,
+  controllerBindings,
   keybinds,
   crouchMode,
   inventoryOpenMode,
@@ -1996,6 +2005,7 @@ export const GameplayRuntime = forwardRef<
     spawnPitch,
     sensitivity,
     controllerSettings,
+    controllerBindings,
     keybinds,
     crouchMode,
     inventoryOpenMode,
@@ -2472,6 +2482,10 @@ export const GameplayRuntime = forwardRef<
         previousReloadWeaponKind !== weaponReload.weaponKind)
     ) {
       audio.playReload(weaponReload.weaponKind, reloadDurationSeconds);
+      playControllerRumble(RELOAD_RUMBLE, {
+        enabled: controllerSettings.vibrationEnabled,
+        channel: "reload",
+      });
     } else if (previousReloadActive && !reloadVisible) {
       audio.cancelReload();
     }

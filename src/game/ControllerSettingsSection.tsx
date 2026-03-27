@@ -23,6 +23,12 @@ export const ControllerSettingsSection = memo(
           checked={settings.enabled}
           onChange={(enabled) => onChange({ ...settings, enabled })}
         />
+        <SwitchRow
+          label="Controller Vibration"
+          hint="Rumble on shots, hits, reloads, and controller UI confirm when supported."
+          checked={settings.vibrationEnabled}
+          onChange={(vibrationEnabled) => onChange({ ...settings, vibrationEnabled })}
+        />
         <RangeField
           label="Move Deadzone"
           value={settings.moveDeadzone}
