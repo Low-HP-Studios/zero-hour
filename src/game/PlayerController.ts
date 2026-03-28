@@ -79,9 +79,23 @@ type UsePlayerControllerOptions = {
 
 export type RunFacingPhase = 'off' | 'start' | 'running' | 'stop';
 
+export type SlidePhase = 'none' | 'entry' | 'glide' | 'recover';
+export type SlideEndPosture = 'stand' | 'crouch';
+export type SlideCancelReason = 'none' | 'input' | 'crouch_release' | 'finished';
+
+export type SlideState = {
+  active: boolean;
+  phase: SlidePhase;
+  progress: number;
+  headingYaw: number;
+  endPosture: SlideEndPosture;
+  cancelReason: SlideCancelReason;
+};
+
 export type PlayerControllerApi = {
   addRecoil: (pitchRadians: number, yawRadians: number) => void;
   alignBodyToAim: (durationMs?: number) => void;
+  cancelSlide: () => void;
   getPosition: () => THREE.Vector3;
   getYaw: () => number;
   getAimYaw: () => number;
@@ -105,6 +119,7 @@ export type PlayerControllerApi = {
   isMoving: () => boolean;
   isGrounded: () => boolean;
   getMovementTier: () => MovementTier;
+  getSlideState: () => SlideState;
   setRunFacing: (phase: RunFacingPhase, headingYaw?: number) => void;
   setMovementProfile: (profile: Partial<MovementProfile>) => void;
   requestPointerLock: () => void;
@@ -163,6 +178,22 @@ const CROUCH_TRANSITION_SPEED = 14;
 const TPP_CROUCH_CAMERA_TRANSITION_SPEED = 12;
 const TPP_CROUCH_CAMERA_ACTIVATION_THRESHOLD = 0.98;
 const CROUCH_SPRINT_LOCK_THRESHOLD = 0.35;
+const SLIDE_TRIGGER_FORWARD_MIN = 0.45;
+const SLIDE_TRIGGER_MIN_SPEED = 6.6;
+const SLIDE_TOTAL_MS = 980;
+const SLIDE_ENTRY_MS = 120;
+const SLIDE_RECOVER_MS = 140;
+const SLIDE_GLIDE_MS = SLIDE_TOTAL_MS - SLIDE_ENTRY_MS - SLIDE_RECOVER_MS;
+const SLIDE_COOLDOWN_MS = 350;
+const SLIDE_END_SPEED_FACTOR = 0.54;
+const SLIDE_SPEED_DECAY_START = 0.18;
+const SLIDE_MIN_TAIL_SPEED = WALK_SPEED * 0.65;
+const SLIDE_STRAIGHTEN_START_MS = 140;
+const SLIDE_STRAIGHTEN_END_MS = 720;
+const SLIDE_DIAGONAL_STRAIGHTEN_FACTOR = 0.45;
+const SLIDE_CAMERA_DIP_TPP = 0.12;
+const SLIDE_CAMERA_DIP_FPP = 0.08;
+const SLIDE_FOV_BUMP = 2;
 const BODY_YAW_DAMP = 14;
 const RUN_BODY_YAW_DAMP = 24;
 const RUN_TRANSITION_BODY_YAW_DAMP = 16;
@@ -315,6 +346,8 @@ export function usePlayerController({
   const velocityRef = useRef(new THREE.Vector2(0, 0));
   const desiredPlanarVelocityRef = useRef(new THREE.Vector2(0, 0));
   const moveInputRef = useRef(new THREE.Vector2(0, 0));
+  const slideDirectionRef = useRef(new THREE.Vector2(0, 0));
+  const crouchPressedRef = useRef(false);
   const sprintPressedRef = useRef(false);
   const walkPressedRef = useRef(false);
   const controllerSprintToggleRef = useRef(false);
@@ -366,6 +399,18 @@ export function usePlayerController({
   const viewModeLerpRef = useRef(0);
   const crouchModeRef = useRef<CrouchMode>(crouchMode);
   const crouchHoldLatchRef = useRef(false);
+  const slidePhaseRef = useRef<SlidePhase>('none');
+  const slidePhaseStartedAtRef = useRef(0);
+  const slidePhaseDurationMsRef = useRef(0);
+  const slideStartedAtRef = useRef(0);
+  const slideEntrySpeedRef = useRef(0);
+  const slideEntryHeadingYawRef = useRef(spawnYaw);
+  const slideForwardYawRef = useRef(spawnYaw);
+  const slideHeadingYawRef = useRef(spawnYaw);
+  const slideEndPostureRef = useRef<SlideEndPosture>('stand');
+  const slideCancelReasonRef = useRef<SlideCancelReason>('none');
+  const slideCooldownUntilRef = useRef(0);
+  const slideSuppressCrouchUntilReleaseRef = useRef(false);
   const inventoryPanelOpenRef = useRef(false);
   const inventoryRestorePointerLockRef = useRef(false);
   const controllerInventoryHeldRef = useRef(false);
@@ -379,6 +424,14 @@ export function usePlayerController({
   const tempThirdPersonCameraPosRef = useRef(new THREE.Vector3());
   const cameraClipEyeRef = useRef(new THREE.Vector3());
   const cameraClipOutRef = useRef(new THREE.Vector3());
+  const slideSnapshotRef = useRef<SlideState>({
+    active: false,
+    phase: 'none',
+    progress: 0,
+    headingYaw: spawnYaw,
+    endPosture: 'stand',
+    cancelReason: 'none',
+  });
   const snapshotAccumulatorRef = useRef(0);
   const snapshotObjectRef = useRef<PlayerSnapshot>({
     ...DEFAULT_PLAYER_SNAPSHOT,
@@ -441,6 +494,36 @@ export function usePlayerController({
     triggerCallbackRef.current(nextHeld);
   }, []);
 
+  const resetSlideState = useCallback((
+    headingYaw = bodyYawRef.current,
+    options?: { keepCooldown?: boolean; keepSuppressLatch?: boolean },
+  ) => {
+    slidePhaseRef.current = 'none';
+    slidePhaseStartedAtRef.current = 0;
+    slidePhaseDurationMsRef.current = 0;
+    slideStartedAtRef.current = 0;
+    slideEntrySpeedRef.current = 0;
+    slideEntryHeadingYawRef.current = headingYaw;
+    slideForwardYawRef.current = headingYaw;
+    slideHeadingYawRef.current = headingYaw;
+    slideEndPostureRef.current = 'stand';
+    slideCancelReasonRef.current = 'none';
+    if (!options?.keepCooldown) {
+      slideCooldownUntilRef.current = 0;
+    }
+    if (!options?.keepSuppressLatch) {
+      slideSuppressCrouchUntilReleaseRef.current = false;
+    }
+    slideSnapshotRef.current = {
+      active: false,
+      phase: 'none',
+      progress: 0,
+      headingYaw,
+      endPosture: 'stand',
+      cancelReason: 'none',
+    };
+  }, []);
+
   const clearHeldCombatInput = useCallback(() => {
     mouseTriggerHeldRef.current = false;
     controllerTriggerHeldRef.current = false;
@@ -449,6 +532,124 @@ export function usePlayerController({
     adsRef.current = false;
     syncTriggerHeld(false);
   }, [syncTriggerHeld]);
+
+  const getSlidePhaseProgress = useCallback((nowMs: number) => {
+    if (slidePhaseRef.current === 'none' || slidePhaseDurationMsRef.current <= 0) {
+      return 0;
+    }
+    return clamp01(
+      (nowMs - slidePhaseStartedAtRef.current) / slidePhaseDurationMsRef.current,
+    );
+  }, []);
+
+  const getSlideStateSnapshot = useCallback((nowMs = performance.now()): SlideState => {
+    const phase = slidePhaseRef.current;
+    if (phase === 'none') {
+      slideSnapshotRef.current = {
+        active: false,
+        phase: 'none',
+        progress: 0,
+        headingYaw: slideHeadingYawRef.current,
+        endPosture: slideEndPostureRef.current,
+        cancelReason: 'none',
+      };
+      return slideSnapshotRef.current;
+    }
+    slideSnapshotRef.current = {
+      active: true,
+      phase,
+      progress: getSlidePhaseProgress(nowMs),
+      headingYaw: slideHeadingYawRef.current,
+      endPosture: slideEndPostureRef.current,
+      cancelReason: slideCancelReasonRef.current,
+    };
+    return slideSnapshotRef.current;
+  }, [getSlidePhaseProgress]);
+
+  const beginSlideRecovery = useCallback((
+    nowMs: number,
+    endPosture: SlideEndPosture,
+    reason: SlideCancelReason,
+    crouchHeld: boolean,
+  ) => {
+    if (slidePhaseRef.current === 'recover' || slidePhaseRef.current === 'none') {
+      return;
+    }
+    slidePhaseRef.current = 'recover';
+    slidePhaseStartedAtRef.current = nowMs;
+    slidePhaseDurationMsRef.current = SLIDE_RECOVER_MS;
+    slideEndPostureRef.current = endPosture;
+    slideCancelReasonRef.current = reason;
+    if (endPosture === 'stand') {
+      crouchedRef.current = false;
+      if (crouchModeSettingRef.current === 'hold' && crouchHeld) {
+        slideSuppressCrouchUntilReleaseRef.current = true;
+      }
+    } else {
+      crouchedRef.current = true;
+    }
+    getSlideStateSnapshot(nowMs);
+  }, [getSlideStateSnapshot]);
+
+  const finishSlide = useCallback((nowMs: number) => {
+    const endPosture = slideEndPostureRef.current;
+    slideCooldownUntilRef.current = nowMs + SLIDE_COOLDOWN_MS;
+    crouchedRef.current = endPosture === 'crouch';
+    resetSlideState(slideHeadingYawRef.current, {
+      keepCooldown: true,
+      keepSuppressLatch: slideSuppressCrouchUntilReleaseRef.current,
+    });
+  }, [resetSlideState]);
+
+  const startSlide = useCallback((nowMs: number) => {
+    resolveDesiredPlanarVelocity(slideDirectionRef.current, {
+      moveX: moveInputRef.current.x,
+      moveY: moveInputRef.current.y,
+      aimYaw: yawRef.current,
+      desiredSpeed: 1,
+    });
+    const entryHeadingYaw = Math.atan2(
+      -slideDirectionRef.current.x,
+      -slideDirectionRef.current.y,
+    );
+    slidePhaseRef.current = 'entry';
+    slidePhaseStartedAtRef.current = nowMs;
+    slidePhaseDurationMsRef.current = SLIDE_ENTRY_MS;
+    slideStartedAtRef.current = nowMs;
+    slideEntrySpeedRef.current = Math.max(SLIDE_TRIGGER_MIN_SPEED, planarSpeedRef.current);
+    slideEntryHeadingYawRef.current = entryHeadingYaw;
+    slideForwardYawRef.current = yawRef.current;
+    slideHeadingYawRef.current = entryHeadingYaw;
+    slideEndPostureRef.current = 'crouch';
+    slideCancelReasonRef.current = 'none';
+    slideSuppressCrouchUntilReleaseRef.current = false;
+    crouchedRef.current = true;
+    crouchHoldLatchRef.current = false;
+    getSlideStateSnapshot(nowMs);
+  }, [getSlideStateSnapshot]);
+
+  const cancelSlide = useCallback(() => {
+    const crouchHeld =
+      isBindingDown(keyStateRef.current, keybindsRef.current.crouch) ||
+      gamepadFrameStateRef.current.crouchHeld;
+    const nowMs = performance.now();
+    if (
+      slidePhaseRef.current === 'entry' ||
+      slidePhaseRef.current === 'glide'
+    ) {
+      beginSlideRecovery(nowMs, 'stand', 'input', crouchHeld);
+      return;
+    }
+    if (slidePhaseRef.current === 'recover') {
+      slideEndPostureRef.current = 'stand';
+      slideCancelReasonRef.current = 'input';
+      crouchedRef.current = false;
+      if (crouchModeSettingRef.current === 'hold' && crouchHeld) {
+        slideSuppressCrouchUntilReleaseRef.current = true;
+      }
+      getSlideStateSnapshot(nowMs);
+    }
+  }, [beginSlideRecovery, getSlideStateSnapshot]);
 
   const requestLock = useCallback((element: HTMLElement) => {
     if (document.pointerLockElement === element) return;
@@ -562,6 +763,7 @@ export function usePlayerController({
     inputEnabledRef.current = inputEnabled;
     if (!inputEnabled) {
       keyStateRef.current = {};
+      crouchPressedRef.current = false;
       jumpQueuedRef.current = false;
       crouchedRef.current = false;
       crouchHoldLatchRef.current = false;
@@ -577,17 +779,19 @@ export function usePlayerController({
       headYawOffsetRef.current = 0;
       leanTargetRef.current = 0;
       leanLerpRef.current = 0;
+      resetSlideState(bodyYawRef.current);
       clearHeldCombatInput();
       if (document.pointerLockElement === gl.domElement) {
         document.exitPointerLock();
       }
     }
-  }, [clearHeldCombatInput, gl.domElement, inputEnabled]);
+  }, [clearHeldCombatInput, gl.domElement, inputEnabled, resetSlideState]);
 
   useEffect(() => {
     gameplayInputEnabledRef.current = gameplayInputEnabled;
     if (!gameplayInputEnabled) {
       keyStateRef.current = {};
+      crouchPressedRef.current = false;
       jumpQueuedRef.current = false;
       crouchedRef.current = false;
       crouchHoldLatchRef.current = false;
@@ -603,9 +807,10 @@ export function usePlayerController({
       headYawOffsetRef.current = 0;
       leanTargetRef.current = 0;
       leanLerpRef.current = 0;
+      resetSlideState(bodyYawRef.current);
       clearHeldCombatInput();
     }
-  }, [clearHeldCombatInput, gameplayInputEnabled]);
+  }, [clearHeldCombatInput, gameplayInputEnabled, resetSlideState]);
 
   useEffect(() => {
     cameraEnabledRef.current = cameraEnabled;
@@ -693,12 +898,8 @@ export function usePlayerController({
         event.code === crouchBinding &&
         (pointerLockedRef.current || inventoryPanelOpenRef.current)
       ) {
-        if (crouchModeSettingRef.current === 'toggle') {
-          if (!event.repeat) {
-            crouchedRef.current = !crouchedRef.current;
-          }
-        } else if (!crouchHoldLatchRef.current) {
-          crouchedRef.current = true;
+        if (!event.repeat) {
+          crouchPressedRef.current = true;
         }
       }
 
@@ -708,6 +909,10 @@ export function usePlayerController({
         (pointerLockedRef.current || inventoryPanelOpenRef.current) &&
         groundedRef.current
       ) {
+        if (slidePhaseRef.current !== 'none') {
+          jumpQueuedRef.current = false;
+          return;
+        }
         if (crouchedRef.current) {
           crouchedRef.current = false;
           if (
@@ -726,6 +931,7 @@ export function usePlayerController({
     const onKeyUp = (event: KeyboardEvent) => {
       keyStateRef.current[event.code] = false;
       if (event.code === keybindsRef.current.crouch) {
+        crouchPressedRef.current = false;
         crouchHoldLatchRef.current = false;
         if (crouchModeSettingRef.current === 'hold') {
           crouchedRef.current = false;
@@ -833,6 +1039,7 @@ export function usePlayerController({
       if (!locked) {
         if (!inventoryPanelOpenRef.current) {
           keyStateRef.current = {};
+          crouchPressedRef.current = false;
           jumpQueuedRef.current = false;
           crouchedRef.current = false;
           crouchHoldLatchRef.current = false;
@@ -846,6 +1053,7 @@ export function usePlayerController({
           headYawOffsetRef.current = 0;
           leanTargetRef.current = 0;
           leanLerpRef.current = 0;
+          resetSlideState(bodyYawRef.current);
           controllerInventoryHeldRef.current = false;
         }
       }
@@ -876,6 +1084,7 @@ export function usePlayerController({
     gl.domElement,
     openInventoryPanel,
     requestLock,
+    resetSlideState,
     syncTriggerHeld,
   ]);
 
@@ -1092,27 +1301,96 @@ export function usePlayerController({
     }
 
     const crouchBinding = bindings.crouch;
+    const crouchPressed =
+      crouchPressedRef.current ||
+      (controllerActionEnabled && controllerState.crouchPressed);
+    crouchPressedRef.current = false;
     const crouchHeld =
       (keyboardMovementEnabled && isBindingDown(keys, crouchBinding)) ||
       (controllerMovementEnabled && controllerState.crouchHeld);
-    if (controllerActionEnabled && controllerState.crouchPressed) {
-      if (crouchModeSettingRef.current === 'toggle') {
-        crouchedRef.current = !crouchedRef.current;
-      } else if (!crouchHoldLatchRef.current) {
-        crouchedRef.current = true;
-      }
+    if (!crouchHeld) {
+      slideSuppressCrouchUntilReleaseRef.current = false;
     }
-    if (crouchModeRef.current === 'hold') {
-      if (!movementEnabled) {
-        crouchedRef.current = false;
-      } else if (!crouchHeld) {
-        crouchedRef.current = false;
-        crouchHoldLatchRef.current = false;
-      } else if (!crouchHoldLatchRef.current) {
-        crouchedRef.current = true;
+
+    const currentSlidePhase = slidePhaseRef.current;
+    const slideInputEligible = isSlideInputEligible(
+      moveInputRef.current.x,
+      moveInputRef.current.y,
+    );
+    const currentSlideProgress = getSlidePhaseProgress(nowMs);
+    if (currentSlidePhase === 'entry' || currentSlidePhase === 'glide') {
+      const crouchReleased =
+        crouchModeRef.current === 'hold' && !crouchHeld;
+      if (crouchReleased) {
+        beginSlideRecovery(nowMs, 'stand', 'crouch_release', crouchHeld);
+      } else if (!slideInputEligible) {
+        beginSlideRecovery(nowMs, 'stand', 'input', crouchHeld);
+      } else if (
+        currentSlidePhase === 'entry' &&
+        currentSlideProgress >= 1
+      ) {
+        slidePhaseRef.current = 'glide';
+        slidePhaseStartedAtRef.current = nowMs;
+        slidePhaseDurationMsRef.current = SLIDE_GLIDE_MS;
+        getSlideStateSnapshot(nowMs);
+      } else if (
+        currentSlidePhase === 'glide' &&
+        currentSlideProgress >= 1
+      ) {
+        beginSlideRecovery(nowMs, 'crouch', 'finished', crouchHeld);
+      }
+    } else if (
+      currentSlidePhase === 'recover' &&
+      currentSlideProgress >= 1
+    ) {
+      finishSlide(nowMs);
+    }
+
+    if (
+      slidePhaseRef.current === 'entry' ||
+      slidePhaseRef.current === 'glide'
+    ) {
+      crouchedRef.current = true;
+    } else if (slidePhaseRef.current === 'recover') {
+      crouchedRef.current = slideEndPostureRef.current === 'crouch';
+    } else {
+      const canStartSlide =
+        crouchPressed &&
+        movementEnabled &&
+        groundedRef.current &&
+        movementTierRef.current === 'run' &&
+        planarSpeedRef.current >= SLIDE_TRIGGER_MIN_SPEED &&
+        slideInputEligible &&
+        nowMs >= slideCooldownUntilRef.current;
+      if (canStartSlide) {
+        startSlide(nowMs);
+      } else {
+        if (crouchPressed && !slideSuppressCrouchUntilReleaseRef.current) {
+          if (crouchModeSettingRef.current === 'toggle') {
+            crouchedRef.current = !crouchedRef.current;
+          } else if (!crouchHoldLatchRef.current) {
+            crouchedRef.current = true;
+          }
+        }
+        if (crouchModeRef.current === 'hold') {
+          if (!movementEnabled) {
+            crouchedRef.current = false;
+          } else if (!crouchHeld) {
+            crouchedRef.current = false;
+            crouchHoldLatchRef.current = false;
+          } else if (
+            !crouchHoldLatchRef.current &&
+            !slideSuppressCrouchUntilReleaseRef.current
+          ) {
+            crouchedRef.current = true;
+          }
+        }
       }
     }
 
+    const slideMotionActive =
+      slidePhaseRef.current === 'entry' || slidePhaseRef.current === 'glide';
+    const slideVisualActive = slidePhaseRef.current !== 'none';
     const movementProfile = movementProfileRef.current;
     const hasDirectionalInput = moveInputRef.current.lengthSq() > 0.001;
     const controllerWalkPressed =
@@ -1120,8 +1398,11 @@ export function usePlayerController({
       controllerState.moveMagnitude > CONTROLLER_INPUT_EPSILON &&
       controllerState.moveMagnitude < CONTROLLER_WALK_THRESHOLD;
     const crouchSprintLocked =
-      crouchedRef.current ||
-      crouchLerpRef.current >= CROUCH_SPRINT_LOCK_THRESHOLD;
+      !slideMotionActive &&
+      (
+        crouchedRef.current ||
+        crouchLerpRef.current >= CROUCH_SPRINT_LOCK_THRESHOLD
+      );
     if (controllerSettingsValue.toggleSprint &&
       (crouchSprintLocked || adsRef.current)
     ) {
@@ -1157,17 +1438,20 @@ export function usePlayerController({
       groundedRef.current &&
       sprintEligible;
     const previousMovementTier = movementTierRef.current;
-    const movementTier: MovementTier = sprinting
+    const baseMovementTier: MovementTier = sprinting
       ? 'run'
       : walkPressed
         ? 'walk'
         : 'jog';
+    const reportedMovementTier: MovementTier = slideVisualActive
+      ? 'run'
+      : baseMovementTier;
 
     const moveSpeed =
-      movementTier === 'run'
+      baseMovementTier === 'run'
         ? SPRINT_SPEED * movementProfile.sprintScale
         : WALK_SPEED *
-          (movementTier === 'walk'
+          (baseMovementTier === 'walk'
             ? movementProfile.walkScale
             : movementProfile.jogScale);
 
@@ -1181,9 +1465,44 @@ export function usePlayerController({
     });
     const allowSprintMomentum =
       previousMovementTier === 'run' || sprintMomentumRef.current;
-    movementTierRef.current = movementTier;
+    movementTierRef.current = reportedMovementTier;
 
-    if (groundedRef.current) {
+    if (slideMotionActive && groundedRef.current) {
+      const slideElapsedMs = Math.max(0, nowMs - slideStartedAtRef.current);
+      const straightenWindow = SLIDE_STRAIGHTEN_END_MS - SLIDE_STRAIGHTEN_START_MS;
+      const straightenProgress = straightenWindow > 0
+        ? clamp01(
+            (slideElapsedMs - SLIDE_STRAIGHTEN_START_MS) / straightenWindow,
+          ) * SLIDE_DIAGONAL_STRAIGHTEN_FACTOR
+        : 0;
+      slideHeadingYawRef.current = lerpAngle(
+        slideEntryHeadingYawRef.current,
+        slideForwardYawRef.current,
+        straightenProgress,
+      );
+      const slideSpeedProgress = clamp01(
+        slideElapsedMs / (SLIDE_ENTRY_MS + SLIDE_GLIDE_MS),
+      );
+      const easedSlideSpeedProgress = THREE.MathUtils.smoothstep(
+        slideSpeedProgress,
+        SLIDE_SPEED_DECAY_START,
+        1,
+      );
+      const targetSlideSpeed = Math.max(
+        SLIDE_MIN_TAIL_SPEED,
+        THREE.MathUtils.lerp(
+          slideEntrySpeedRef.current,
+          slideEntrySpeedRef.current * SLIDE_END_SPEED_FACTOR,
+          easedSlideSpeedProgress,
+        ),
+      );
+      velocityRef.current.set(
+        -Math.sin(slideHeadingYawRef.current) * targetSlideSpeed,
+        -Math.cos(slideHeadingYawRef.current) * targetSlideSpeed,
+      );
+      desiredPlanarVelocityRef.current.copy(velocityRef.current);
+      sprintMomentumRef.current = false;
+    } else if (groundedRef.current) {
       const groundedResponse = stepGroundedPlanarVelocity(
         velocityRef.current,
         desiredPlanarVelocityRef.current,
@@ -1224,12 +1543,22 @@ export function usePlayerController({
       });
     }
     planarSpeedRef.current = velocityRef.current.length();
+    const slideState = getSlideStateSnapshot(nowMs);
 
     const fppLocked = firstPersonRef.current;
     const shootingAlignActive = nowMs < shootAlignUntilRef.current;
     if (fppLocked) {
       targetBodyYawRef.current = yawRef.current;
       bodyYawRef.current = yawRef.current;
+      headYawOffsetRef.current = 0;
+    } else if (slideVisualActive) {
+      targetBodyYawRef.current = slideState.headingYaw;
+      bodyYawRef.current = dampAngle(
+        bodyYawRef.current,
+        targetBodyYawRef.current,
+        RUN_TRANSITION_BODY_YAW_DAMP,
+        delta,
+      );
       headYawOffsetRef.current = 0;
     } else if (adsRef.current || shootingAlignActive) {
       targetBodyYawRef.current = yawRef.current;
@@ -1388,7 +1717,9 @@ export function usePlayerController({
       controllerState.jumpPressed &&
       groundedRef.current
     ) {
-      if (crouchedRef.current) {
+      if (slidePhaseRef.current !== 'none') {
+        jumpQueuedRef.current = false;
+      } else if (crouchedRef.current) {
         crouchedRef.current = false;
         if (
           crouchModeSettingRef.current === 'hold' &&
@@ -1530,6 +1861,9 @@ export function usePlayerController({
     );
     const crouchLookHeightOffset =
       TPP_CROUCH_LOOK_HEIGHT_OFFSET * crouchCameraLerpRef.current;
+    const slideCameraBlend = resolveSlideCameraBlend(slideState);
+    const slideFppDip = SLIDE_CAMERA_DIP_FPP * slideCameraBlend;
+    const slideTppDip = SLIDE_CAMERA_DIP_TPP * slideCameraBlend;
     const peekLeftHeld =
       (keyboardMovementEnabled && isBindingDown(keys, bindings.peekLeft)) ||
       (controllerActionEnabled && controllerState.peekLeftHeld);
@@ -1537,9 +1871,9 @@ export function usePlayerController({
       (keyboardMovementEnabled && isBindingDown(keys, bindings.peekRight)) ||
       (controllerActionEnabled && controllerState.peekRightHeld);
     leanTargetRef.current =
-      !sprinting && peekLeftHeld && !peekRightHeld
+      !sprinting && !slideVisualActive && peekLeftHeld && !peekRightHeld
         ? -1
-        : !sprinting && peekRightHeld && !peekLeftHeld
+        : !sprinting && !slideVisualActive && peekRightHeld && !peekLeftHeld
           ? 1
           : 0;
     leanLerpRef.current = THREE.MathUtils.damp(
@@ -1584,7 +1918,8 @@ export function usePlayerController({
           FIRST_PERSON_CAMERA_HEIGHT,
           FIRST_PERSON_CAMERA_HEIGHT_CROUCH,
           crouchT,
-        ),
+        ) -
+        slideFppDip,
       positionRef.current.z,
     );
     fppCameraPos.addScaledVector(aimDir, FIRST_PERSON_CAMERA_FORWARD_OFFSET);
@@ -1643,7 +1978,8 @@ export function usePlayerController({
       LOOK_AT_HEIGHT +
       crouchLookHeightOffset +
       CAMERA_HEIGHT_BIAS -
-      sniperADS * 0.08;
+      sniperADS * 0.08 -
+      slideTppDip;
 
     const tppCameraPos = tempThirdPersonCameraPosRef.current;
     const rawCamY = pivotY + orbitVerticalDist;
@@ -1697,7 +2033,9 @@ export function usePlayerController({
         const sniperAdsFov = SNIPER_ADS_FOV / sniperZoomRef.current;
         const adsFovTarget =
           activeWeapon === 'sniper' ? sniperAdsFov : RIFLE_ADS_FOV;
-        const targetFov = THREE.MathUtils.lerp(baseFov, adsFovTarget, adsT);
+        const targetFov =
+          THREE.MathUtils.lerp(baseFov, adsFovTarget, adsT) +
+          (adsRef.current ? 0 : SLIDE_FOV_BUMP * slideCameraBlend);
         const perspectiveCamera = camera as THREE.PerspectiveCamera;
         const nextFov = THREE.MathUtils.damp(
           perspectiveCamera.fov,
@@ -1721,7 +2059,7 @@ export function usePlayerController({
       const perspectiveCamera = camera as THREE.PerspectiveCamera;
       const nextFov = THREE.MathUtils.damp(
         perspectiveCamera.fov,
-        fovRef.current,
+        fovRef.current + SLIDE_FOV_BUMP * slideCameraBlend,
         14,
         delta,
       );
@@ -1734,7 +2072,7 @@ export function usePlayerController({
     const speed = planarSpeedRef.current;
     movingRef.current = speed > 0.15;
     sprintingRef.current =
-      movementTierRef.current === 'run' && movingRef.current;
+      slideVisualActive || (baseMovementTier === 'run' && movingRef.current);
 
     snapshotAccumulatorRef.current += delta;
     if (snapshotAccumulatorRef.current >= 0.05) {
@@ -1778,6 +2116,7 @@ export function usePlayerController({
         performance.now() + Math.max(0, durationMs),
       );
     },
+    cancelSlide,
     getPosition: () => positionRef.current,
     getYaw: () => yawRef.current,
     getAimYaw: () => yawRef.current,
@@ -1806,6 +2145,7 @@ export function usePlayerController({
     isMoving: () => movingRef.current,
     isGrounded: () => groundedRef.current,
     getMovementTier: () => movementTierRef.current,
+    getSlideState: () => getSlideStateSnapshot(),
     setRunFacing: (phase, headingYaw) => {
       runFacingPhaseRef.current = phase;
       if (typeof headingYaw === 'number' && Number.isFinite(headingYaw)) {
@@ -1879,6 +2219,7 @@ export function usePlayerController({
       crouchLerpRef.current = 0;
       crouchCameraLerpRef.current = 0;
       crouchHoldLatchRef.current = false;
+      crouchPressedRef.current = false;
       inventoryPanelOpenRef.current = false;
       firstPersonRef.current = false;
       viewModeLerpRef.current = 0;
@@ -1892,6 +2233,7 @@ export function usePlayerController({
       runFacingPhaseRef.current = 'off';
       runFacingYawRef.current = yawRadians;
       planarSpeedRef.current = 0;
+      resetSlideState(yawRadians);
       keyStateRef.current = {};
       if (triggerHeldRef.current) {
         triggerHeldRef.current = false;
@@ -2021,6 +2363,35 @@ function isBindingDown(keys: KeyState, bindingCode: string) {
 
 function normalizeAngle(angleRadians: number) {
   return Math.atan2(Math.sin(angleRadians), Math.cos(angleRadians));
+}
+
+function lerpAngle(start: number, end: number, t: number) {
+  return normalizeAngle(start + normalizeAngle(end - start) * clamp01(t));
+}
+
+function clamp01(value: number) {
+  return clamp(value, 0, 1);
+}
+
+function isSlideInputEligible(moveX: number, moveY: number) {
+  return moveY >= SLIDE_TRIGGER_FORWARD_MIN &&
+    isSprintInputEligible(moveX, moveY);
+}
+
+function resolveSlideCameraBlend(slideState: SlideState) {
+  if (!slideState.active) {
+    return 0;
+  }
+  if (slideState.phase === 'entry') {
+    return THREE.MathUtils.smoothstep(slideState.progress, 0, 1);
+  }
+  if (slideState.phase === 'glide') {
+    return 1;
+  }
+  if (slideState.phase === 'recover') {
+    return 1 - THREE.MathUtils.smoothstep(slideState.progress, 0, 1);
+  }
+  return 0;
 }
 
 function dampAngle(

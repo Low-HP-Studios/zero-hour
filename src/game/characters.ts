@@ -14,7 +14,7 @@ export type CharacterDefinition = {
   textures: CharacterTextureEntry[] | null;
 };
 
-export const DEFAULT_CHARACTER_ID = 'trooper';
+export const DEFAULT_CHARACTER_ID = 'stylish-man';
 
 export const CHARACTER_REGISTRY: CharacterDefinition[] = [
   {
@@ -61,21 +61,6 @@ export const CHARACTER_REGISTRY: CharacterDefinition[] = [
     ],
   },
   {
-    id: 'arabian-girl',
-    displayName: 'Arabian Girl',
-    modelUrl: `${CHARACTER_BASE}/Arabian Girl/arabian girl.fbx`,
-    textureBasePath: `${CHARACTER_BASE}/Arabian Girl/arabian girl.fbm/`,
-    textures: [
-      {
-        match: 'arabian_girl',
-        base: 'arabian_girl_baseColor_0.png',
-        normal: 'arabian_girl_normal_2.png',
-      },
-      { match: 'eyes', base: 'eyes_baseColor_3.png' },
-      { match: 'teeth', base: 'teeth.002_baseColor_4.png' },
-    ],
-  },
-  {
     id: 'chinese-girl',
     displayName: 'Chinese Girl',
     modelUrl: `${CHARACTER_BASE}/Chinese Girl/chinese girl animated.fbx`,
@@ -87,13 +72,6 @@ export const CHARACTER_REGISTRY: CharacterDefinition[] = [
         normal: 'chinese_girl_normal_2.png',
       },
     ],
-  },
-  {
-    id: 'cyborg-girl',
-    displayName: 'Cyborg Girl',
-    modelUrl: `${CHARACTER_BASE}/Cyborg Girl/Cyborg Girl.fbx`,
-    textureBasePath: `${CHARACTER_BASE}/Cyborg Girl/Cyborg Girl.fbm/`,
-    textures: [{ match: '', base: '_0.png', normal: '_2.png' }],
   },
   {
     id: 'elder-monty',
@@ -205,37 +183,6 @@ export const CHARACTER_REGISTRY: CharacterDefinition[] = [
       },
     ],
   },
-  {
-    id: 'winter-soldier',
-    displayName: 'Winter Soldier',
-    modelUrl: `${CHARACTER_BASE}/Winter Soldier/Male.fbx`,
-    textureBasePath: `${CHARACTER_BASE}/Winter Soldier/Male.fbm/`,
-    textures: [
-      {
-        match: 'material_1',
-        base: 'material_1_baseColor_3.png',
-        normal: 'material_1_normal_5.png',
-      },
-      {
-        match: 'material',
-        base: 'material_baseColor_0.png',
-        normal: 'material_normal_2.png',
-      },
-    ],
-  },
-  {
-    id: 'zombie',
-    displayName: 'Zombie',
-    modelUrl: `${CHARACTER_BASE}/Zombie/Zombie.fbx`,
-    textureBasePath: `${CHARACTER_BASE}/Zombie/Zombie.fbm/`,
-    textures: [
-      {
-        match: '',
-        base: 'Scene_-_Root_baseColor_0.png',
-        normal: 'Scene_-_Root_normal_3.png',
-      },
-    ],
-  },
 ];
 
 export function getCharacterById(id: string): CharacterDefinition {
@@ -243,4 +190,8 @@ export function getCharacterById(id: string): CharacterDefinition {
     CHARACTER_REGISTRY.find((c) => c.id === id) ??
     CHARACTER_REGISTRY.find((c) => c.id === DEFAULT_CHARACTER_ID)!
   );
+}
+
+export function isCharacterId(id: unknown): id is CharacterDefinition["id"] {
+  return typeof id === "string" && CHARACTER_REGISTRY.some((c) => c.id === id);
 }

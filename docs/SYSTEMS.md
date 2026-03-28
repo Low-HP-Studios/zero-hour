@@ -44,7 +44,7 @@
 
 ### Responsibilities
 
-- Load Trooper FBX model with `SkeletonUtils.clone()` for correct skinned mesh handling
+- Load the default character FBX with `SkeletonUtils.clone()` for correct skinned mesh handling
 - Manually apply textures (FBXLoader can't resolve the channel types in this FBX)
 - Scale model to `CHARACTER_TARGET_HEIGHT` (1.65m) and ground it
 - Drive `AnimationMixer` with the curated locomotion and rifle animation set
@@ -62,7 +62,7 @@
 
 - No directional walk blending (walkLeft/walkRight/walkBack clips loaded but not used for directional blending)
 - No rifle-specific animations during combat (rifleIdle/rifleWalk loaded but not triggered)
-- Texture map is hardcoded to Trooper model — changing models requires updating `CHARACTER_TEXTURE_MAP`
+- The fallback texture map is tied to the default character model — changing that fallback requires updating `CHARACTER_TEXTURE_MAP`
 
 ## Weapon System
 

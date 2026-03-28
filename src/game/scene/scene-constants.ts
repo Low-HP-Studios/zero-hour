@@ -79,28 +79,30 @@ export const PATH_POINTS: [number, number][] = [
 ];
 
 export const CHARACTER_MODEL_URL =
-  '/assets/models/character/Trooper/tactical guy.fbx';
+  '/assets/models/character/Stylish Man/undercover cop.fbx';
 export const CHARACTER_TARGET_HEIGHT = 1.65;
 export const PRACTICE_TARGET_HEIGHT = CHARACTER_TARGET_HEIGHT;
 export const CHARACTER_YAW_OFFSET = Math.PI;
 export const CHARACTER_TEXTURE_BASE =
-  '/assets/models/character/Trooper/tactical guy.fbm/';
+  '/assets/models/character/Stylish Man/undercover cop.fbm/';
 export const CHARACTER_TEXTURE_MAP: Record<
   string,
-  { base: string; normal: string }
+  { base: string; normal?: string }
 > = {
-  Body: { base: 'Body_baseColor_0.png', normal: 'Body_normal_1.png' },
-  Bottom: { base: 'Bottom_baseColor_2.png', normal: 'Bottom_normal_3.png' },
-  Glove: { base: 'Glove_baseColor_4.png', normal: 'Glove_normal_5.png' },
-  material: {
-    base: 'material_baseColor_6.png',
-    normal: 'material_normal_7.png',
+  body: { base: 'body_baseColor_0.png' },
+  bottom: { base: 'bottom_baseColor_1.png', normal: 'bottom_normal_3.png' },
+  eyes: { base: 'eyes_baseColor_4.png' },
+  glasses: {
+    base: 'glasses_Bake1_baseColor_5.png',
+    normal: 'glasses_Bake1_normal_7.png',
   },
-  Mask: { base: 'Mask_baseColor_8.png', normal: 'Mask_normal_9.png' },
-  Shoes: { base: 'Shoes_baseColor_10.png', normal: 'Shoes_normal_11.png' },
-  material_6: {
-    base: 'material_6_baseColor_12.png',
-    normal: 'material_6_normal_13.png',
+  hair: { base: 'hair_baseColor_8.png', normal: 'hair_normal_9.png' },
+  head: { base: 'head_baseColor_10.png' },
+  shoes: { base: 'shoes_baseColor_11.png', normal: 'shoes_normal_13.png' },
+  teeth: { base: 'teeth_baseColor_14.png' },
+  material: {
+    base: 'material_baseColor_15.png',
+    normal: 'material_normal_17.png',
   },
 };
 

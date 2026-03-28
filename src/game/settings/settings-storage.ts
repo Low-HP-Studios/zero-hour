@@ -31,6 +31,7 @@ import {
   type StressModeCount,
 } from "../types";
 import { PIXEL_RATIO_OPTIONS, STRESS_STEPS } from "./settings-constants";
+import { DEFAULT_CHARACTER_ID, isCharacterId } from "../characters";
 
 const LEGACY_SETTINGS_STORAGE_KEY = "zerohour.settings.v1";
 const PRE_RESET_SETTINGS_STORAGE_KEYS = [
@@ -135,7 +136,7 @@ export function createDefaultPersistedSettings(): PersistedSettings {
     hudPanels: { ...DEFAULT_HUD_OVERLAY_TOGGLES },
     stressCount: 0,
     audioVolumes: { ...DEFAULT_AUDIO_VOLUMES },
-    selectedCharacterId: "trooper",
+    selectedCharacterId: DEFAULT_CHARACTER_ID,
     selectedMapId: DEFAULT_PRACTICE_MAP_ID,
     selectedSkyId: DEFAULT_SKY_ID,
   };
@@ -165,6 +166,10 @@ function readHudOverlayToggles(
 
 function readString(value: unknown, fallback: string): string {
   return typeof value === "string" && value.length > 0 ? value : fallback;
+}
+
+function readCharacterId(value: unknown, fallback: string): string {
+  return isCharacterId(value) ? value : fallback;
 }
 
 function readMapId(value: unknown, fallback: MapId): MapId {
@@ -887,7 +892,7 @@ export function parsePersistedSettings(value: unknown): PersistedSettings {
     },
     hudPanels: readHudOverlayToggles(value.hudPanels, defaults.hudPanels),
     stressCount: readStressModeCount(value.stressCount, defaults.stressCount),
-    selectedCharacterId: readString(
+    selectedCharacterId: readCharacterId(
       value.selectedCharacterId,
       defaults.selectedCharacterId,
     ),

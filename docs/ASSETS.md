@@ -2,7 +2,7 @@
 
 ## Current State
 
-- **Character model**: Trooper FBX (`public/assets/models/character/Trooper/tactical guy.fbx`) with manual texture loading from `.fbm` folder
+- **Character model**: Stylish Man FBX (`public/assets/models/character/Stylish Man/undercover cop.fbx`) with manual texture loading from `.fbm` folder
 - **Animations**: Mixamo FBX files grouped by movement mode and rifle stance
 - **Practice maps**: selectable procedural `Range` plus a code-built `School` blockout
 - **School gameplay**: traversal-only blockout for now, with no targets, no loot spawns, and authored floor/blocker data for multi-level movement
@@ -13,7 +13,7 @@
 
 - Practice maps: `public/assets/map/`
 - Models: `public/assets/models/`
-- Character textures: `public/assets/models/character/Trooper/tactical guy.fbm/`
+- Character textures: `public/assets/models/character/Stylish Man/undercover cop.fbm/`
 - Animations: `public/assets/animations/` (`movement/standing`, `movement/crouch`, `rifle/aim`, `rifle/ready`)
 - Audio: `public/assets/audio/`
 - Attribution file: `public/assets/ATTRIBUTION.md`
@@ -38,10 +38,10 @@
 
 ### Character Model (FBX)
 
-- Model: `tactical guy.fbx` loaded via `loadFbxAsset()` with `SkeletonUtils.clone()`
-- Textures: 7 materials (Body, Bottom, Glove, material/vest, Mask, Shoes, material_6) — each with baseColor + normal map
+- Model: `undercover cop.fbx` loaded via `loadFbxAsset()` with `SkeletonUtils.clone()`
+- Textures: mixed baseColor materials with selective normal maps, manually applied from the model's `.fbm` directory
 - FBXLoader can't auto-apply textures (unsupported map channel type) — `applyCharacterTextures()` manually loads them via `TextureLoader` with `encodeURI()` for space-safe URLs
-- Texture map defined in `CHARACTER_TEXTURE_MAP` in `Scene.tsx`
+- Texture map fallback is defined in `src/game/scene/scene-constants.ts`
 
 ### Animations (FBX)
 

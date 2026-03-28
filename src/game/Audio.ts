@@ -23,6 +23,9 @@ type LoadedBuffers = {
   footstepRight: AudioBuffer | null;
   footstepSometimes: AudioBuffer | null;
   crouchEnter: AudioBuffer | null;
+  slide1: AudioBuffer | null;
+  slide2: AudioBuffer | null;
+  slide3: AudioBuffer | null;
   kill: AudioBuffer | null;
   hit: AudioBuffer | null;
   uiHover: AudioBuffer | null;
@@ -40,6 +43,9 @@ type BufferSourceUrls = {
   footstepRight: string | null;
   footstepSometimes: string | null;
   crouchEnter: string | null;
+  slide1: string | null;
+  slide2: string | null;
+  slide3: string | null;
   kill: string | null;
   hit: string | null;
   uiHover: string | null;
@@ -53,6 +59,7 @@ type LoadedAudioBuffer = {
 
 export type AudioBufferKey = keyof LoadedBuffers;
 type FootstepBufferKey = 'footstepLeft' | 'footstepRight' | 'footstepSometimes';
+type SlideBufferKey = 'slide1' | 'slide2' | 'slide3';
 
 const AUDIO_DEBUG = import.meta.env.DEV;
 const TARGET_FOOTSTEP_PEAK = 0.12;
@@ -65,6 +72,11 @@ const FOOTSTEP_BUFFER_KEYS: readonly FootstepBufferKey[] = [
   'footstepLeft',
   'footstepRight',
   'footstepSometimes',
+];
+const SLIDE_BUFFER_KEYS: readonly SlideBufferKey[] = [
+  'slide1',
+  'slide2',
+  'slide3',
 ];
 const FOOTSTEP_BUFFER_KEY_BY_VARIANT: Record<
   FootstepVariant,
@@ -91,6 +103,7 @@ const AUDIO_BUFFER_KEYS: AudioBufferKey[] = [
   'dryFire',
   ...FOOTSTEP_BUFFER_KEYS,
   'crouchEnter',
+  ...SLIDE_BUFFER_KEYS,
   'kill',
   'hit',
   'uiHover',
@@ -121,6 +134,9 @@ const AUDIO_URL_CANDIDATES = {
   footstepRight: ['/assets/audio/footsteps/right-left.wav'],
   footstepSometimes: ['/assets/audio/footsteps/sometimes.wav'],
   crouchEnter: ['/assets/audio/footsteps/crouch.wav'],
+  slide1: ['/assets/audio/footsteps/slide/slide-1.wav'],
+  slide2: ['/assets/audio/footsteps/slide/slide-2.wav'],
+  slide3: ['/assets/audio/footsteps/slide/slide-3.wav'],
   kill: ['/assets/audio/improved/kill-sound.wav'],
   hit: [
     '/assets/audio/hit.mp3',
@@ -163,6 +179,9 @@ export class AudioManager {
     footstepRight: null,
     footstepSometimes: null,
     crouchEnter: null,
+    slide1: null,
+    slide2: null,
+    slide3: null,
     kill: null,
     hit: null,
     uiHover: null,
@@ -179,6 +198,9 @@ export class AudioManager {
     footstepRight: null,
     footstepSometimes: null,
     crouchEnter: null,
+    slide1: null,
+    slide2: null,
+    slide3: null,
     kill: null,
     hit: null,
     uiHover: null,
@@ -192,7 +214,13 @@ export class AudioManager {
     sometimes: 1,
   };
   private crouchEnterFileGain = 1;
+  private slideFileGains: Record<SlideBufferKey, number> = {
+    slide1: 1,
+    slide2: 1,
+    slide3: 1,
+  };
   private footstepDebugCounter = 0;
+  private slideDebugCounter = 0;
   private gunshotDebugCounter = 0;
   private reloadDebugCounter = 0;
   private shellingDebugCounter = 0;
@@ -237,6 +265,8 @@ export class AudioManager {
 
       if (isFootstepBufferKey(key)) {
         this.handleFootstepBufferLoaded(key, loaded);
+      } else if (isSlideBufferKey(key)) {
+        this.handleSlideBufferLoaded(key, loaded);
       } else if (key === 'crouchEnter') {
         this.handleCrouchEnterBufferLoaded(loaded);
       } else if (AUDIO_DEBUG && loaded.url) {
@@ -327,6 +357,58 @@ export class AudioManager {
       console.warn('[Audio] Crouch enter file buffer unavailable.');
     }
     void this.prepareBuffer('crouchEnter');
+  }
+
+  playSlide() {
+    if (
+      !this.context ||
+      this.context.state !== 'running' ||
+      !this.footstepGain
+    ) {
+      return;
+    }
+
+    const loadedKeys = SLIDE_BUFFER_KEYS.filter((key) => this.buffers[key]);
+    const slideKey = loadedKeys.length > 0
+      ? loadedKeys[Math.floor(Math.random() * loadedKeys.length)]
+      : null;
+
+    if (slideKey) {
+      const buffer = this.buffers[slideKey];
+      if (buffer) {
+        const source = this.context.createBufferSource();
+        source.buffer = buffer;
+        source.playbackRate.value = 0.95 + Math.random() * 0.08;
+        const gain = this.context.createGain();
+        const tone = this.context.createBiquadFilter();
+        tone.type = 'lowpass';
+        tone.frequency.value = 1600;
+        gain.gain.value = 0.95 * this.slideFileGains[slideKey];
+        source.connect(tone);
+        tone.connect(gain);
+        gain.connect(this.footstepGain);
+        const now = this.context.currentTime;
+        source.start(now);
+        source.stop(now + source.buffer.duration);
+        if (AUDIO_DEBUG) {
+          this.slideDebugCounter += 1;
+          if (this.slideDebugCounter % 6 === 0) {
+            console.debug('[Audio] Slide trigger', {
+              source: this.sourceUrls[slideKey],
+              fileGain: Number(this.slideFileGains[slideKey].toFixed(2)),
+              mixVolume: Number(this.volumes.footsteps.toFixed(2)),
+            });
+          }
+        }
+        return;
+      }
+    }
+
+    if (AUDIO_DEBUG) {
+      console.warn('[Audio] Slide file buffer unavailable.');
+    }
+    this.playCrouchEnter();
+    void Promise.all(SLIDE_BUFFER_KEYS.map((key) => this.prepareBuffer(key)));
   }
 
   playLanding() {
@@ -916,6 +998,32 @@ export class AudioManager {
     }
   }
 
+  private handleSlideBufferLoaded(
+    key: SlideBufferKey,
+    slide: LoadedAudioBuffer,
+  ) {
+    if (slide.buffer) {
+      const analysis = analyzeBuffer(slide.buffer);
+      this.slideFileGains[key] = clamp(
+        TARGET_FOOTSTEP_PEAK / Math.max(analysis.peak, 0.001),
+        1,
+        MAX_FOOTSTEP_FILE_GAIN,
+      );
+      if (AUDIO_DEBUG) {
+        console.info('[Audio] Slide loaded', {
+          key,
+          url: slide.url,
+          duration: Number(slide.buffer.duration.toFixed(3)),
+          peak: Number(analysis.peak.toFixed(4)),
+          rms: Number(analysis.rms.toFixed(4)),
+          appliedFileGain: Number(this.slideFileGains[key].toFixed(2)),
+        });
+      }
+    } else if (AUDIO_DEBUG) {
+      console.warn('[Audio] Slide file not found.', { key });
+    }
+  }
+
   private playFootstepInternal(
     variant: FootstepVariant,
     filePlaybackRate?: number,
@@ -1124,4 +1232,8 @@ export const sharedAudioManager = new AudioManager();
 
 function isFootstepBufferKey(key: AudioBufferKey): key is FootstepBufferKey {
   return FOOTSTEP_BUFFER_KEYS.includes(key as FootstepBufferKey);
+}
+
+function isSlideBufferKey(key: AudioBufferKey): key is SlideBufferKey {
+  return SLIDE_BUFFER_KEYS.includes(key as SlideBufferKey);
 }
