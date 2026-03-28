@@ -33,7 +33,8 @@ const textureCache = new Map<string, Promise<THREE.Texture | null>>();
 THREE.Cache.enabled = true;
 
 export function loadGlbAsset(url: string): Promise<THREE.Group | null> {
-  const cached = glbCache.get(url);
+  const cacheKey = encodeURI(url);
+  const cached = glbCache.get(cacheKey);
   if (cached) {
     return cached;
   }
@@ -45,7 +46,7 @@ export function loadGlbAsset(url: string): Promise<THREE.Group | null> {
       ]);
       const loader = new GLTFLoader();
       const gltf = await new Promise<{ scene: THREE.Group }>((resolve, reject) => {
-        loader.load(url, resolve, undefined, reject);
+        loader.load(cacheKey, resolve, undefined, reject);
       });
       return gltf.scene;
     } catch {
@@ -53,12 +54,13 @@ export function loadGlbAsset(url: string): Promise<THREE.Group | null> {
     }
   })();
 
-  glbCache.set(url, request);
+  glbCache.set(cacheKey, request);
   return request;
 }
 
 export function loadGlbWithAnimations(url: string): Promise<GltfResult | null> {
-  const cached = gltfFullCache.get(url);
+  const cacheKey = encodeURI(url);
+  const cached = gltfFullCache.get(cacheKey);
   if (cached) return cached;
 
   const request = (async () => {
@@ -67,7 +69,7 @@ export function loadGlbWithAnimations(url: string): Promise<GltfResult | null> {
       const loader = new GLTFLoader();
       const gltf = await new Promise<{ scene: THREE.Group; animations: THREE.AnimationClip[] }>(
         (resolve, reject) => {
-          loader.load(url, resolve, undefined, reject);
+          loader.load(cacheKey, resolve, undefined, reject);
         },
       );
       return { scene: gltf.scene, animations: gltf.animations };
@@ -76,7 +78,7 @@ export function loadGlbWithAnimations(url: string): Promise<GltfResult | null> {
     }
   })();
 
-  gltfFullCache.set(url, request);
+  gltfFullCache.set(cacheKey, request);
   return request;
 }
 

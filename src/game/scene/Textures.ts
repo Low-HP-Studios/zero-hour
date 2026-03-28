@@ -182,6 +182,84 @@ export function createGrassTexture(): THREE.CanvasTexture | null {
   return texture;
 }
 
+export function createAnimeGroundTexture(): THREE.CanvasTexture | null {
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  const size = 512;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    return null;
+  }
+
+  const rng = createSeededRandom(420221);
+  const base = ctx.createLinearGradient(0, 0, size, size);
+  base.addColorStop(0, "#dce9bf");
+  base.addColorStop(0.45, "#b9d699");
+  base.addColorStop(1, "#96c982");
+  ctx.fillStyle = base;
+  ctx.fillRect(0, 0, size, size);
+
+  for (let i = 0; i < 60; i += 1) {
+    const x = rng() * size;
+    const y = rng() * size;
+    const radius = 44 + rng() * 96;
+    const tint = rng() > 0.5 ? [232, 243, 208] : [170, 214, 154];
+    const alpha = 0.08 + rng() * 0.08;
+    const grd = ctx.createRadialGradient(x, y, radius * 0.15, x, y, radius);
+    grd.addColorStop(0, `rgba(${tint[0]}, ${tint[1]}, ${tint[2]}, ${alpha})`);
+    grd.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = grd;
+    ctx.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+  }
+
+  ctx.strokeStyle = "rgba(255,255,255,0.18)";
+  ctx.lineWidth = 6;
+  ctx.lineCap = "round";
+  for (let i = 0; i < 18; i += 1) {
+    const startX = rng() * size;
+    const startY = rng() * size;
+    const endX = startX + (-40 + rng() * 80);
+    const endY = startY + (-40 + rng() * 80);
+    ctx.beginPath();
+    ctx.moveTo(startX, startY);
+    ctx.quadraticCurveTo(
+      (startX + endX) / 2 + (-24 + rng() * 48),
+      (startY + endY) / 2 + (-24 + rng() * 48),
+      endX,
+      endY,
+    );
+    ctx.stroke();
+  }
+
+  for (let i = 0; i < 1600; i += 1) {
+    const x = rng() * size;
+    const y = rng() * size;
+    const radius = 0.8 + rng() * 2.6;
+    const alpha = 0.03 + rng() * 0.08;
+    const color = rng() > 0.68
+      ? `rgba(244, 248, 231, ${alpha})`
+      : `rgba(130, 184, 114, ${alpha})`;
+    ctx.beginPath();
+    ctx.fillStyle = color;
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(7, 7);
+  texture.needsUpdate = true;
+  return texture;
+}
+
 export function createTundraTexture(): THREE.CanvasTexture | null {
   if (typeof document === "undefined") {
     return null;
@@ -346,6 +424,96 @@ export function createIceTexture(): THREE.CanvasTexture | null {
     grd.addColorStop(1, "rgba(186, 230, 244, 0)");
     ctx.fillStyle = grd;
     ctx.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(6, 6);
+  texture.needsUpdate = true;
+  return texture;
+}
+
+export function createSpaceFloorTexture(): THREE.CanvasTexture | null {
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  const size = 512;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    return null;
+  }
+
+  const rng = createSeededRandom(880031);
+  const base = ctx.createLinearGradient(0, 0, size, size);
+  base.addColorStop(0, "#4a4f77");
+  base.addColorStop(0.45, "#32385a");
+  base.addColorStop(1, "#1a2036");
+  ctx.fillStyle = base;
+  ctx.fillRect(0, 0, size, size);
+
+  const panel = size / 4;
+  ctx.lineWidth = 2;
+  for (let x = 0; x <= size; x += panel) {
+    ctx.strokeStyle = "rgba(160, 172, 244, 0.18)";
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, size);
+    ctx.stroke();
+  }
+  for (let y = 0; y <= size; y += panel) {
+    ctx.strokeStyle = "rgba(160, 172, 244, 0.18)";
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(size, y);
+    ctx.stroke();
+  }
+
+  for (let i = 0; i < 220; i += 1) {
+    const x = rng() * size;
+    const y = rng() * size;
+    const radius = 10 + rng() * 34;
+    const alpha = 0.04 + rng() * 0.08;
+    const grd = ctx.createRadialGradient(x, y, 0, x, y, radius);
+    grd.addColorStop(0, `rgba(160, 150, 255, ${alpha})`);
+    grd.addColorStop(0.55, `rgba(128, 196, 255, ${alpha * 0.55})`);
+    grd.addColorStop(1, "rgba(92,170,255,0)");
+    ctx.fillStyle = grd;
+    ctx.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+  }
+
+  for (let i = 0; i < 900; i += 1) {
+    const x = rng() * size;
+    const y = rng() * size;
+    const radius = 0.3 + rng() * 1.2;
+    const alpha = 0.05 + rng() * 0.1;
+    ctx.beginPath();
+    ctx.fillStyle = `rgba(220, 228, 255, ${alpha})`;
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.strokeStyle = "rgba(220, 226, 255, 0.13)";
+  ctx.lineCap = "round";
+  for (let i = 0; i < 120; i += 1) {
+    const startX = rng() * size;
+    const startY = rng() * size;
+    const length = 10 + rng() * 30;
+    const angle = rng() * Math.PI * 2;
+    ctx.lineWidth = 0.6 + rng() * 1.4;
+    ctx.beginPath();
+    ctx.moveTo(startX, startY);
+    ctx.lineTo(
+      startX + Math.cos(angle) * length,
+      startY + Math.sin(angle) * length,
+    );
+    ctx.stroke();
   }
 
   const texture = new THREE.CanvasTexture(canvas);

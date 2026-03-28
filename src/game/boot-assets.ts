@@ -6,6 +6,11 @@ import {
   type PreloadManifestEntry,
 } from "./AssetLoader";
 import type { AudioBufferKey, AudioManager } from "./Audio";
+import {
+  DEFAULT_SKY_ID,
+  getSkyById,
+  type SkyId,
+} from "./sky-registry";
 import type { PracticeMapDefinition } from "./scene/practice-maps";
 import {
   SIGHT_FBX_URL,
@@ -17,9 +22,7 @@ export const TARGET_CHARACTER_MODEL_URL =
   "/assets/models/character/Trooper/tactical guy.fbx";
 export const TARGET_IDLE_ANIMATION_URL =
   "/assets/animations/movement/standing/idle.fbx";
-const PRACTICE_WORLD_SKY_ASSET_URL = "/assets/sky/sky.glb";
 const PRACTICE_GRASS_TEXTURE_URL = "/assets/grass-texture.jpg";
-const PRACTICE_RANGE_FLOOR_TEXTURE_URL = "/assets/range-floor-texture.jpg";
 
 export const TARGET_TEXTURE_URLS: string[] = [];
 
@@ -132,9 +135,10 @@ export function createDeferredBootPreloadManifest(
 
 export async function preloadPracticeMapAssets(
   practiceMap: PracticeMapDefinition,
+  skyId: SkyId = DEFAULT_SKY_ID,
 ): Promise<void> {
   const requests: Array<Promise<unknown>> = [
-    loadGlbAsset(PRACTICE_WORLD_SKY_ASSET_URL),
+    loadGlbAsset(getSkyById(skyId).assetUrl),
   ];
 
   switch (practiceMap.environment.kind) {
@@ -151,11 +155,16 @@ export async function preloadPracticeMapAssets(
       requests.push(preloadTextureAsset(PRACTICE_GRASS_TEXTURE_URL));
       break;
     case "range-procedural":
-      requests.push(preloadTextureAsset(PRACTICE_RANGE_FLOOR_TEXTURE_URL));
       break;
   }
 
   await Promise.all(requests);
+}
+
+export async function preloadSkyAsset(
+  skyId: SkyId,
+): Promise<void> {
+  await loadGlbAsset(getSkyById(skyId).assetUrl);
 }
 
 function fileName(url: string) {

@@ -14,33 +14,38 @@ import {
 import type { StressModeCount } from "../types";
 import type { PracticeMapDefinition } from "./practice-maps";
 import { RANGE_PRACTICE_MAP } from "./practice-maps";
-import { OCEAN_LEVEL_Y, OCEAN_SIZE } from "./scene-constants";
+import { OCEAN_LEVEL_Y } from "./scene-constants";
 import {
-  createGrassTexture,
+  createAnimeGroundTexture,
   createIceTexture,
   createNightSkyTexture,
   createSkyTexture,
+  createSpaceFloorTexture,
   createTundraTexture,
 } from "./Textures";
 import { loadGlbAsset, preloadTextureAsset } from "../AssetLoader";
+import {
+  DEFAULT_SKY_ASSET_URL,
+  DEFAULT_SKY_ID,
+  getSkyById,
+  type RangeTextureKind,
+  type SkyEnvironmentTheme,
+} from "../sky-registry";
 
 const VOID_SKY = new THREE.Color("#040405");
 const LIVE_SKY = new THREE.Color("#b8d4e8");
-const VOID_WALKABLE = new THREE.Color("#080809");
-const LIVE_WALKABLE = new THREE.Color("#e8e8e8");
 const GRID_MAJOR_COLOR = new THREE.Color("#8fb3ff");
 const GRID_MINOR_COLOR = new THREE.Color("#ffffff");
-const TUNDRA_COLOR_VOID = new THREE.Color("#06080c");
+const TUNDRA_COLOR_VOID = new THREE.Color("#171d24");
 const TUNDRA_COLOR_LIVE = new THREE.Color("#dde7f0");
-const ICE_COLOR_VOID = new THREE.Color("#07111c");
+const ICE_COLOR_VOID = new THREE.Color("#141e28");
 const ICE_COLOR_LIVE = new THREE.Color("#7ab5c8");
 const SCHOOL_BASE_VOID = new THREE.Color("#0b0b0d");
 const SCHOOL_BASE_LIVE = new THREE.Color("#64615b");
 const FLOOR_GRID_DIVISIONS = 16;
-const BACKDROP_SHELF_SIZE = 760;
-const RANGE_FLOOR_TEXTURE_URL = "/assets/range-floor-texture.jpg";
-const RANGE_FLOOR_METERS_PER_TILE = 8;
-const SKY_ASSET_URL = "/assets/sky/sky.glb";
+const BACKDROP_SHELF_PADDING = 26;
+const BACKDROP_SHELF_MIN_SIZE = 196;
+const OCEAN_PADDING = 84;
 const SKY_ASSET_BASE_RADIUS = 500;
 const WORLD_SKY_RADIUS = 560;
 
@@ -51,6 +56,7 @@ const POOL_MAX_Z = 34;
 const POOL_WATER_Y = -1.1;
 const POOL_FLOOR_Y = -1.75;
 const POOL_WALL_HEIGHT = 1.6;
+const DEFAULT_RANGE_THEME = getSkyById(DEFAULT_SKY_ID).environmentTheme;
 
 function clamp01(value: number) {
   return Math.max(0, Math.min(1, value));
@@ -58,6 +64,133 @@ function clamp01(value: number) {
 
 function blendColor(from: THREE.Color, to: THREE.Color, amount: number) {
   return new THREE.Color().copy(from).lerp(to, clamp01(amount));
+}
+
+function blendNumber(from: number, to: number, amount: number) {
+  return THREE.MathUtils.lerp(from, to, clamp01(amount));
+}
+
+function blendHexColor(from: string, to: string, amount: number) {
+  return new THREE.Color(from).lerp(new THREE.Color(to), clamp01(amount));
+}
+
+function resolveRangeTexture(
+  kind: RangeTextureKind,
+  textures: Record<RangeTextureKind, THREE.Texture | null>,
+) {
+  return textures[kind] ?? undefined;
+}
+
+function RangeFloodlight({
+  position,
+  mastHeight,
+  beamColor,
+  beamIntensity,
+  beamDistance,
+}: {
+  position: [number, number, number];
+  mastHeight: number;
+  beamColor: THREE.ColorRepresentation;
+  beamIntensity: number;
+  beamDistance: number;
+}) {
+  return (
+    <group position={position}>
+      <mesh position={[0, mastHeight / 2, 0]} castShadow={false} receiveShadow={false}>
+        <boxGeometry args={[0.26, mastHeight, 0.26]} />
+        <meshStandardMaterial color="#2a3141" roughness={0.5} metalness={0.58} />
+      </mesh>
+      <mesh position={[0, mastHeight + 0.42, 0]} castShadow={false} receiveShadow={false}>
+        <boxGeometry args={[1.24, 0.46, 0.72]} />
+        <meshStandardMaterial color="#343d56" roughness={0.38} metalness={0.68} />
+      </mesh>
+      <mesh position={[0, mastHeight + 0.42, 0.37]} castShadow={false} receiveShadow={false}>
+        <boxGeometry args={[0.94, 0.18, 0.06]} />
+        <meshBasicMaterial color={beamColor} toneMapped={false} />
+      </mesh>
+      <pointLight
+        position={[0, mastHeight + 0.12, 0.24]}
+        intensity={beamIntensity}
+        distance={beamDistance}
+        decay={1.35}
+        color={beamColor}
+      />
+    </group>
+  );
+}
+
+function RangePracticalLights({
+  centerX,
+  centerZ,
+  sizeX,
+  sizeZ,
+  blend,
+}: {
+  centerX: number;
+  centerZ: number;
+  sizeX: number;
+  sizeZ: number;
+  blend: number;
+}) {
+  const liveBlend = clamp01((blend - 0.34) / 0.66);
+
+  if (liveBlend <= 0.001) {
+    return null;
+  }
+
+  const sideOffsetX = sizeX * 0.22;
+  const nearLightZ = centerZ - sizeZ * 0.16;
+  const farLightZ = centerZ - sizeZ * 0.34;
+  const sideBeamIntensity = THREE.MathUtils.lerp(6, 42, liveBlend);
+  const farBeamIntensity = THREE.MathUtils.lerp(5, 34, liveBlend);
+  const nearFillIntensity = THREE.MathUtils.lerp(1.4, 18, liveBlend);
+  const accentColor = "#dbe3ff";
+  const fillColor = "#b6c8ff";
+  const moonKeyIntensity = THREE.MathUtils.lerp(0.22, 0.78, liveBlend);
+  const sideKeyIntensity = THREE.MathUtils.lerp(0.12, 0.42, liveBlend);
+
+  return (
+    <group>
+      <RangeFloodlight
+        position={[centerX - sideOffsetX, 0, nearLightZ]}
+        mastHeight={9.2}
+        beamColor={accentColor}
+        beamIntensity={sideBeamIntensity}
+        beamDistance={126}
+      />
+      <RangeFloodlight
+        position={[centerX + sideOffsetX, 0, nearLightZ]}
+        mastHeight={9.2}
+        beamColor={accentColor}
+        beamIntensity={sideBeamIntensity}
+        beamDistance={126}
+      />
+      <RangeFloodlight
+        position={[centerX, 0, farLightZ]}
+        mastHeight={10.4}
+        beamColor={fillColor}
+        beamIntensity={farBeamIntensity}
+        beamDistance={136}
+      />
+      <directionalLight
+        position={[centerX, 18, centerZ + sizeZ * 0.22]}
+        intensity={moonKeyIntensity}
+        color="#dbe4ff"
+      />
+      <directionalLight
+        position={[centerX + sizeX * 0.18, 11, centerZ + sizeZ * 0.08]}
+        intensity={sideKeyIntensity}
+        color="#8fb2ff"
+      />
+      <pointLight
+        position={[centerX, 6.4, centerZ + sizeZ * 0.06]}
+        intensity={nearFillIntensity}
+        distance={94}
+        decay={1.05}
+        color="#eef3ff"
+      />
+    </group>
+  );
 }
 
 function createSkyMaterial(source: THREE.Material) {
@@ -116,12 +249,14 @@ function SkyBackdrop({
   centerX,
   centerZ,
   radius,
+  skyAssetUrl = DEFAULT_SKY_ASSET_URL,
   fallbackColor,
   fallbackTexture,
 }: {
   centerX: number;
   centerZ: number;
   radius: number;
+  skyAssetUrl?: string;
   fallbackColor?: THREE.ColorRepresentation;
   fallbackTexture?: THREE.Texture | null;
 }) {
@@ -130,8 +265,9 @@ function SkyBackdrop({
   useEffect(() => {
     let disposed = false;
     let localScene: THREE.Group | null = null;
+    setSkyScene(null);
 
-    loadGlbAsset(SKY_ASSET_URL).then((group) => {
+    loadGlbAsset(skyAssetUrl).then((group) => {
       if (disposed || !group) return;
       const clone = group.clone(true);
       prepareSkyAsset(clone);
@@ -145,7 +281,7 @@ function SkyBackdrop({
         disposeObjectMaterials(localScene);
       }
     };
-  }, []);
+  }, [skyAssetUrl]);
 
   if (skyScene) {
     const scale = radius / SKY_ASSET_BASE_RADIUS;
@@ -200,20 +336,36 @@ function WorldBackdrop({
   theme,
   worldBounds,
   showSkyBackdrop = true,
+  skyAssetUrl = DEFAULT_SKY_ASSET_URL,
+  rangeTheme,
+  surfaceBlend = theme,
 }: {
   theme: number;
   worldBounds: PracticeMapDefinition["worldBounds"];
   showSkyBackdrop?: boolean;
+  skyAssetUrl?: string;
+  rangeTheme?: SkyEnvironmentTheme;
+  surfaceBlend?: number;
 }) {
   const skyTexture = useMemo(() => createSkyTexture(), []);
   const nightSkyTexture = useMemo(() => createNightSkyTexture(), []);
   const tundraTexture = useMemo(() => createTundraTexture(), []);
   const iceTexture = useMemo(() => createIceTexture(), []);
+  const animeTexture = useMemo(() => createAnimeGroundTexture(), []);
+  const spaceTexture = useMemo(() => createSpaceFloorTexture(), []);
   const liveTheme = clamp01(theme);
+  const rangeBlend = clamp01(surfaceBlend);
   const textureReveal = clamp01((liveTheme - 0.52) / 0.48);
   const allowTextures = textureReveal > 0.001;
   const walkableCenterX = (worldBounds.minX + worldBounds.maxX) / 2;
   const walkableCenterZ = (worldBounds.minZ + worldBounds.maxZ) / 2;
+  const worldSizeX = worldBounds.maxX - worldBounds.minX;
+  const worldSizeZ = worldBounds.maxZ - worldBounds.minZ;
+  const backdropShelfSize = Math.max(
+    Math.max(worldSizeX, worldSizeZ) + BACKDROP_SHELF_PADDING * 2,
+    BACKDROP_SHELF_MIN_SIZE,
+  );
+  const oceanSize = backdropShelfSize + OCEAN_PADDING * 2;
 
   useEffect(() => {
     return () => {
@@ -221,8 +373,90 @@ function WorldBackdrop({
       nightSkyTexture?.dispose();
       tundraTexture?.dispose();
       iceTexture?.dispose();
+      animeTexture?.dispose();
+      spaceTexture?.dispose();
     };
-  }, [iceTexture, nightSkyTexture, skyTexture, tundraTexture]);
+  }, [
+    animeTexture,
+    iceTexture,
+    nightSkyTexture,
+    skyTexture,
+    spaceTexture,
+    tundraTexture,
+  ]);
+
+  const textureBank = useMemo<Record<RangeTextureKind, THREE.Texture | null>>(
+    () => ({
+      tundra: tundraTexture,
+      ice: iceTexture,
+      anime: animeTexture,
+      space: spaceTexture,
+    }),
+    [animeTexture, iceTexture, spaceTexture, tundraTexture],
+  );
+
+  const backdropColor = rangeTheme
+    ? blendHexColor(
+        rangeTheme.range.menu.backdropColor,
+        rangeTheme.range.gameplay.backdropColor,
+        rangeBlend,
+      )
+    : blendColor(TUNDRA_COLOR_VOID, TUNDRA_COLOR_LIVE, liveTheme);
+  const oceanColor = rangeTheme
+    ? blendHexColor(
+        rangeTheme.range.menu.oceanColor,
+        rangeTheme.range.gameplay.oceanColor,
+        rangeBlend,
+      )
+    : blendColor(ICE_COLOR_VOID, ICE_COLOR_LIVE, liveTheme);
+  const backdropTexture = rangeTheme
+    ? resolveRangeTexture(rangeTheme.range.backdropTexture, textureBank)
+    : allowTextures
+    ? tundraTexture ?? undefined
+    : undefined;
+  const oceanTexture = rangeTheme
+    ? resolveRangeTexture(rangeTheme.range.oceanTexture, textureBank)
+    : allowTextures
+    ? iceTexture ?? undefined
+    : undefined;
+  const backdropRoughness = rangeTheme
+    ? blendNumber(
+        rangeTheme.range.menu.backdropRoughness,
+        rangeTheme.range.gameplay.backdropRoughness,
+        rangeBlend,
+      )
+    : 0.98;
+  const backdropMetalness = rangeTheme
+    ? blendNumber(
+        rangeTheme.range.menu.backdropMetalness,
+        rangeTheme.range.gameplay.backdropMetalness,
+        rangeBlend,
+      )
+    : 0.03;
+  const oceanRoughness = rangeTheme
+    ? blendNumber(
+        rangeTheme.range.menu.oceanRoughness,
+        rangeTheme.range.gameplay.oceanRoughness,
+        rangeBlend,
+      )
+    : THREE.MathUtils.lerp(0.96, 0.46, liveTheme);
+  const oceanMetalness = rangeTheme
+    ? blendNumber(
+        rangeTheme.range.menu.oceanMetalness,
+        rangeTheme.range.gameplay.oceanMetalness,
+        rangeBlend,
+      )
+    : THREE.MathUtils.lerp(0.02, 0.18, liveTheme);
+  const skyFallbackTexture = rangeTheme
+    ? rangeTheme.range.backdropTexture === "space"
+      ? nightSkyTexture
+      : skyTexture
+    : allowTextures
+    ? skyTexture
+    : nightSkyTexture;
+  const skyFallbackColor = rangeTheme
+    ? backdropColor
+    : blendColor(VOID_SKY, LIVE_SKY, textureReveal);
 
   return (
     <group>
@@ -231,8 +465,9 @@ function WorldBackdrop({
           centerX={walkableCenterX}
           centerZ={walkableCenterZ}
           radius={WORLD_SKY_RADIUS}
-          fallbackColor={blendColor(VOID_SKY, LIVE_SKY, textureReveal)}
-          fallbackTexture={allowTextures ? skyTexture : nightSkyTexture}
+          skyAssetUrl={skyAssetUrl}
+          fallbackColor={skyFallbackColor}
+          fallbackTexture={skyFallbackTexture ?? undefined}
         />
       ) : null}
 
@@ -240,12 +475,12 @@ function WorldBackdrop({
         position={[walkableCenterX, -0.12, walkableCenterZ]}
         rotation={[-Math.PI / 2, 0, 0]}
       >
-        <planeGeometry args={[BACKDROP_SHELF_SIZE, BACKDROP_SHELF_SIZE]} />
+        <planeGeometry args={[backdropShelfSize, backdropShelfSize]} />
         <meshStandardMaterial
-          color={blendColor(TUNDRA_COLOR_VOID, TUNDRA_COLOR_LIVE, liveTheme)}
-          map={allowTextures ? tundraTexture ?? undefined : undefined}
-          roughness={0.98}
-          metalness={0.03}
+          color={backdropColor}
+          map={backdropTexture}
+          roughness={backdropRoughness}
+          metalness={backdropMetalness}
         />
       </mesh>
 
@@ -253,12 +488,12 @@ function WorldBackdrop({
         position={[walkableCenterX, OCEAN_LEVEL_Y, walkableCenterZ]}
         rotation={[-Math.PI / 2, 0, 0]}
       >
-        <planeGeometry args={[OCEAN_SIZE, OCEAN_SIZE]} />
+        <planeGeometry args={[oceanSize, oceanSize]} />
         <meshStandardMaterial
-          color={blendColor(ICE_COLOR_VOID, ICE_COLOR_LIVE, liveTheme)}
-          map={allowTextures ? iceTexture ?? undefined : undefined}
-          roughness={THREE.MathUtils.lerp(0.96, 0.46, liveTheme)}
-          metalness={THREE.MathUtils.lerp(0.02, 0.18, liveTheme)}
+          color={oceanColor}
+          map={oceanTexture}
+          roughness={oceanRoughness}
+          metalness={oceanMetalness}
         />
       </mesh>
     </group>
@@ -271,6 +506,9 @@ export type MapEnvironmentProps = {
   floorGridOpacity: number;
   worldBounds?: PracticeMapDefinition["worldBounds"];
   showSkyBackdrop?: boolean;
+  skyAssetUrl?: string;
+  skyTheme?: SkyEnvironmentTheme;
+  surfaceBlend?: number;
 };
 
 export function MapEnvironment({
@@ -279,46 +517,28 @@ export function MapEnvironment({
   floorGridOpacity,
   worldBounds = RANGE_PRACTICE_MAP.worldBounds,
   showSkyBackdrop = true,
+  skyAssetUrl = DEFAULT_SKY_ASSET_URL,
+  skyTheme = DEFAULT_RANGE_THEME,
+  surfaceBlend = theme,
 }: MapEnvironmentProps) {
-  const grassTexture = useMemo(() => createGrassTexture(), []);
-  const [rangeFloorTexture, setRangeFloorTexture] = useState<
-    THREE.Texture | null
-  >(null);
+  const tundraTexture = useMemo(() => createTundraTexture(), []);
+  const animeTexture = useMemo(() => createAnimeGroundTexture(), []);
+  const spaceTexture = useMemo(() => createSpaceFloorTexture(), []);
   const floorGridRef = useRef<THREE.GridHelper>(null);
-  const liveTheme = clamp01(theme);
-  const textureReveal = clamp01((liveTheme - 0.52) / 0.48);
-  const allowTextures = textureReveal > 0.001;
-  const shadowEnabled = shadows && liveTheme > 0.6;
+  const shadowEnabled = shadows && clamp01(surfaceBlend) > 0.6;
   const walkableCenterX = (worldBounds.minX + worldBounds.maxX) / 2;
   const walkableCenterZ = (worldBounds.minZ + worldBounds.maxZ) / 2;
   const walkableSizeX = worldBounds.maxX - worldBounds.minX;
   const walkableSizeZ = worldBounds.maxZ - worldBounds.minZ;
-
-  useEffect(() => {
-    let disposed = false;
-    preloadTextureAsset(RANGE_FLOOR_TEXTURE_URL).then((tex) => {
-      if (disposed || !tex) return;
-      const floor = tex.clone();
-      floor.wrapS = THREE.RepeatWrapping;
-      floor.wrapT = THREE.RepeatWrapping;
-      floor.repeat.set(
-        walkableSizeX / RANGE_FLOOR_METERS_PER_TILE,
-        walkableSizeZ / RANGE_FLOOR_METERS_PER_TILE,
-      );
-      floor.colorSpace = THREE.SRGBColorSpace;
-      floor.needsUpdate = true;
-      setRangeFloorTexture(floor);
-    });
-    return () => {
-      disposed = true;
-    };
-  }, [walkableSizeX, walkableSizeZ]);
+  const rangeBlend = clamp01(surfaceBlend);
 
   useEffect(() => {
     return () => {
-      grassTexture?.dispose();
+      tundraTexture?.dispose();
+      animeTexture?.dispose();
+      spaceTexture?.dispose();
     };
-  }, [grassTexture]);
+  }, [animeTexture, spaceTexture, tundraTexture]);
 
   useEffect(() => {
     const helper = floorGridRef.current;
@@ -339,22 +559,47 @@ export function MapEnvironment({
     }
   }, [floorGridOpacity]);
 
+  const floorTextures = useMemo<Record<RangeTextureKind, THREE.Texture | null>>(
+    () => ({
+      tundra: tundraTexture,
+      ice: tundraTexture,
+      anime: animeTexture,
+      space: spaceTexture,
+    }),
+    [animeTexture, spaceTexture, tundraTexture],
+  );
+
+  const floorMaterial = skyTheme.range;
+  const showSpaceFloodlights = floorMaterial.floorTexture === "space";
+  const floorTexture = resolveRangeTexture(
+    floorMaterial.floorTexture,
+    floorTextures,
+  );
+  const floorColor = blendHexColor(
+    floorMaterial.menu.floorColor,
+    floorMaterial.gameplay.floorColor,
+    rangeBlend,
+  );
+  const floorRoughness = blendNumber(
+    floorMaterial.menu.floorRoughness,
+    floorMaterial.gameplay.floorRoughness,
+    rangeBlend,
+  );
+  const floorMetalness = blendNumber(
+    floorMaterial.menu.floorMetalness,
+    floorMaterial.gameplay.floorMetalness,
+    rangeBlend,
+  );
+
   return (
     <group>
       <WorldBackdrop
         theme={theme}
         worldBounds={worldBounds}
         showSkyBackdrop={showSkyBackdrop}
-      />
-
-      <ambientLight
-        intensity={THREE.MathUtils.lerp(0, 0.25, liveTheme)}
-        color="#ffffff"
-      />
-      <directionalLight
-        position={[walkableCenterX + 20, 30, walkableCenterZ + 10]}
-        intensity={THREE.MathUtils.lerp(0, 0.3, liveTheme)}
-        color="#fff8ee"
+        skyAssetUrl={skyAssetUrl}
+        rangeTheme={skyTheme}
+        surfaceBlend={surfaceBlend}
       />
 
       <mesh
@@ -365,12 +610,10 @@ export function MapEnvironment({
       >
         <planeGeometry args={[walkableSizeX, walkableSizeZ]} />
         <meshStandardMaterial
-          color={blendColor(VOID_WALKABLE, LIVE_WALKABLE, liveTheme)}
-          map={allowTextures
-            ? (rangeFloorTexture ?? grassTexture ?? undefined)
-            : undefined}
-          roughness={THREE.MathUtils.lerp(1, 0.85, liveTheme)}
-          metalness={THREE.MathUtils.lerp(0, 0.02, liveTheme)}
+          color={floorColor}
+          map={floorTexture}
+          roughness={floorRoughness}
+          metalness={floorMetalness}
         />
       </mesh>
 
@@ -386,6 +629,18 @@ export function MapEnvironment({
             ]}
             position={[walkableCenterX, 0.05, walkableCenterZ]}
             renderOrder={5}
+          />
+        )
+        : null}
+
+      {showSpaceFloodlights
+        ? (
+          <RangePracticalLights
+            centerX={walkableCenterX}
+            centerZ={walkableCenterZ}
+            sizeX={walkableSizeX}
+            sizeZ={walkableSizeZ}
+            blend={rangeBlend}
           />
         )
         : null}
@@ -553,11 +808,13 @@ function SchoolBlockoutEnvironment({
   shadows,
   theme,
   showSkyBackdrop,
+  skyAssetUrl,
 }: {
   practiceMap: PracticeMapDefinition;
   shadows: boolean;
   theme: number;
   showSkyBackdrop: boolean;
+  skyAssetUrl: string;
 }) {
   const worldBounds = practiceMap.worldBounds;
   const surfaces = practiceMap.walkableSurfaces ?? [];
@@ -574,6 +831,7 @@ function SchoolBlockoutEnvironment({
         theme={theme}
         worldBounds={worldBounds}
         showSkyBackdrop={showSkyBackdrop}
+        skyAssetUrl={skyAssetUrl}
       />
 
       <mesh
@@ -867,12 +1125,14 @@ function SchoolGlbEnvironment({
   theme: _theme,
   onCollisionReady,
   showSkyBackdrop,
+  skyAssetUrl,
 }: {
   practiceMap: PracticeMapDefinition;
   shadows: boolean;
   theme: number;
   onCollisionReady?: (volumes: readonly BlockingVolume[]) => void;
   showSkyBackdrop: boolean;
+  skyAssetUrl: string;
 }) {
   void _theme;
   const worldBounds = practiceMap.worldBounds;
@@ -1016,6 +1276,7 @@ function SchoolGlbEnvironment({
           centerX={centerX}
           centerZ={centerZ}
           radius={skyRadius}
+          skyAssetUrl={skyAssetUrl}
           fallbackTexture={skyTexture}
         />
       ) : null}
@@ -1073,6 +1334,9 @@ export function PracticeMapEnvironment({
   floorGridOpacity,
   onCollisionReady,
   showSkyBackdrop = true,
+  skyAssetUrl = DEFAULT_SKY_ASSET_URL,
+  skyTheme = DEFAULT_RANGE_THEME,
+  surfaceBlend = theme,
 }: {
   practiceMap: PracticeMapDefinition;
   shadows: boolean;
@@ -1080,6 +1344,9 @@ export function PracticeMapEnvironment({
   floorGridOpacity: number;
   onCollisionReady?: (volumes: readonly BlockingVolume[]) => void;
   showSkyBackdrop?: boolean;
+  skyAssetUrl?: string;
+  skyTheme?: SkyEnvironmentTheme;
+  surfaceBlend?: number;
 }) {
   if (practiceMap.environment.kind === "school-glb") {
     return (
@@ -1089,6 +1356,7 @@ export function PracticeMapEnvironment({
         theme={theme}
         onCollisionReady={onCollisionReady}
         showSkyBackdrop={showSkyBackdrop}
+        skyAssetUrl={skyAssetUrl}
       />
     );
   }
@@ -1100,6 +1368,7 @@ export function PracticeMapEnvironment({
         shadows={shadows}
         theme={theme}
         showSkyBackdrop={showSkyBackdrop}
+        skyAssetUrl={skyAssetUrl}
       />
     );
   }
@@ -1111,6 +1380,9 @@ export function PracticeMapEnvironment({
       floorGridOpacity={floorGridOpacity}
       worldBounds={practiceMap.worldBounds}
       showSkyBackdrop={showSkyBackdrop}
+      skyAssetUrl={skyAssetUrl}
+      skyTheme={skyTheme}
+      surfaceBlend={surfaceBlend}
     />
   );
 }

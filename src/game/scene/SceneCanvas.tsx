@@ -14,6 +14,11 @@ import * as THREE from "three";
 import type { AudioVolumeSettings } from "../Audio";
 import { markBootEvent } from "../boot-trace";
 import {
+  getSkyById,
+  type SceneLightingPreset,
+  type SkyId,
+} from "../sky-registry";
+import {
   Targets,
   resetTargets,
   RESPAWN_DELAY_MS,
@@ -76,6 +81,73 @@ function blendColor(from: THREE.Color, to: THREE.Color, amount: number) {
   return new THREE.Color().copy(from).lerp(to, clamp01(amount));
 }
 
+function blendNumber(from: number, to: number, amount: number) {
+  return THREE.MathUtils.lerp(from, to, clamp01(amount));
+}
+
+function blendLightingPresets(
+  from: SceneLightingPreset,
+  to: SceneLightingPreset,
+  amount: number,
+) {
+  return {
+    background: blendColor(
+      new THREE.Color(from.background),
+      new THREE.Color(to.background),
+      amount,
+    ),
+    fog: blendColor(
+      new THREE.Color(from.fog),
+      new THREE.Color(to.fog),
+      amount,
+    ),
+    skyLight: blendColor(
+      new THREE.Color(from.skyLight),
+      new THREE.Color(to.skyLight),
+      amount,
+    ),
+    groundLight: blendColor(
+      new THREE.Color(from.groundLight),
+      new THREE.Color(to.groundLight),
+      amount,
+    ),
+    hemisphereIntensity: blendNumber(
+      from.hemisphereIntensity,
+      to.hemisphereIntensity,
+      amount,
+    ),
+    ambientIntensity: blendNumber(
+      from.ambientIntensity,
+      to.ambientIntensity,
+      amount,
+    ),
+    sunIntensity: blendNumber(from.sunIntensity, to.sunIntensity, amount),
+    sunColor: blendColor(
+      new THREE.Color(from.sunColor),
+      new THREE.Color(to.sunColor),
+      amount,
+    ),
+    fillIntensity: blendNumber(from.fillIntensity, to.fillIntensity, amount),
+    fillColor: blendColor(
+      new THREE.Color(from.fillColor),
+      new THREE.Color(to.fillColor),
+      amount,
+    ),
+    menuKeyIntensity: blendNumber(
+      from.menuKeyIntensity,
+      to.menuKeyIntensity,
+      amount,
+    ),
+    menuKeyColor: blendColor(
+      new THREE.Color(from.menuKeyColor),
+      new THREE.Color(to.menuKeyColor),
+      amount,
+    ),
+    fogNear: blendNumber(from.fogNear, to.fogNear, amount),
+    fogFar: blendNumber(from.fogFar, to.fogFar, amount),
+  };
+}
+
 export type SceneHandle = {
   requestPointerLock: () => void;
   releasePointerLock: () => void;
@@ -90,6 +162,7 @@ type SceneProps = {
   audioVolumes: AudioVolumeSettings;
   stressCount: StressModeCount;
   practiceMap: PracticeMapDefinition;
+  selectedSkyId: SkyId;
   booting: boolean;
   deferredAssetsEnabled: boolean;
   presentation: ScenePresentation;
@@ -239,6 +312,7 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
   audioVolumes,
   stressCount,
   practiceMap,
+  selectedSkyId,
   booting,
   deferredAssetsEnabled,
   presentation,
@@ -303,7 +377,11 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
     ? practiceMap
     : RANGE_PRACTICE_MAP;
   const paceEnabled = lobbyFrameCapEnabled;
-  const showSkyBackdrop = presentation.phase === "playing";
+  const showSkyBackdrop = true;
+  const selectedSky = useMemo(() => getSkyById(selectedSkyId), [selectedSkyId]);
+  const selectedSkyAssetUrl = selectedSky.assetUrl;
+  const selectedSkyTheme = selectedSky.environmentTheme;
+  const useRangeTheme = renderedPracticeMap.id === RANGE_PRACTICE_MAP.id;
 
   const dpr = useMemo(() => {
     const devicePixelRatio =
@@ -318,6 +396,7 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
   const worldTheme = clamp01(
     presentation.worldTheme - presentation.killPulse * 0.08,
   );
+  const rangeThemeBlend = clamp01(presentation.worldTheme);
   const floorGridOpacity = presentation.phase === "menu"
     ? 0
     : presentation.phase === "entering"
@@ -325,19 +404,49 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
     : presentation.phase === "returning"
     ? 0.14 * clamp01((phaseProgress - 0.72) / 0.16)
     : 0;
-  const backgroundColor = blendColor(VOID_BG, LIVE_BG, worldTheme);
-  const fogColor = blendColor(VOID_FOG, LIVE_FOG, worldTheme);
-  const skyLightColor = blendColor(VOID_SKY_LIGHT, LIVE_SKY_LIGHT, worldTheme);
-  const groundLightColor = blendColor(
-    VOID_GROUND_LIGHT,
-    LIVE_GROUND_LIGHT,
-    worldTheme,
+  const rangeLighting = useMemo(
+    () =>
+      blendLightingPresets(
+        selectedSkyTheme.lighting.menu,
+        selectedSkyTheme.lighting.gameplay,
+        rangeThemeBlend,
+      ),
+    [rangeThemeBlend, selectedSkyTheme],
   );
-  const ambientIntensity = THREE.MathUtils.lerp(0.14, 0.5, worldTheme);
-  const hemisphereIntensity = THREE.MathUtils.lerp(0.22, 0.95, worldTheme);
-  const sunIntensity = THREE.MathUtils.lerp(0.05, 0.8, worldTheme);
-  const fillIntensity = THREE.MathUtils.lerp(0.12, 0.6, worldTheme);
-  const voidCharacterLightIntensity = THREE.MathUtils.lerp(4.4, 0.16, worldTheme);
+  const backgroundColor = useRangeTheme
+    ? rangeLighting.background
+    : blendColor(VOID_BG, LIVE_BG, worldTheme);
+  const fogColor = useRangeTheme
+    ? rangeLighting.fog
+    : blendColor(VOID_FOG, LIVE_FOG, worldTheme);
+  const fogNear = useRangeTheme ? rangeLighting.fogNear : 60;
+  const fogFar = useRangeTheme ? rangeLighting.fogFar : 420;
+  const skyLightColor = useRangeTheme
+    ? rangeLighting.skyLight
+    : blendColor(VOID_SKY_LIGHT, LIVE_SKY_LIGHT, worldTheme);
+  const groundLightColor = useRangeTheme
+    ? rangeLighting.groundLight
+    : blendColor(VOID_GROUND_LIGHT, LIVE_GROUND_LIGHT, worldTheme);
+  const ambientIntensity = useRangeTheme
+    ? rangeLighting.ambientIntensity
+    : THREE.MathUtils.lerp(0.14, 0.5, worldTheme);
+  const hemisphereIntensity = useRangeTheme
+    ? rangeLighting.hemisphereIntensity
+    : THREE.MathUtils.lerp(0.22, 0.95, worldTheme);
+  const sunIntensity = useRangeTheme
+    ? rangeLighting.sunIntensity
+    : THREE.MathUtils.lerp(0.05, 0.8, worldTheme);
+  const sunColor = useRangeTheme ? rangeLighting.sunColor : "#ffd2a2";
+  const fillIntensity = useRangeTheme
+    ? rangeLighting.fillIntensity
+    : THREE.MathUtils.lerp(0.12, 0.6, worldTheme);
+  const fillColor = useRangeTheme ? rangeLighting.fillColor : "#5ab8ff";
+  const voidCharacterLightIntensity = useRangeTheme
+    ? rangeLighting.menuKeyIntensity
+    : THREE.MathUtils.lerp(4.4, 0.16, worldTheme);
+  const menuKeyLightColor = useRangeTheme
+    ? rangeLighting.menuKeyColor
+    : MENU_KEY_LIGHT;
 
   const handleTargetHit = useCallback(
     (targetId: string, damage: number, nowMs: number) => {
@@ -467,7 +576,7 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
         frameIntervalMs={frameIntervalMs}
       />
       <color attach="background" args={[backgroundColor]} />
-      <fog attach="fog" args={[fogColor, 60, 420]} />
+      <fog attach="fog" args={[fogColor, fogNear, fogFar]} />
       <hemisphereLight
         args={[skyLightColor, groundLightColor, hemisphereIntensity]}
       />
@@ -475,7 +584,7 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
       <directionalLight
         position={[24, 430, -32]}
         intensity={sunIntensity}
-        color="#ffd2a2"
+        color={sunColor}
         castShadow={settings.shadows && worldTheme > 0.6}
         shadow-mapSize-width={2048}
         shadow-mapSize-height={2048}
@@ -489,14 +598,14 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
       <directionalLight
         position={[-2, 3, 2]}
         intensity={fillIntensity}
-        color="#5ab8ff"
+        color={fillColor}
       />
       <pointLight
         position={[0.3, 2.4, 3.6]}
         intensity={voidCharacterLightIntensity}
         distance={11}
         decay={1.7}
-        color={MENU_KEY_LIGHT}
+        color={menuKeyLightColor}
       />
       <PracticeMapEnvironment
         practiceMap={renderedPracticeMap}
@@ -505,6 +614,9 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
         floorGridOpacity={floorGridOpacity}
         onCollisionReady={handleCollisionReady}
         showSkyBackdrop={showSkyBackdrop}
+        skyAssetUrl={selectedSkyAssetUrl}
+        skyTheme={selectedSkyTheme}
+        surfaceBlend={rangeThemeBlend}
       />
       <Targets
         targets={targets}
