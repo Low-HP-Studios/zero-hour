@@ -889,6 +889,7 @@ const FLOOR_LIKE_MAX_HEIGHT = 0.55;
 const FLOOR_LIKE_MIN_SPAN = 2;
 const LARGE_HULL_MIN_SPAN = 10;
 const LARGE_HULL_MIN_HEIGHT = 4;
+const HULL_FACE_PANEL_THICKNESS = 0.5;
 const WALL_LIKE_MAX_THIN_AXIS = 1.35;
 const WALL_LIKE_MIN_LONG_AXIS = 2;
 const THICK_WALL_LIKE_MAX_SHORT_AXIS = 5.5;
@@ -904,9 +905,6 @@ const SCHOOL_COLLISION_IGNORE_RE =
 const SCHOOL_COLLISION_DIRECT_INCLUDE_RE =
   /(wall_firstage|container|trafficbarrier|concrete_barrier|pallet|barricade|table|wood|car|tent)/i;
 
-function collapseSchoolCollisionName(name: string) {
-  return name.replace(/_\d+$/u, "");
-}
 
 function isFloorLikeVolume(size: THREE.Vector3) {
   return (
@@ -956,6 +954,7 @@ function isGenericCubePropVolume(size: THREE.Vector3, box: THREE.Box3) {
   );
 }
 
+
 function shouldExtractCollisionVolume(
   name: string,
   size: THREE.Vector3,
@@ -971,10 +970,6 @@ function shouldExtractCollisionVolume(
 
   if (SCHOOL_COLLISION_DIRECT_INCLUDE_RE.test(name)) {
     return true;
-  }
-
-  if (!/^cube/i.test(name)) {
-    return false;
   }
 
   if (isLargeHullVolume(size)) {
@@ -1008,7 +1003,12 @@ function extractCollisionVolumes(
 
     box.min.multiplyScalar(scale);
     box.max.multiplyScalar(scale);
-    const collisionName = collapseSchoolCollisionName(mesh.name || "mesh");
+    // Use uuid as key so each mesh gets its own bounding box.
+    // Name-based merging ("wall_1"+"wall_2" → "wall") would silently union ALL
+    // meshes that share a collapsed name — for Sketchfab-style exports where
+    // every mesh is named "Object_N", this produces a single map-spanning box
+    // that defeats collision entirely.
+    const collisionName = mesh.uuid;
     const existingBox = mergedBoxes.get(collisionName);
 
     if (existingBox) {
@@ -1025,15 +1025,40 @@ function extractCollisionVolumes(
 
     if (size.y < MIN_WALL_HEIGHT) continue;
     if (box.max.y < MIN_WALL_TOP_Y) continue;
-    if (!shouldExtractCollisionVolume(name, size, box)) continue;
 
-    const center = new THREE.Vector3();
-    box.getCenter(center);
-
-    volumes.push({
-      center: [center.x, center.y, center.z],
-      size: [size.x, size.y, size.z],
-    });
+    if (shouldExtractCollisionVolume(name, size, box)) {
+      const center = new THREE.Vector3();
+      box.getCenter(center);
+      volumes.push({
+        center: [center.x, center.y, center.z],
+        size: [size.x, size.y, size.z],
+      });
+    } else if (isLargeHullVolume(size)) {
+      // Large hulls enclose rooms — a single solid box would push the player
+      // out. Instead, place thin panels at each bounding-box face so the
+      // player can move freely inside but cannot walk through the perimeter.
+      const center = new THREE.Vector3();
+      box.getCenter(center);
+      const t = HULL_FACE_PANEL_THICKNESS;
+      // left / right (X faces)
+      volumes.push({
+        center: [box.min.x + t / 2, center.y, center.z],
+        size: [t, size.y, size.z],
+      });
+      volumes.push({
+        center: [box.max.x - t / 2, center.y, center.z],
+        size: [t, size.y, size.z],
+      });
+      // front / back (Z faces)
+      volumes.push({
+        center: [center.x, center.y, box.min.z + t / 2],
+        size: [size.x, size.y, t],
+      });
+      volumes.push({
+        center: [center.x, center.y, box.max.z - t / 2],
+        size: [size.x, size.y, t],
+      });
+    }
   }
 
   return volumes;
@@ -1347,6 +1372,94 @@ export function StressBoxes(
   return null;
 }
 
+// ── Procedural TDM environment ──────────────────────────────
+const TDM_FLOOR_COLOR = new THREE.Color("#4a5568");
+const TDM_WALL_COLOR = new THREE.Color("#718096");
+const TDM_COVER_COLOR = new THREE.Color("#a0816c");
+const TDM_BOUNDARY_COLOR = new THREE.Color("#2d3748");
+
+function TdmProceduralEnvironment({
+  practiceMap,
+  shadows,
+  theme,
+  showSkyBackdrop,
+  skyAssetUrl,
+}: {
+  practiceMap: PracticeMapDefinition;
+  shadows: boolean;
+  theme: number;
+  showSkyBackdrop: boolean;
+  skyAssetUrl: string;
+}) {
+  const { worldBounds, blockingVolumes = [] } = practiceMap;
+  const floorW = worldBounds.maxX - worldBounds.minX;
+  const floorD = worldBounds.maxZ - worldBounds.minZ;
+  const floorCx = (worldBounds.minX + worldBounds.maxX) / 2;
+  const floorCz = (worldBounds.minZ + worldBounds.maxZ) / 2;
+
+  return (
+    <group>
+      <WorldBackdrop
+        theme={theme}
+        worldBounds={worldBounds}
+        showSkyBackdrop={showSkyBackdrop}
+        skyAssetUrl={skyAssetUrl}
+        rangeTheme={DEFAULT_RANGE_THEME}
+        surfaceBlend={theme}
+      />
+
+      {/* floor */}
+      <mesh
+        position={[floorCx, -0.05, floorCz]}
+        rotation={[-Math.PI / 2, 0, 0]}
+        receiveShadow={shadows}
+        userData={{ bulletHittable: true }}
+      >
+        <planeGeometry args={[floorW, floorD]} />
+        <meshStandardMaterial color={TDM_FLOOR_COLOR} roughness={0.85} />
+      </mesh>
+
+      {/* walls & cover */}
+      {blockingVolumes.map((vol, i) => {
+        const isBoundary =
+          vol.size[0] >= 40 || vol.size[2] >= 40;
+        const color =
+          vol.material === "cover"
+            ? TDM_COVER_COLOR
+            : isBoundary
+              ? TDM_BOUNDARY_COLOR
+              : TDM_WALL_COLOR;
+        return (
+          <mesh
+            key={i}
+            position={vol.center}
+            castShadow={shadows}
+            receiveShadow={shadows}
+            userData={{ bulletHittable: true }}
+          >
+            <boxGeometry args={vol.size as [number, number, number]} />
+            <meshStandardMaterial color={color} roughness={0.75} />
+          </mesh>
+        );
+      })}
+
+      {/* ambient + directional light for the arena */}
+      <ambientLight intensity={0.5} />
+      <directionalLight
+        position={[20, 30, 10]}
+        intensity={1.2}
+        castShadow={shadows}
+        shadow-mapSize-width={2048}
+        shadow-mapSize-height={2048}
+        shadow-camera-left={-35}
+        shadow-camera-right={35}
+        shadow-camera-top={25}
+        shadow-camera-bottom={-25}
+      />
+    </group>
+  );
+}
+
 export function PracticeMapEnvironment({
   practiceMap,
   shadows,
@@ -1389,6 +1502,18 @@ export function PracticeMapEnvironment({
         theme={theme}
         showSkyBackdrop={showSkyBackdrop}
         skyAssetUrl={skyAssetUrl}
+      />
+    );
+  }
+
+  if (practiceMap.environment.kind === "tdm-procedural") {
+    return (
+      <TdmProceduralEnvironment
+        practiceMap={practiceMap}
+        shadows={shadows}
+        theme={theme}
+        showSkyBackdrop={showSkyBackdrop}
+        skyAssetUrl={skyAssetUrl ?? DEFAULT_SKY_ASSET_URL}
       />
     );
   }

@@ -23,6 +23,9 @@ export type PracticeMapEnvironment =
       hiddenMeshNameIncludes?: readonly string[];
       doubleSideMeshNameIncludes?: readonly string[];
       wallFallbackTextureUrl?: string;
+    }
+  | {
+      kind: 'tdm-procedural';
     };
 
 export type PracticeMapDefinition = {
@@ -68,19 +71,104 @@ const RANGE_GROUND_SPAWNS: readonly StaticGroundSpawn[] = [
   { itemId: 'ammo_sniper', quantity: 30, position: [2.35, 0.14, 3.85] },
 ];
 
-const SCHOOL_WORLD_BOUNDS: WorldBounds = {
-  minX: -100,
-  maxX: 100,
-  minZ: -100,
-  maxZ: 100,
+const TDM_WORLD_BOUNDS: WorldBounds = {
+  minX: -32,
+  maxX: 32,
+  minZ: -22,
+  maxZ: 22,
 };
 
-const MAP1_COLLIDERS: readonly CollisionRect[] = [];
+const W = 0.3; // wall thickness
+const WH = 3.8; // wall height
+const COVER_H = 1.3; // cover box height
+const CH = COVER_H / 2;
 
-const MAP1_OCCLUDERS: readonly OccluderVolume[] = [];
+function wall(
+  cx: number,
+  cz: number,
+  sx: number,
+  sz: number,
+  h = WH,
+): BlockingVolume {
+  return { center: [cx, h / 2, cz], size: [sx, h, sz], material: 'wall' };
+}
+function cover(
+  cx: number,
+  cz: number,
+  sx: number,
+  sz: number,
+): BlockingVolume {
+  return { center: [cx, CH, cz], size: [sx, COVER_H, sz], material: 'cover' };
+}
+
+// ── TDM map geometry ───────────────────────────────────────
+// Arena: 60 wide (x ±30) × 40 deep (z ±20)
+const TDM_BLOCKING_VOLUMES: readonly BlockingVolume[] = [
+  // ── outer boundary ──
+  wall(0, -20, 60, W),        // north
+  wall(0, 20, 60, W),         // south
+  wall(-30, 0, W, 40),        // west
+  wall(30, 0, W, 40),         // east
+
+  // ── building A (NW corner) ──
+  wall(-22, -16, 8, W),       // north wall
+  wall(-26, -13.5, W, 5),     // west wall
+  wall(-18, -16.5, W, 3),     // east wall (partial – doorway south)
+
+  // ── building B (NE corner) ──
+  wall(22, -16, 8, W),        // north wall
+  wall(26, -13.5, W, 5),      // east wall
+  wall(18, -16.5, W, 3),      // west wall (partial – doorway south)
+
+  // ── building C (SW corner) ──
+  wall(-22, 16, 8, W),        // south wall
+  wall(-26, 13.5, W, 5),      // west wall
+  wall(-18, 16.5, W, 3),      // east wall (partial – doorway north)
+
+  // ── building D (SE corner) ──
+  wall(22, 16, 8, W),         // south wall
+  wall(26, 13.5, W, 5),       // east wall
+  wall(18, 16.5, W, 3),       // west wall (partial – doorway north)
+
+  // ── center structure (cross-shaped divider) ──
+  wall(0, -6, W, 8),          // north arm
+  wall(0, 6, W, 8),           // south arm
+  wall(-5, 0, 6, W),          // west arm
+  wall(5, 0, 6, W),           // east arm
+
+  // ── mid-field walls ──
+  wall(-12, -6, 6, W),        // NW mid
+  wall(12, -6, 6, W),         // NE mid
+  wall(-12, 6, 6, W),         // SW mid
+  wall(12, 6, 6, W),          // SE mid
+
+  // ── scattered cover boxes ──
+  cover(-8, 0, 2, 2),
+  cover(8, 0, 2, 2),
+  cover(0, -14, 3, 1.2),
+  cover(0, 14, 3, 1.2),
+  cover(-20, 0, 1.5, 3),
+  cover(20, 0, 1.5, 3),
+  cover(-14, -14, 1.5, 1.5),
+  cover(14, -14, 1.5, 1.5),
+  cover(-14, 14, 1.5, 1.5),
+  cover(14, 14, 1.5, 1.5),
+];
+
+const TDM_WALKABLE_SURFACES: readonly WalkableSurface[] = [
+  {
+    kind: 'slab',
+    minX: -30,
+    maxX: 30,
+    minZ: -20,
+    maxZ: 20,
+    y: 0,
+    material: 'yard',
+  },
+];
 
 const MAP1_PLAYER_SPAWN = {
-  position: [0, 0.5, 2] as [number, number, number],
+  position: [0, 0.5, -10] as [number, number, number],
   yaw: Math.PI,
   pitch: DEFAULT_PLAYER_PITCH,
 };
@@ -108,26 +196,21 @@ export const RANGE_PRACTICE_MAP: PracticeMapDefinition = {
 
 export const MAP1_PRACTICE_MAP: PracticeMapDefinition = {
   id: 'map1',
-  label: 'School',
-  description:
-    'Movement-first school blockout with a 2-floor main building and pool wing.',
+  label: 'TDM',
+  description: 'Procedural TDM arena with four corner rooms and a center cross.',
   supportsStressMode: false,
-  worldBounds: SCHOOL_WORLD_BOUNDS,
-  collisionRects: MAP1_COLLIDERS,
-  occluderVolumes: MAP1_OCCLUDERS,
+  worldBounds: TDM_WORLD_BOUNDS,
+  collisionRects: [],
+  occluderVolumes: [],
   playerSpawn: MAP1_PLAYER_SPAWN,
   targets: [],
   groundSpawns: [],
-  walkableSurfaces: [],
-  blockingVolumes: [],
+  walkableSurfaces: TDM_WALKABLE_SURFACES,
+  blockingVolumes: TDM_BLOCKING_VOLUMES,
   infiniteAmmo: true,
   spawnWithRifle: true,
   environment: {
-    kind: 'school-glb',
-    modelUrl: '/assets/map/map1.glb',
-    scale: 0.75,
-    doubleSideMeshNameIncludes: ['walkable_slab', 'blocker_wall', 'Cube'],
-    wallFallbackTextureUrl: '/assets/space/glTF/Rocks_Desert_Diffuse.png',
+    kind: 'tdm-procedural',
   },
 };
 
