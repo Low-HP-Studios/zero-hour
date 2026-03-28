@@ -31,6 +31,7 @@ import {
   type StressModeCount,
 } from "../types";
 import { PIXEL_RATIO_OPTIONS, STRESS_STEPS } from "./settings-constants";
+import { DEFAULT_CHARACTER_ID, isCharacterId } from "../characters";
 
 const LEGACY_SETTINGS_STORAGE_KEY = "zerohour.settings.v1";
 const PRE_RESET_SETTINGS_STORAGE_KEYS = [
@@ -49,6 +50,13 @@ function cloneDefaultCrosshairSettings() {
     dynamic: { ...DEFAULT_CROSSHAIR_SETTINGS.dynamic },
     weaponModifiers: { ...DEFAULT_CROSSHAIR_SETTINGS.weaponModifiers },
     ads: { ...DEFAULT_CROSSHAIR_SETTINGS.ads },
+    redDot: {
+      ...DEFAULT_CROSSHAIR_SETTINGS.redDot,
+      centerDot: { ...DEFAULT_CROSSHAIR_SETTINGS.redDot.centerDot },
+      innerLines: { ...DEFAULT_CROSSHAIR_SETTINGS.redDot.innerLines },
+      outerLines: { ...DEFAULT_CROSSHAIR_SETTINGS.redDot.outerLines },
+      outline: { ...DEFAULT_CROSSHAIR_SETTINGS.redDot.outline },
+    },
   };
 }
 
@@ -67,6 +75,24 @@ const LEGACY_STICK_CLICK_CONTROLLER_BINDINGS = {
   pause: 9,
   sprint: 10,
   toggleView: 11,
+  drop: 13,
+  equipRifle: 14,
+  equipSniper: 15,
+} as const;
+
+const PRE_BUMPER_PEEK_CONTROLLER_BINDINGS = {
+  fire: 7,
+  ads: 6,
+  jump: 0,
+  crouch: 1,
+  peekLeft: 10,
+  peekRight: 11,
+  pickup: 2,
+  reload: 3,
+  inventory: 8,
+  pause: 9,
+  sprint: 4,
+  toggleView: 5,
   drop: 13,
   equipRifle: 14,
   equipSniper: 15,
@@ -135,7 +161,7 @@ export function createDefaultPersistedSettings(): PersistedSettings {
     hudPanels: { ...DEFAULT_HUD_OVERLAY_TOGGLES },
     stressCount: 0,
     audioVolumes: { ...DEFAULT_AUDIO_VOLUMES },
-    selectedCharacterId: "trooper",
+    selectedCharacterId: DEFAULT_CHARACTER_ID,
     selectedMapId: DEFAULT_PRACTICE_MAP_ID,
     selectedSkyId: DEFAULT_SKY_ID,
   };
@@ -165,6 +191,10 @@ function readHudOverlayToggles(
 
 function readString(value: unknown, fallback: string): string {
   return typeof value === "string" && value.length > 0 ? value : fallback;
+}
+
+function readCharacterId(value: unknown, fallback: string): string {
+  return isCharacterId(value) ? value : fallback;
 }
 
 function readMapId(value: unknown, fallback: MapId): MapId {
@@ -292,6 +322,11 @@ export function parsePersistedSettings(value: unknown): PersistedSettings {
     ? crosshair.weaponModifiers
     : {};
   const crosshairAds = isRecord(crosshair.ads) ? crosshair.ads : {};
+  const redDot = isRecord(crosshair.redDot) ? crosshair.redDot : {};
+  const redDotCenterDot = isRecord(redDot.centerDot) ? redDot.centerDot : {};
+  const redDotInnerLines = isRecord(redDot.innerLines) ? redDot.innerLines : {};
+  const redDotOuterLines = isRecord(redDot.outerLines) ? redDot.outerLines : {};
+  const redDotOutline = isRecord(redDot.outline) ? redDot.outline : {};
   const movement = isRecord(settings.movement) ? settings.movement : {};
   const weaponRecoilProfiles = isRecord(settings.weaponRecoilProfiles)
     ? settings.weaponRecoilProfiles
@@ -403,6 +438,18 @@ export function parsePersistedSettings(value: unknown): PersistedSettings {
     !hasPeekRightBinding &&
     isLegacyStickClickLayout
   ) {
+    parsedControllerBindings.sprint = DEFAULT_CONTROLLER_BINDINGS.sprint;
+    parsedControllerBindings.toggleView =
+      DEFAULT_CONTROLLER_BINDINGS.toggleView;
+    parsedControllerBindings.peekLeft = DEFAULT_CONTROLLER_BINDINGS.peekLeft;
+    parsedControllerBindings.peekRight = DEFAULT_CONTROLLER_BINDINGS.peekRight;
+  }
+  const usesPreBumperPeekDefaults = (
+    Object.entries(PRE_BUMPER_PEEK_CONTROLLER_BINDINGS) as Array<
+      [keyof typeof PRE_BUMPER_PEEK_CONTROLLER_BINDINGS, number]
+    >
+  ).every(([key, value]) => parsedControllerBindings[key] === value);
+  if (usesPreBumperPeekDefaults) {
     parsedControllerBindings.sprint = DEFAULT_CONTROLLER_BINDINGS.sprint;
     parsedControllerBindings.toggleView =
       DEFAULT_CONTROLLER_BINDINGS.toggleView;
@@ -738,16 +785,6 @@ export function parsePersistedSettings(value: unknown): PersistedSettings {
           ),
         },
         ads: {
-          rifleDotSize: readClampedNumber(
-            crosshairAds.rifleDotSize,
-            1,
-            16,
-            defaults.settings.crosshair.ads.rifleDotSize,
-          ),
-          rifleDotColor: readCrosshairColor(
-            crosshairAds.rifleDotColor,
-            defaults.settings.crosshair.ads.rifleDotColor,
-          ),
           sniperDotSize: readClampedNumber(
             crosshairAds.sniperDotSize,
             1,
@@ -758,6 +795,96 @@ export function parsePersistedSettings(value: unknown): PersistedSettings {
             crosshairAds.sniperDotColor,
             defaults.settings.crosshair.ads.sniperDotColor,
           ),
+        },
+        redDot: {
+          color: readCrosshairColor(
+            redDot.color,
+            defaults.settings.crosshair.redDot.color,
+          ),
+          centerDot: {
+            enabled: readBoolean(
+              redDotCenterDot.enabled,
+              defaults.settings.crosshair.redDot.centerDot.enabled,
+            ),
+            size: readClampedNumber(
+              redDotCenterDot.size,
+              1,
+              18,
+              defaults.settings.crosshair.redDot.centerDot.size,
+            ),
+            thickness: readClampedNumber(
+              redDotCenterDot.thickness,
+              1,
+              12,
+              defaults.settings.crosshair.redDot.centerDot.thickness,
+            ),
+          },
+          innerLines: {
+            enabled: readBoolean(
+              redDotInnerLines.enabled,
+              defaults.settings.crosshair.redDot.innerLines.enabled,
+            ),
+            length: readClampedNumber(
+              redDotInnerLines.length,
+              1,
+              28,
+              defaults.settings.crosshair.redDot.innerLines.length,
+            ),
+            thickness: readClampedNumber(
+              redDotInnerLines.thickness,
+              1,
+              10,
+              defaults.settings.crosshair.redDot.innerLines.thickness,
+            ),
+            gap: readClampedNumber(
+              redDotInnerLines.gap,
+              0,
+              28,
+              defaults.settings.crosshair.redDot.innerLines.gap,
+            ),
+          },
+          outerLines: {
+            enabled: readBoolean(
+              redDotOuterLines.enabled,
+              defaults.settings.crosshair.redDot.outerLines.enabled,
+            ),
+            length: readClampedNumber(
+              redDotOuterLines.length,
+              1,
+              28,
+              defaults.settings.crosshair.redDot.outerLines.length,
+            ),
+            thickness: readClampedNumber(
+              redDotOuterLines.thickness,
+              1,
+              10,
+              defaults.settings.crosshair.redDot.outerLines.thickness,
+            ),
+            gap: readClampedNumber(
+              redDotOuterLines.gap,
+              0,
+              36,
+              defaults.settings.crosshair.redDot.outerLines.gap,
+            ),
+          },
+          outline: {
+            enabled: readBoolean(
+              redDotOutline.enabled,
+              defaults.settings.crosshair.redDot.outline.enabled,
+            ),
+            thickness: readClampedNumber(
+              redDotOutline.thickness,
+              0,
+              4,
+              defaults.settings.crosshair.redDot.outline.thickness,
+            ),
+            opacity: readClampedNumber(
+              redDotOutline.opacity,
+              0,
+              1,
+              defaults.settings.crosshair.redDot.outline.opacity,
+            ),
+          },
         },
       },
       movement: {
@@ -887,7 +1014,7 @@ export function parsePersistedSettings(value: unknown): PersistedSettings {
     },
     hudPanels: readHudOverlayToggles(value.hudPanels, defaults.hudPanels),
     stressCount: readStressModeCount(value.stressCount, defaults.stressCount),
-    selectedCharacterId: readString(
+    selectedCharacterId: readCharacterId(
       value.selectedCharacterId,
       defaults.selectedCharacterId,
     ),

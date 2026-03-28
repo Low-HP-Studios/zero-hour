@@ -891,6 +891,10 @@ const LARGE_HULL_MIN_SPAN = 10;
 const LARGE_HULL_MIN_HEIGHT = 4;
 const WALL_LIKE_MAX_THIN_AXIS = 1.35;
 const WALL_LIKE_MIN_LONG_AXIS = 2;
+const THICK_WALL_LIKE_MAX_SHORT_AXIS = 5.5;
+const THICK_WALL_LIKE_MIN_LONG_AXIS = 8;
+const THICK_WALL_LIKE_MIN_ASPECT_RATIO = 2.25;
+const THICK_WALL_LIKE_MIN_HEIGHT = 4;
 const GENERIC_CUBE_PROP_MIN_SPAN = 2;
 const GENERIC_CUBE_PROP_MAX_SPAN = 4.5;
 const GENERIC_CUBE_PROP_MAX_HEIGHT = 4.5;
@@ -926,6 +930,18 @@ function isWallLikeVolume(size: THREE.Vector3) {
     thinAxis <= WALL_LIKE_MAX_THIN_AXIS &&
     longAxis >= WALL_LIKE_MIN_LONG_AXIS &&
     size.y >= MIN_WALL_HEIGHT
+  );
+}
+
+function isThickWallLikeVolume(size: THREE.Vector3) {
+  const shortAxis = Math.min(size.x, size.z);
+  const longAxis = Math.max(size.x, size.z);
+  return (
+    shortAxis <= THICK_WALL_LIKE_MAX_SHORT_AXIS &&
+    longAxis >= THICK_WALL_LIKE_MIN_LONG_AXIS &&
+    longAxis / Math.max(shortAxis, 0.001) >=
+      THICK_WALL_LIKE_MIN_ASPECT_RATIO &&
+    size.y >= THICK_WALL_LIKE_MIN_HEIGHT
   );
 }
 
@@ -965,7 +981,11 @@ function shouldExtractCollisionVolume(
     return false;
   }
 
-  return isWallLikeVolume(size) || isGenericCubePropVolume(size, box);
+  return (
+    isWallLikeVolume(size) ||
+    isThickWallLikeVolume(size) ||
+    isGenericCubePropVolume(size, box)
+  );
 }
 
 function extractCollisionVolumes(

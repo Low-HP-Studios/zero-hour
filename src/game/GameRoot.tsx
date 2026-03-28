@@ -292,6 +292,7 @@ export function GameRoot({
     persistedSettings.hudPanels,
   );
   const [menuTab, setMenuTab] = useState<SettingsTabId>("sensitivity");
+  const [crosshairSubTab, setCrosshairSubTab] = useState<"normal" | "redDot">("normal");
   const [bindingCapture, setBindingCapture] = useState<BindingKey | null>(null);
   const bindingCaptureRef = useRef<BindingKey | null>(null);
   const [controllerBindingCapture, setControllerBindingCapture] = useState<
@@ -1483,6 +1484,22 @@ export function GameRoot({
     ["--ch-outer-gap" as string]: `${outerGap}`,
     ["--sniper-cycle-progress" as string]: `${sniperRechamberProgress}`,
   } as CSSProperties);
+  const redDotStyle = ({
+    ["--ch-color" as string]: CROSSHAIR_COLOR_HEX[settings.crosshair.redDot.color],
+    ["--ch-outline-enabled" as string]: settings.crosshair.redDot.outline.enabled
+      ? "1"
+      : "0",
+    ["--ch-outline-thickness" as string]: `${settings.crosshair.redDot.outline.thickness}`,
+    ["--ch-outline-opacity" as string]: `${settings.crosshair.redDot.outline.opacity}`,
+    ["--ch-center-size" as string]: `${settings.crosshair.redDot.centerDot.size}`,
+    ["--ch-center-thickness" as string]: `${settings.crosshair.redDot.centerDot.thickness}`,
+    ["--ch-inner-length" as string]: `${settings.crosshair.redDot.innerLines.length}`,
+    ["--ch-inner-thickness" as string]: `${settings.crosshair.redDot.innerLines.thickness}`,
+    ["--ch-inner-gap" as string]: `${settings.crosshair.redDot.innerLines.gap}`,
+    ["--ch-outer-length" as string]: `${settings.crosshair.redDot.outerLines.length}`,
+    ["--ch-outer-thickness" as string]: `${settings.crosshair.redDot.outerLines.thickness}`,
+    ["--ch-outer-gap" as string]: `${settings.crosshair.redDot.outerLines.gap}`,
+  } as CSSProperties);
   const duplicateBindingCodes = useMemo(() => {
     const codeCounts = new Map<string, number>();
     for (const code of Object.values(settings.keybinds)) {
@@ -1516,7 +1533,7 @@ export function GameRoot({
     ? "Rifle"
     : "Item";
   const pickupPromptLabel = player.controllerConnected
-    ? "X"
+    ? formatControllerButtonIndex(settings.controllerBindings.pickup)
     : formatKeyCode(settings.keybinds.pickup);
   const interactPromptLabel = player.canInteract
     ? `Press ${pickupPromptLabel} to loot ${
@@ -1570,6 +1587,41 @@ export function GameRoot({
         )
         : null}
       {showProgress ? <div className="crosshair-progress active" /> : null}
+    </div>
+  );
+  const renderRedDotCrosshair = (className = "") => (
+    <div
+      className={`crosshair ${className}`.trim()}
+      style={redDotStyle}
+    >
+      {settings.crosshair.redDot.centerDot.enabled
+        ? (
+          <div className="crosshair-center" aria-hidden="true">
+            <span className="crosshair-center-line horizontal" />
+            <span className="crosshair-center-line vertical" />
+          </div>
+        )
+        : null}
+      {settings.crosshair.redDot.innerLines.enabled
+        ? (
+          <div className="crosshair-lines inner" aria-hidden="true">
+            <span className="line top" />
+            <span className="line right" />
+            <span className="line bottom" />
+            <span className="line left" />
+          </div>
+        )
+        : null}
+      {settings.crosshair.redDot.outerLines.enabled
+        ? (
+          <div className="crosshair-lines outer" aria-hidden="true">
+            <span className="line top" />
+            <span className="line right" />
+            <span className="line bottom" />
+            <span className="line left" />
+          </div>
+        )
+        : null}
     </div>
   );
 
@@ -1656,7 +1708,7 @@ export function GameRoot({
           : null}
 
         <div className="center-stack">
-          {combatHudVisible && !isGameplayPaused && (!isAimingDownSight || activeWeapon === "rifle")
+          {combatHudVisible && !isGameplayPaused && !isAimingDownSight
             ? (
               renderCrosshair(
                 activeWeapon === "sniper" && sniperRechamber.active
@@ -1665,6 +1717,9 @@ export function GameRoot({
                 activeWeapon === "sniper" && sniperRechamber.active,
               )
             )
+            : null}
+          {combatHudVisible && !isGameplayPaused && isAimingDownSight && activeWeapon === "rifle"
+            ? renderRedDotCrosshair()
             : null}
           {isAimingDownSight && activeWeapon === "sniper" && combatHudVisible
             ? (
@@ -2521,31 +2576,68 @@ export function GameRoot({
 
                     {menuTab === "crosshair"
                       ? (
-                        <div className="menu-sections">
-                          <MenuSection
-                            title="Preview"
-                            blurb="This updates live so you can see the current shape before going back in-game."
-                          >
+                        <>
+                          <div className="crosshair-preview-sticky">
                             <div className="crosshair-preview-panel">
                               <div className="crosshair-preview-stage">
-                                {renderCrosshair("crosshair-preview-instance")}
+                                {crosshairSubTab === "normal"
+                                  ? renderCrosshair("crosshair-preview-instance")
+                                  : renderRedDotCrosshair("crosshair-preview-instance")}
                               </div>
                               <div className="settings-chip-wrap">
-                                <span className="pill-chip">
-                                  Color: {CROSSHAIR_COLOR_OPTIONS.find((option) =>
-                                    option.id === settings.crosshair.color
-                                  )?.label ?? "White"}
-                                </span>
-                                <span className="pill-chip">
-                                  Dynamic spread: {settings.crosshair.dynamic.enabled ? "On" : "Off"}
-                                </span>
-                                <span className="pill-chip">
-                                  Outline: {settings.crosshair.outline.enabled ? "On" : "Off"}
-                                </span>
+                                {crosshairSubTab === "normal"
+                                  ? (
+                                    <>
+                                      <span className="pill-chip">
+                                        Color: {CROSSHAIR_COLOR_OPTIONS.find((option) =>
+                                          option.id === settings.crosshair.color
+                                        )?.label ?? "White"}
+                                      </span>
+                                      <span className="pill-chip">
+                                        Dynamic spread: {settings.crosshair.dynamic.enabled ? "On" : "Off"}
+                                      </span>
+                                      <span className="pill-chip">
+                                        Outline: {settings.crosshair.outline.enabled ? "On" : "Off"}
+                                      </span>
+                                    </>
+                                  )
+                                  : (
+                                    <>
+                                      <span className="pill-chip">
+                                        Color: {CROSSHAIR_COLOR_OPTIONS.find((option) =>
+                                          option.id === settings.crosshair.redDot.color
+                                        )?.label ?? "Red"}
+                                      </span>
+                                      <span className="pill-chip">
+                                        Outline: {settings.crosshair.redDot.outline.enabled ? "On" : "Off"}
+                                      </span>
+                                    </>
+                                  )}
                               </div>
                             </div>
-                          </MenuSection>
+                          </div>
 
+                          <div className="crosshair-sub-tabs">
+                            <button
+                              type="button"
+                              className={`crosshair-sub-tab ${crosshairSubTab === "normal" ? "active" : ""}`}
+                              onClick={() => setCrosshairSubTab("normal")}
+                            >
+                              Normal
+                            </button>
+                            <button
+                              type="button"
+                              className={`crosshair-sub-tab ${crosshairSubTab === "redDot" ? "active" : ""}`}
+                              onClick={() => setCrosshairSubTab("redDot")}
+                            >
+                              Red Dot (ADS)
+                            </button>
+                          </div>
+
+                          <div className="menu-sections">
+                          {crosshairSubTab === "normal"
+                            ? (
+                              <>
                           <MenuSection
                             title="Base crosshair"
                             blurb="Choose the shape, color, and spacing for the main reticle."
@@ -3055,7 +3147,350 @@ export function GameRoot({
                               </div>
                             </div>
                           </MenuSection>
-                        </div>
+                              </>
+                            )
+                            : (
+                              <>
+                          <MenuSection
+                            title="Red Dot Crosshair"
+                            blurb="Shape and color for the rifle ADS reticle."
+                          >
+                            <div className="field-row">
+                              <div>
+                                <div className="field-label">Primary Color</div>
+                                <div className="field-hint">
+                                  Applies to center, inner, and outer lines
+                                </div>
+                              </div>
+                              <div className="color-chip-row">
+                                {CROSSHAIR_COLOR_OPTIONS.map((option) => (
+                                  <button
+                                    key={`rd-color-${option.id}`}
+                                    type="button"
+                                    className={`color-chip ${
+                                      settings.crosshair.redDot.color === option.id
+                                        ? "active"
+                                        : ""
+                                    }`}
+                                    onClick={() =>
+                                      setSettings((prev) => ({
+                                        ...prev,
+                                        crosshair: {
+                                          ...prev.crosshair,
+                                          redDot: {
+                                            ...prev.crosshair.redDot,
+                                            color: option.id,
+                                          },
+                                        },
+                                      }))}
+                                  >
+                                    <span
+                                      className="color-chip-swatch"
+                                      style={{
+                                        backgroundColor:
+                                          CROSSHAIR_COLOR_HEX[option.id],
+                                      }}
+                                    />
+                                    {option.label}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+
+                            <SwitchRow
+                              label="Center Dot"
+                              hint="Enable center mark"
+                              checked={settings.crosshair.redDot.centerDot.enabled}
+                              onChange={(checked) =>
+                                setSettings((prev) => ({
+                                  ...prev,
+                                  crosshair: {
+                                    ...prev.crosshair,
+                                    redDot: {
+                                      ...prev.crosshair.redDot,
+                                      centerDot: {
+                                        ...prev.crosshair.redDot.centerDot,
+                                        enabled: checked,
+                                      },
+                                    },
+                                  },
+                                }))}
+                            />
+                            <RangeField
+                              label="Center Size"
+                              value={settings.crosshair.redDot.centerDot.size}
+                              min={1}
+                              max={18}
+                              step={0.5}
+                              onChange={(value) =>
+                                setSettings((prev) => ({
+                                  ...prev,
+                                  crosshair: {
+                                    ...prev.crosshair,
+                                    redDot: {
+                                      ...prev.crosshair.redDot,
+                                      centerDot: {
+                                        ...prev.crosshair.redDot.centerDot,
+                                        size: value,
+                                      },
+                                    },
+                                  },
+                                }))}
+                            />
+                            <RangeField
+                              label="Center Thickness"
+                              value={settings.crosshair.redDot.centerDot.thickness}
+                              min={1}
+                              max={12}
+                              step={0.5}
+                              onChange={(value) =>
+                                setSettings((prev) => ({
+                                  ...prev,
+                                  crosshair: {
+                                    ...prev.crosshair,
+                                    redDot: {
+                                      ...prev.crosshair.redDot,
+                                      centerDot: {
+                                        ...prev.crosshair.redDot.centerDot,
+                                        thickness: value,
+                                      },
+                                    },
+                                  },
+                                }))}
+                            />
+
+                            <SwitchRow
+                              label="Inner Lines"
+                              hint="Main four lines around center"
+                              checked={settings.crosshair.redDot.innerLines.enabled}
+                              onChange={(checked) =>
+                                setSettings((prev) => ({
+                                  ...prev,
+                                  crosshair: {
+                                    ...prev.crosshair,
+                                    redDot: {
+                                      ...prev.crosshair.redDot,
+                                      innerLines: {
+                                        ...prev.crosshair.redDot.innerLines,
+                                        enabled: checked,
+                                      },
+                                    },
+                                  },
+                                }))}
+                            />
+                            <RangeField
+                              label="Inner Length"
+                              value={settings.crosshair.redDot.innerLines.length}
+                              min={1}
+                              max={28}
+                              step={0.5}
+                              onChange={(value) =>
+                                setSettings((prev) => ({
+                                  ...prev,
+                                  crosshair: {
+                                    ...prev.crosshair,
+                                    redDot: {
+                                      ...prev.crosshair.redDot,
+                                      innerLines: {
+                                        ...prev.crosshair.redDot.innerLines,
+                                        length: value,
+                                      },
+                                    },
+                                  },
+                                }))}
+                            />
+                            <RangeField
+                              label="Inner Thickness"
+                              value={settings.crosshair.redDot.innerLines.thickness}
+                              min={1}
+                              max={10}
+                              step={0.5}
+                              onChange={(value) =>
+                                setSettings((prev) => ({
+                                  ...prev,
+                                  crosshair: {
+                                    ...prev.crosshair,
+                                    redDot: {
+                                      ...prev.crosshair.redDot,
+                                      innerLines: {
+                                        ...prev.crosshair.redDot.innerLines,
+                                        thickness: value,
+                                      },
+                                    },
+                                  },
+                                }))}
+                            />
+                            <RangeField
+                              label="Inner Gap"
+                              value={settings.crosshair.redDot.innerLines.gap}
+                              min={0}
+                              max={28}
+                              step={0.5}
+                              onChange={(value) =>
+                                setSettings((prev) => ({
+                                  ...prev,
+                                  crosshair: {
+                                    ...prev.crosshair,
+                                    redDot: {
+                                      ...prev.crosshair.redDot,
+                                      innerLines: {
+                                        ...prev.crosshair.redDot.innerLines,
+                                        gap: value,
+                                      },
+                                    },
+                                  },
+                                }))}
+                            />
+
+                            <SwitchRow
+                              label="Outer Lines"
+                              hint="Secondary line ring"
+                              checked={settings.crosshair.redDot.outerLines.enabled}
+                              onChange={(checked) =>
+                                setSettings((prev) => ({
+                                  ...prev,
+                                  crosshair: {
+                                    ...prev.crosshair,
+                                    redDot: {
+                                      ...prev.crosshair.redDot,
+                                      outerLines: {
+                                        ...prev.crosshair.redDot.outerLines,
+                                        enabled: checked,
+                                      },
+                                    },
+                                  },
+                                }))}
+                            />
+                            <RangeField
+                              label="Outer Length"
+                              value={settings.crosshair.redDot.outerLines.length}
+                              min={1}
+                              max={28}
+                              step={0.5}
+                              onChange={(value) =>
+                                setSettings((prev) => ({
+                                  ...prev,
+                                  crosshair: {
+                                    ...prev.crosshair,
+                                    redDot: {
+                                      ...prev.crosshair.redDot,
+                                      outerLines: {
+                                        ...prev.crosshair.redDot.outerLines,
+                                        length: value,
+                                      },
+                                    },
+                                  },
+                                }))}
+                            />
+                            <RangeField
+                              label="Outer Thickness"
+                              value={settings.crosshair.redDot.outerLines.thickness}
+                              min={1}
+                              max={10}
+                              step={0.5}
+                              onChange={(value) =>
+                                setSettings((prev) => ({
+                                  ...prev,
+                                  crosshair: {
+                                    ...prev.crosshair,
+                                    redDot: {
+                                      ...prev.crosshair.redDot,
+                                      outerLines: {
+                                        ...prev.crosshair.redDot.outerLines,
+                                        thickness: value,
+                                      },
+                                    },
+                                  },
+                                }))}
+                            />
+                            <RangeField
+                              label="Outer Gap"
+                              value={settings.crosshair.redDot.outerLines.gap}
+                              min={0}
+                              max={36}
+                              step={0.5}
+                              onChange={(value) =>
+                                setSettings((prev) => ({
+                                  ...prev,
+                                  crosshair: {
+                                    ...prev.crosshair,
+                                    redDot: {
+                                      ...prev.crosshair.redDot,
+                                      outerLines: {
+                                        ...prev.crosshair.redDot.outerLines,
+                                        gap: value,
+                                      },
+                                    },
+                                  },
+                                }))}
+                            />
+
+                            <SwitchRow
+                              label="Black Outline"
+                              hint="Adds contrast behind center + lines"
+                              checked={settings.crosshair.redDot.outline.enabled}
+                              onChange={(checked) =>
+                                setSettings((prev) => ({
+                                  ...prev,
+                                  crosshair: {
+                                    ...prev.crosshair,
+                                    redDot: {
+                                      ...prev.crosshair.redDot,
+                                      outline: {
+                                        ...prev.crosshair.redDot.outline,
+                                        enabled: checked,
+                                      },
+                                    },
+                                  },
+                                }))}
+                            />
+                            <RangeField
+                              label="Outline Thickness"
+                              value={settings.crosshair.redDot.outline.thickness}
+                              min={0}
+                              max={4}
+                              step={0.1}
+                              onChange={(value) =>
+                                setSettings((prev) => ({
+                                  ...prev,
+                                  crosshair: {
+                                    ...prev.crosshair,
+                                    redDot: {
+                                      ...prev.crosshair.redDot,
+                                      outline: {
+                                        ...prev.crosshair.redDot.outline,
+                                        thickness: value,
+                                      },
+                                    },
+                                  },
+                                }))}
+                            />
+                            <RangeField
+                              label="Outline Opacity"
+                              value={settings.crosshair.redDot.outline.opacity}
+                              min={0}
+                              max={1}
+                              step={0.01}
+                              onChange={(value) =>
+                                setSettings((prev) => ({
+                                  ...prev,
+                                  crosshair: {
+                                    ...prev.crosshair,
+                                    redDot: {
+                                      ...prev.crosshair.redDot,
+                                      outline: {
+                                        ...prev.crosshair.redDot.outline,
+                                        opacity: value,
+                                      },
+                                    },
+                                  },
+                                }))}
+                            />
+                          </MenuSection>
+                              </>
+                            )}
+                          </div>
+                        </>
                       )
                       : null}
 

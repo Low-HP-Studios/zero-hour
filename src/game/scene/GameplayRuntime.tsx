@@ -16,6 +16,7 @@ import { playControllerRumble } from "../GamepadHaptics";
 import {
   type PlayerControllerApi,
   type RunFacingPhase,
+  type SlideState,
   usePlayerController,
 } from "../PlayerController";
 import {
@@ -167,11 +168,16 @@ const HEAD_YAW_QUAT = new THREE.Quaternion();
 const HEAD_PITCH_QUAT = new THREE.Quaternion();
 const UPPER_TORSO_LEAN_QUAT = new THREE.Quaternion();
 const UPPER_TORSO_PITCH_QUAT = new THREE.Quaternion();
+const SLIDE_UPPER_TORSO_PITCH_QUAT = new THREE.Quaternion();
 const UPPER_TORSO_LEAN_ANGLE = THREE.MathUtils.degToRad(18);
 const LOWER_TORSO_LEAN_ANGLE = THREE.MathUtils.degToRad(10);
 const LOWER_TORSO_LEAN_QUAT = new THREE.Quaternion();
+const SLIDE_LOWER_TORSO_PITCH_QUAT = new THREE.Quaternion();
 const CROUCH_AIM_HEAD_LIFT_ANGLE = THREE.MathUtils.degToRad(12);
 const CROUCH_AIM_UPPER_TORSO_LIFT_ANGLE = THREE.MathUtils.degToRad(16);
+const SLIDE_UPPER_TORSO_BACK_ANGLE = THREE.MathUtils.degToRad(30);
+const SLIDE_LOWER_TORSO_BACK_ANGLE = THREE.MathUtils.degToRad(18);
+const SLIDE_CHARACTER_DROP = 0.08;
 
 // Aim follow: distribute camera pitch/yaw across spine and head for natural look
 const AIM_PITCH_TORSO_FRACTION = 0.55;
@@ -272,15 +278,6 @@ type CharacterVisibilityMaterialEntry = {
   baseTransparent: boolean;
 };
 
-type SlideIntentHookState = {
-  eligible: boolean;
-  lastIntentAtMs: number;
-  lastIntentSpeed: number;
-  lastIntentYaw: number;
-  lastIntentMoveX: number;
-  lastIntentMoveY: number;
-};
-
 const RIFLE_HOLD_DIAGONAL_THRESHOLD = 0.35;
 const WALK_DIAGONAL_THRESHOLD = 0.35;
 const LOCOMOTION_VISUAL_INPUT_DAMP =
@@ -297,11 +294,14 @@ const CROUCH_TRANSITION_MS = Math.round(
 );
 const CROUCH_SPRINT_RELEASE_POSE = 0.35;
 const RIFLE_RUN_INPUT_GRACE_MS = 120;
+const RIFLE_NEUTRAL_SPRINT_STOP_SPEED = 1.25;
 const DIRECTION_CHANGE_THRESHOLD_RAD = Math.PI / 2;
 const DIRECTION_CHANGE_PAUSE_MS = 180;
 const DIRECTION_CHANGE_DAMP_RATE = 18;
 const DIRECTION_CHANGE_MIN_INPUT_LENGTH = 0.3;
 const SPRINT_STOP_RECOVERY_MS = 80;
+const SLIDE_ENTRY_VISUAL_SECONDS = 0.12;
+const SLIDE_LOWER_BODY_FADE_SECONDS = 0.08;
 const RIFLE_LOCOMOTION_SCALE_MIN = PHASE1_MOVEMENT_CONFIG.locomotionScaleMin;
 const RIFLE_LOCOMOTION_SCALE_MAX = PHASE1_MOVEMENT_CONFIG.locomotionScaleMax;
 const INVENTORY_DROP_ZONE_NEARBY = "__drop_to_ground__";
@@ -399,6 +399,38 @@ function consumeFootstepTrigger(
   }
 
   return null;
+}
+
+function isSlideMotionActive(slideState: SlideState) {
+  return slideState.phase === "entry" || slideState.phase === "glide";
+}
+
+function resolveSlideLowerBodyState(
+  slideState: SlideState,
+  weaponEquipped: boolean,
+): CharacterAnimState {
+  if (weaponEquipped) {
+    return slideState.phase === "entry"
+      ? "rifleCrouchEnter"
+      : "rifleCrouchWalk";
+  }
+  return slideState.phase === "entry" ? "crouchEnter" : "crouchForward";
+}
+
+function resolveSlidePoseBlend(slideState: SlideState) {
+  if (!slideState.active) {
+    return 0;
+  }
+  if (slideState.phase === "entry") {
+    return THREE.MathUtils.smoothstep(slideState.progress, 0, 1);
+  }
+  if (slideState.phase === "glide") {
+    return 1;
+  }
+  if (slideState.phase === "recover") {
+    return 1 - THREE.MathUtils.smoothstep(slideState.progress, 0, 1);
+  }
+  return 0;
 }
 
 function createSometimesStepWindow() {
@@ -1272,14 +1304,7 @@ export const GameplayRuntime = forwardRef<
   const crouchTransitionPoseFromRef = useRef(0);
   const wasCrouchedRef = useRef(false);
   const wasGroundedRef = useRef(true);
-  const slideIntentHookRef = useRef<SlideIntentHookState>({
-    eligible: false,
-    lastIntentAtMs: -1,
-    lastIntentSpeed: 0,
-    lastIntentYaw: 0,
-    lastIntentMoveX: 0,
-    lastIntentMoveY: 0,
-  });
+  const wasSlideMotionActiveRef = useRef(false);
   const movementSettingsRef = useRef<MovementProfileSettings>(movement);
   const locomotionVisualInputRef = useRef(new THREE.Vector2());
   const locomotionLocalVelocityRef = useRef(new THREE.Vector2());
@@ -2062,14 +2087,7 @@ export const GameplayRuntime = forwardRef<
     crouchTransitionPoseFromRef.current = 0;
     wasCrouchedRef.current = false;
     wasGroundedRef.current = true;
-    slideIntentHookRef.current = {
-      eligible: false,
-      lastIntentAtMs: -1,
-      lastIntentSpeed: 0,
-      lastIntentYaw: 0,
-      lastIntentMoveX: 0,
-      lastIntentMoveY: 0,
-    };
+    wasSlideMotionActiveRef.current = false;
     locomotionVisualInputRef.current.set(0, 0);
     locomotionLocalVelocityRef.current.set(0, 0);
     directionChangeTrackedInputRef.current.set(0, 0);
@@ -2400,17 +2418,6 @@ export const GameplayRuntime = forwardRef<
       0.2,
       1.2,
     );
-    const rifleRunForwardThreshold = THREE.MathUtils.clamp(
-      movementSettings.rifleRunForwardThreshold,
-      0.05,
-      1,
-    );
-    const rifleRunLateralThreshold = THREE.MathUtils.clamp(
-      movementSettings.rifleRunLateralThreshold,
-      0,
-      1,
-    );
-
     if (
       nowMs - lastImpactCleanupAtRef.current >=
         BULLET_IMPACT_CLEANUP_INTERVAL_MS
@@ -2497,6 +2504,14 @@ export const GameplayRuntime = forwardRef<
     const moveInput = controller.getMoveInput();
     const planarVelocity = controller.getPlanarVelocity();
     const planarSpeed = controller.getPlanarSpeed();
+    const slideState = controller.getSlideState();
+    const slideMotionActive = isSlideMotionActive(slideState);
+    const slidePoseBlend = resolveSlidePoseBlend(slideState);
+    const previousSlideMotionActive = wasSlideMotionActiveRef.current;
+    if (slideMotionActive && !previousSlideMotionActive) {
+      audio.playSlide();
+    }
+    wasSlideMotionActiveRef.current = slideMotionActive;
     const localPlanarVelocity = resolveLocalPlanarVector(
       locomotionLocalVelocityRef.current,
       planarVelocity.x,
@@ -2522,25 +2537,6 @@ export const GameplayRuntime = forwardRef<
     wasGroundedRef.current = grounded;
     if (justLanded) {
       audio.playLanding();
-    }
-    const slideIntent = slideIntentHookRef.current;
-    slideIntent.eligible = isWeaponHoldEquipped &&
-      !adsActive &&
-      movementActive &&
-      grounded &&
-      moveY > rifleRunForwardThreshold &&
-      Math.abs(moveX) <= rifleRunLateralThreshold &&
-      (
-        previousRunState === "start" ||
-        previousRunState === "running" ||
-        sprintPressed
-      );
-    if (crouchEntered && slideIntent.eligible) {
-      slideIntent.lastIntentAtMs = nowMs;
-      slideIntent.lastIntentSpeed = planarSpeed;
-      slideIntent.lastIntentYaw = controller.getBodyYaw();
-      slideIntent.lastIntentMoveX = moveX;
-      slideIntent.lastIntentMoveY = moveY;
     }
 
     let crouchTransitionState = crouchTransitionStateRef.current;
@@ -2575,6 +2571,16 @@ export const GameplayRuntime = forwardRef<
       }
     }
 
+    if (slideMotionActive) {
+      crouchTransitionState = "idle";
+      crouchTransitionStartedAt = 0;
+      crouchTransitionDuration = 0;
+      crouchTransitionUseRifle = weaponEquipped;
+      crouchTransitionPoseFrom = 1;
+      currentCrouchPose = 1;
+      crouchTransitionSeekNormalized = undefined;
+    }
+
     const startCrouchTransition = (
       nextState: Exclude<CrouchTransitionState, "idle">,
       fromPose: number,
@@ -2607,7 +2613,7 @@ export const GameplayRuntime = forwardRef<
     const crouchKeyStillHeld = controller.isCrouchKeyHeld();
     const suppressCrouchExit =
       crouchExited && crouchKeyStillHeld && crouchMode === "hold";
-    if ((crouchEntered || crouchExited) && !suppressCrouchExit) {
+    if (!slideMotionActive && (crouchEntered || crouchExited) && !suppressCrouchExit) {
       const requestedState: Exclude<CrouchTransitionState, "idle"> =
         crouchEntered ? "enter" : "exit";
       const requestedPose = resolveCrouchTransitionTargetPose(requestedState);
@@ -2722,14 +2728,25 @@ export const GameplayRuntime = forwardRef<
         );
       const runStartDurationMs = RIFLE_RUN_START_MS;
       const runStopDurationMs = RIFLE_RUN_STOP_MS;
+      const neutralSprintStopEligible = !slideState.active &&
+        !hasDirectionalInput &&
+        planarSpeed <= RIFLE_NEUTRAL_SPRINT_STOP_SPEED;
 
       if (!runInputAllowed) {
         if (
           nextRunState === "start" ||
           nextRunState === "running"
         ) {
-          nextRunState = "stop";
-          runStateUntil = nowMs + runStopDurationMs;
+          if (neutralSprintStopEligible) {
+            nextRunState = "stop";
+            runStateUntil = nowMs + runStopDurationMs;
+          } else if (hasDirectionalInput) {
+            nextRunState = "idle";
+            runStateUntil = 0;
+          } else if (nextRunState === "start" && nowMs >= runStateUntil) {
+            nextRunState = "running";
+            runStateUntil = 0;
+          }
         } else if (nextRunState === "stop" && nowMs >= runStateUntil) {
           nextRunState = "idle";
           runStateUntil = 0;
@@ -2875,7 +2892,16 @@ export const GameplayRuntime = forwardRef<
       : "idle";
     let lowerBodyOverlayState: CharacterAnimState | null = null;
     let upperBodyOverlayState: CharacterAnimState | null = null;
-    if (crouchTransitionState === "enter") {
+    if (slideMotionActive) {
+      nextAnimState = weaponEquipped ? "rifleIdle" : "idle";
+      lowerBodyOverlayState = resolveSlideLowerBodyState(
+        slideState,
+        weaponEquipped,
+      );
+      upperBodyOverlayState = weaponEquipped
+        ? reloadVisible ? "rifleReload" : "rifleAimHold"
+        : null;
+    } else if (crouchTransitionState === "enter") {
       nextAnimState = crouchAimCompositeActive
         ? "rifleAimHold"
         : crouchTransitionUseRifle
@@ -2990,6 +3016,7 @@ export const GameplayRuntime = forwardRef<
     //           crouch (has own overlay), aim-walk (already raised).
     if (
       isWeaponHoldEquipped &&
+      !slideMotionActive &&
       !firePrepVisual &&
       !crouched &&
       crouchTransitionState === "idle" &&
@@ -3007,7 +3034,7 @@ export const GameplayRuntime = forwardRef<
     }
 
     if (reloadVisible) {
-      if (lowerBodyOverlayState) {
+      if (lowerBodyOverlayState && !slideMotionActive) {
         nextAnimState = lowerBodyOverlayState;
         lowerBodyOverlayState = null;
       }
@@ -3131,6 +3158,11 @@ export const GameplayRuntime = forwardRef<
       )
       : 1;
     const audioAnimState = lowerBodyOverlayState ?? nextAnimState;
+    const slideEntryLowerBodyActive = slideMotionActive &&
+      (
+        lowerBodyOverlayState === "crouchEnter" ||
+        lowerBodyOverlayState === "rifleCrouchEnter"
+      );
 
     setCharacterAnim(nextAnimState, {
       locomotionScale: characterLocomotionScale,
@@ -3146,10 +3178,16 @@ export const GameplayRuntime = forwardRef<
       lowerBodyState: lowerBodyOverlayState,
       lowerBodyLocomotionScale: lowerBodyOverlayLocomotionScale,
       lowerBodySeekNormalizedTime: crouchTransitionSeekNormalized,
-      lowerBodyDesiredDurationSeconds: lowerBodyOverlayState === "crouchEnter"
+      lowerBodyDesiredDurationSeconds: slideEntryLowerBodyActive
+        ? SLIDE_ENTRY_VISUAL_SECONDS
+        : lowerBodyOverlayState === "crouchEnter" ||
+            lowerBodyOverlayState === "rifleCrouchEnter"
         ? CROUCH_ENTER_TRANSITION_MS / 1000
         : undefined,
-      lowerBodyFadeDurationSeconds: lowerBodyOverlayState === "crouchEnter"
+      lowerBodyFadeDurationSeconds: slideEntryLowerBodyActive
+        ? SLIDE_LOWER_BODY_FADE_SECONDS
+        : lowerBodyOverlayState === "crouchEnter" ||
+            lowerBodyOverlayState === "rifleCrouchEnter"
         ? CROUCH_ENTER_BLEND_SECONDS
         : 0.12,
       upperBodyState: upperBodyOverlayState,
@@ -3211,7 +3249,11 @@ export const GameplayRuntime = forwardRef<
     const playerChar = playerCharacterRef.current;
     if (playerChar) {
       const position = controller.getPosition();
-      playerChar.position.set(position.x, position.y, position.z);
+      playerChar.position.set(
+        position.x,
+        position.y - SLIDE_CHARACTER_DROP * slidePoseBlend,
+        position.z,
+      );
       playerChar.rotation.y = controller.getBodyYaw() + CHARACTER_YAW_OFFSET;
       playerChar.visible = true;
       playerChar.updateMatrixWorld(true);
@@ -3241,7 +3283,7 @@ export const GameplayRuntime = forwardRef<
       }
       const footstepTrigger = consumeFootstepTrigger(
         footstepPhaseRef.current,
-        getFootstepSample(),
+        slideMotionActive ? null : getFootstepSample(),
       );
       if (footstepTrigger?.kind === "reset") {
         stepsBeforeSometimesRef.current = createSometimesStepWindow();
@@ -3361,6 +3403,13 @@ export const GameplayRuntime = forwardRef<
           upperTorsoBone.quaternion.premultiply(AIM_YAW_TORSO_QUAT);
         }
       }
+      if (slidePoseBlend > 0.001) {
+        SLIDE_UPPER_TORSO_PITCH_QUAT.setFromAxisAngle(
+          X_AXIS,
+          -SLIDE_UPPER_TORSO_BACK_ANGLE * slidePoseBlend,
+        );
+        upperTorsoBone.quaternion.premultiply(SLIDE_UPPER_TORSO_PITCH_QUAT);
+      }
       if (Math.abs(leanValue) > 0.001) {
         UPPER_TORSO_LEAN_QUAT.setFromAxisAngle(
           Z_AXIS,
@@ -3373,14 +3422,24 @@ export const GameplayRuntime = forwardRef<
     const lowerTorsoBoneForLean = characterLowerTorsoBoneRef.current;
     if (
       lowerTorsoBoneForLean &&
-      presentation.phase === "playing" &&
-      Math.abs(leanValue) > 0.001
+      presentation.phase === "playing"
     ) {
-      LOWER_TORSO_LEAN_QUAT.setFromAxisAngle(
-        Z_AXIS,
-        leanValue * LOWER_TORSO_LEAN_ANGLE,
-      );
-      lowerTorsoBoneForLean.quaternion.premultiply(LOWER_TORSO_LEAN_QUAT);
+      if (slidePoseBlend > 0.001) {
+        SLIDE_LOWER_TORSO_PITCH_QUAT.setFromAxisAngle(
+          X_AXIS,
+          -SLIDE_LOWER_TORSO_BACK_ANGLE * slidePoseBlend,
+        );
+        lowerTorsoBoneForLean.quaternion.premultiply(
+          SLIDE_LOWER_TORSO_PITCH_QUAT,
+        );
+      }
+      if (Math.abs(leanValue) > 0.001) {
+        LOWER_TORSO_LEAN_QUAT.setFromAxisAngle(
+          Z_AXIS,
+          leanValue * LOWER_TORSO_LEAN_ANGLE,
+        );
+        lowerTorsoBoneForLean.quaternion.premultiply(LOWER_TORSO_LEAN_QUAT);
+      }
     }
 
     const switchState = weapon.getSwitchState(nowMs);
@@ -3418,12 +3477,12 @@ export const GameplayRuntime = forwardRef<
       presentation.phase === "menu" ? "rifle" : null,
     );
 
-    const weaponSprinting = !weaponEquipped
+    const weaponSprinting = slideState.active || (!weaponEquipped
       ? sprinting
       : nextAnimState === "rifleRun" ||
         nextAnimState === "rifleRunStart" ||
-        nextAnimState === "rifleRunStop";
-    weapon.setMovementState(movementActive, weaponSprinting, crouched);
+        nextAnimState === "rifleRunStop");
+    weapon.setMovementState(movementActive || slideMotionActive, weaponSprinting, crouched);
     syncWeaponAmmoFromInventory();
     const preUpdateLoadout = weapon.getLoadoutState();
     const shots = weapon.update(clampedDelta, nowMs, camera);
@@ -3476,6 +3535,7 @@ export const GameplayRuntime = forwardRef<
     }
 
     if (shots.length > 0) {
+      controller.cancelSlide();
       controller.alignBodyToAim();
     }
     if (shots.length > 0 && bulletHittableMeshesDirtyRef.current) {

@@ -11,6 +11,7 @@ type LoadingScreenProps = {
 };
 
 const INTRO_WORDMARK = "LOW HP STUDIOS";
+const MAIN_STATUS_LABEL = "Alpha Preview Build";
 const INTRO_BLACK_MS = 60;
 const INTRO_FADE_IN_MS = 500;
 const INTRO_HOLD_MS = 2_000;
@@ -197,9 +198,11 @@ export function LoadingScreen({
       } loading-screen--${phase} ${fadingOut ? "fade-out" : ""}`}
     >
       <div className="loading-main-backdrop" aria-hidden="true" />
-      <div className="loading-intro">
-        <h1 className="loading-intro-wordmark">{INTRO_WORDMARK}</h1>
-      </div>
+      {phase === "main" ? null : (
+        <div className="loading-intro">
+          <h1 className="loading-intro-wordmark">{INTRO_WORDMARK}</h1>
+        </div>
+      )}
       <div className="loading-main">
         <div className="loading-content">
           <div className="loading-hero">
@@ -207,7 +210,7 @@ export function LoadingScreen({
           </div>
         </div>
         <div className="loading-bottom-left">
-          <div className="loading-bottom-left-brand">Low HP Studios</div>
+          <div className="loading-bottom-left-brand">{MAIN_STATUS_LABEL}</div>
           <p className="loading-alpha-note">
             GreyTrace is currently in alpha stage. Please report issues.
           </p>

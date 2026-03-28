@@ -42,8 +42,8 @@ export const DEFAULT_CONTROLLER_SETTINGS: ControllerSettings = {
   lookSensitivityX: 1,
   lookSensitivityY: 1,
   toggleSprint: true,
-  invertMoveY: false,
-  invertY: false,
+  invertMoveY: true,
+  invertY: true,
 };
 
 export type ControllerBindingKey =
@@ -70,14 +70,14 @@ export const DEFAULT_CONTROLLER_BINDINGS: ControllerBindings = {
   ads: 6,
   jump: 0,
   crouch: 1,
-  peekLeft: 10,
-  peekRight: 11,
+  peekLeft: 4,
+  peekRight: 5,
   pickup: 2,
   reload: 3,
   inventory: 8,
   pause: 9,
-  sprint: 4,
-  toggleView: 5,
+  sprint: 10,
+  toggleView: 11,
   drop: 13,
   equipRifle: 14,
   equipSniper: 15,
@@ -195,10 +195,16 @@ export type CrosshairWeaponModifierSettings = {
 };
 
 export type CrosshairAdsSettings = {
-  rifleDotSize: number;
-  rifleDotColor: CrosshairColor;
   sniperDotSize: number;
   sniperDotColor: CrosshairColor;
+};
+
+export type RedDotCrosshairSettings = {
+  color: CrosshairColor;
+  centerDot: CrosshairCenterDotSettings;
+  innerLines: CrosshairLineSettings;
+  outerLines: CrosshairLineSettings;
+  outline: CrosshairOutlineSettings;
 };
 
 export type CrosshairSettings = {
@@ -210,6 +216,7 @@ export type CrosshairSettings = {
   dynamic: CrosshairDynamicSettings;
   weaponModifiers: CrosshairWeaponModifierSettings;
   ads: CrosshairAdsSettings;
+  redDot: RedDotCrosshairSettings;
 };
 
 export type WeaponRecoilProfile = {
@@ -237,17 +244,17 @@ export type MovementProfileSettings = {
 };
 
 export const DEFAULT_CROSSHAIR_SETTINGS: CrosshairSettings = {
-  color: 'white',
+  color: 'green',
   centerDot: {
     enabled: true,
     size: 3.5,
     thickness: 3,
   },
   innerLines: {
-    enabled: false,
+    enabled: true,
     length: 6.5,
     thickness: 1.5,
-    gap: 8.5,
+    gap: 3.5,
   },
   outerLines: {
     enabled: false,
@@ -273,10 +280,33 @@ export const DEFAULT_CROSSHAIR_SETTINGS: CrosshairSettings = {
     sniperGapMultiplier: 1.25,
   },
   ads: {
-    rifleDotSize: 5,
-    rifleDotColor: 'red',
     sniperDotSize: 6,
     sniperDotColor: 'red',
+  },
+  redDot: {
+    color: 'red',
+    centerDot: {
+      enabled: true,
+      size: 3.5,
+      thickness: 3,
+    },
+    innerLines: {
+      enabled: false,
+      length: 6.5,
+      thickness: 1.5,
+      gap: 8.5,
+    },
+    outerLines: {
+      enabled: false,
+      length: 7,
+      thickness: 2,
+      gap: 13,
+    },
+    outline: {
+      enabled: true,
+      thickness: 1,
+      opacity: 0.85,
+    },
   },
 };
 

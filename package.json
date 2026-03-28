@@ -1,7 +1,7 @@
 {
   "name": "greytrace",
   "private": true,
-  "version": "0.2.29",
+  "version": "0.2.30",
   "type": "module",
   "main": "electron/main.js",
   "repository": "https://github.com/Low-HP-Studios/greytrace",
@@ -97,7 +97,8 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "electron"
+      "electron-winstaller",
+      "esbuild"
     ]
   }
 }

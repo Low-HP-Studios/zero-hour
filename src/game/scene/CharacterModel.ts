@@ -504,7 +504,9 @@ export async function applyCharacterTextures(
   await Promise.all(tasks);
 }
 
-function findTextureEntry(materialName: string): { base: string; normal: string } | null {
+function findTextureEntry(
+  materialName: string,
+): { base: string; normal?: string } | null {
   if (CHARACTER_TEXTURE_MAP[materialName]) return CHARACTER_TEXTURE_MAP[materialName];
   const lower = materialName.toLowerCase();
   for (const [key, value] of Object.entries(CHARACTER_TEXTURE_MAP)) {

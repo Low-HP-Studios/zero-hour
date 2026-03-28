@@ -19,7 +19,7 @@ import {
 } from "./scene/scene-constants";
 
 export const TARGET_CHARACTER_MODEL_URL =
-  "/assets/models/character/Trooper/tactical guy.fbx";
+  "/assets/models/character/Stylish Man/undercover cop.fbx";
 export const TARGET_IDLE_ANIMATION_URL =
   "/assets/animations/movement/standing/idle.fbx";
 export const TARGET_DEATH_ANIMATION_URL =
@@ -39,6 +39,9 @@ const DEFERRED_AUDIO_KEYS: readonly AudioBufferKey[] = [
   "footstepRight",
   "footstepSometimes",
   "crouchEnter",
+  "slide1",
+  "slide2",
+  "slide3",
   "kill",
   "hit",
   "uiHover",
@@ -56,6 +59,9 @@ const AUDIO_LABELS: Record<AudioBufferKey, string> = {
   footstepRight: "Right footstep audio",
   footstepSometimes: "Rare footstep audio",
   crouchEnter: "Crouch enter audio",
+  slide1: "Slide audio 1",
+  slide2: "Slide audio 2",
+  slide3: "Slide audio 3",
   kill: "Kill sound",
   hit: "Hit sound",
   uiHover: "UI hover audio",
@@ -73,6 +79,9 @@ const AUDIO_WEIGHTS: Record<AudioBufferKey, number> = {
   footstepRight: 0.8,
   footstepSometimes: 0.8,
   crouchEnter: 0.8,
+  slide1: 0.9,
+  slide2: 0.9,
+  slide3: 0.9,
   kill: 1.0,
   hit: 0.8,
   uiHover: 0.45,

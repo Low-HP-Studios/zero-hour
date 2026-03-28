@@ -113,6 +113,7 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
   const [hudPanels] = useState<HudOverlayToggles>(persisted.hudPanels);
   const [audioVolumes, setAudioVolumes] = useState<AudioVolumeSettings>(persisted.audioVolumes);
   const [selectedCharacterId, setSelectedCharacterId] = useState<string>(persisted.selectedCharacterId);
+  const [previewCharacterId, setPreviewCharacterId] = useState<string>(persisted.selectedCharacterId);
   const selectedSkyId = persisted.selectedSkyId;
   const selectedMapId = persisted.selectedMapId;
 
@@ -191,8 +192,8 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
   }, []);
 
   const previewCharacterDef = useMemo(
-    () => getCharacterById(selectedCharacterId),
-    [selectedCharacterId],
+    () => getCharacterById(previewCharacterId),
+    [previewCharacterId],
   );
 
   return (
@@ -286,41 +287,65 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
             </div>
           )}
 
-          {/* COLLECTION TAB — character selection + 3D preview */}
+          {/* COLLECTION TAB — operator roster + 3D showcase */}
           {activeTab === "collection" && (
-            <div className="lobby-collection-v2">
-              <div className="lobby-collection-list-v2">
-                <div className="lobby-collection-list-header-v2">
-                  <h2>Characters</h2>
-                  <span className="lobby-collection-count-v2">
-                    {CHARACTER_REGISTRY.length}
-                  </span>
+            <div className="coll-layout">
+              {/* Left: Operator Roster */}
+              <aside className="coll-roster">
+                <div className="coll-roster-header">
+                  <span className="coll-roster-title">Roster</span>
+                  <span className="coll-roster-count">{CHARACTER_REGISTRY.length}</span>
                 </div>
-                <div className="lobby-collection-grid-v2">
+                <div className="coll-roster-list">
                   {CHARACTER_REGISTRY.map((char) => (
                     <button
                       key={char.id}
                       type="button"
-                      className={`lobby-char-card-v2 ${selectedCharacterId === char.id ? "equipped" : ""}`}
-                      onClick={() => setSelectedCharacterId(char.id)}
+                      className={`coll-roster-item${previewCharacterId === char.id ? " previewing" : ""}${selectedCharacterId === char.id ? " equipped" : ""}`}
+                      onClick={() => setPreviewCharacterId(char.id)}
                     >
-                      <span className="lobby-char-name-v2">
-                        {char.displayName}
-                      </span>
-                      {selectedCharacterId === char.id && (
-                        <span className="lobby-char-equipped-v2">Equipped</span>
-                      )}
+                      <div className="coll-roster-avatar">
+                        {char.displayName.charAt(0)}
+                      </div>
+                      <div className="coll-roster-info">
+                        <span className="coll-roster-name">{char.displayName}</span>
+                        {selectedCharacterId === char.id && (
+                          <span className="coll-roster-status">Active</span>
+                        )}
+                      </div>
                     </button>
                   ))}
                 </div>
-              </div>
-              <div className="lobby-collection-preview-v2">
+              </aside>
+
+              {/* Right: 3D Showcase */}
+              <div className="coll-showcase">
                 <CharacterPreviewCanvas
+                  key={previewCharacterDef.id}
                   characterDef={previewCharacterDef}
                   transparent
                 />
-                <div className="lobby-collection-preview-name-v2">
-                  {previewCharacterDef.displayName}
+                <div className="coll-showcase-overlay">
+                  <div className="coll-showcase-info">
+                    <span className="coll-op-tag">Operator File</span>
+                    <h2 className="coll-op-name">{previewCharacterDef.displayName}</h2>
+                    <span className="coll-op-id">
+                      ID // {previewCharacterDef.id.toUpperCase().replace(/-/g, "_")}
+                    </span>
+                  </div>
+                  <div className="coll-showcase-actions">
+                    {selectedCharacterId === previewCharacterDef.id ? (
+                      <div className="coll-active-badge">Equipped</div>
+                    ) : (
+                      <button
+                        type="button"
+                        className="coll-equip-btn"
+                        onClick={() => setSelectedCharacterId(previewCharacterDef.id)}
+                      >
+                        Equip
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
