@@ -9,7 +9,7 @@ import {
 import { flushSync } from "react-dom";
 import { toast } from "sonner";
 import { sharedAudioManager, type AudioVolumeSettings } from "./Audio";
-import { preloadPracticeMapAssets } from "./boot-assets";
+import { preloadPracticeMapAssets, preloadSkyAsset } from "./boot-assets";
 import { getCharacterById } from "./characters";
 import { ControllerCursor } from "./ControllerCursor";
 import { ExperienceMenuOverlay } from "./ExperienceMenuOverlay";
@@ -71,6 +71,7 @@ import {
   DEFAULT_CONTROLLER_BINDINGS,
   type ControllerBindingKey,
 } from "./types";
+import { SKY_IDS, type SkyId } from "./sky-registry";
 
 const DEFAULT_UPDATER_STATUS: UpdaterStatusPayload = {
   phase: "idle",
@@ -239,6 +240,14 @@ const INITIAL_PRACTICE_MAP_READY_STATE: Record<MapId, boolean> = {
   map1: false,
 };
 
+const INITIAL_SKY_ASSET_READY_STATE = SKY_IDS.reduce(
+  (state, skyId) => {
+    state[skyId] = false;
+    return state;
+  },
+  {} as Record<SkyId, boolean>,
+);
+
 function PracticeLoadingOverlay({ mapLabel }: { mapLabel: string }) {
   return (
     <div className="loading-screen loading-screen--main">
@@ -298,16 +307,23 @@ export function GameRoot({
   const [selectedCharacterId, setSelectedCharacterId] = useState<string>(
     persistedSettings.selectedCharacterId,
   );
+  const [selectedSkyId, setSelectedSkyId] = useState<SkyId>(
+    persistedSettings.selectedSkyId,
+  );
   const [selectedMapId, setSelectedMapId] = useState<MapId>(
     persistedSettings.selectedMapId,
   );
   const practiceMapWarmupsRef = useRef<Partial<Record<MapId, Promise<void>>>>(
     {},
   );
+  const skyAssetWarmupsRef = useRef<Partial<Record<SkyId, Promise<void>>>>({});
   const practiceEnterTokenRef = useRef(0);
   const [practiceMapReady, setPracticeMapReady] = useState<
     Record<MapId, boolean>
   >(INITIAL_PRACTICE_MAP_READY_STATE);
+  const [skyAssetReady, setSkyAssetReady] = useState<Record<SkyId, boolean>>(
+    INITIAL_SKY_ASSET_READY_STATE,
+  );
   const [practiceLoading, setPracticeLoading] = useState(false);
   const selectedMap = useMemo(
     () => getPracticeMapById(selectedMapId),
@@ -607,7 +623,7 @@ export function GameRoot({
       return existing;
     }
 
-    const request = preloadPracticeMapAssets(mapToWarm)
+    const request = preloadPracticeMapAssets(mapToWarm, selectedSkyId)
       .catch((error: unknown) => {
         console.warn("[Practice] Map warmup failed", {
           mapId: mapToWarm.id,
@@ -627,11 +643,45 @@ export function GameRoot({
 
     practiceMapWarmupsRef.current[mapToWarm.id] = request;
     return request;
-  }, [selectedMap]);
+  }, [selectedMap, selectedSkyId]);
+
+  const warmSkyAsset = useCallback((skyIdToWarm: SkyId) => {
+    const existing = skyAssetWarmupsRef.current[skyIdToWarm];
+    if (existing) {
+      return existing;
+    }
+
+    const request = preloadSkyAsset(skyIdToWarm)
+      .catch((error: unknown) => {
+        console.warn("[Practice] Sky warmup failed", {
+          skyId: skyIdToWarm,
+          error,
+        });
+      })
+      .finally(() => {
+        setSkyAssetReady((previous) =>
+          previous[skyIdToWarm]
+            ? previous
+            : {
+              ...previous,
+              [skyIdToWarm]: true,
+            }
+        );
+      });
+
+    skyAssetWarmupsRef.current[skyIdToWarm] = request;
+    return request;
+  }, []);
 
   useEffect(() => {
     void warmPracticeMapAssets(selectedMap);
   }, [selectedMap, warmPracticeMapAssets]);
+
+  useEffect(() => {
+    for (const skyId of SKY_IDS) {
+      void warmSkyAsset(skyId);
+    }
+  }, [warmSkyAsset]);
 
   useEffect(() => {
     if (!showSettingsModal) {
@@ -666,7 +716,7 @@ export function GameRoot({
   }, []);
 
   const handleEnterPractice = useCallback(() => {
-    if (practiceMapReady[selectedMap.id]) {
+    if (practiceMapReady[selectedMap.id] && skyAssetReady[selectedSkyId]) {
       startPracticeSession();
       return;
     }
@@ -674,7 +724,10 @@ export function GameRoot({
     const token = practiceEnterTokenRef.current + 1;
     practiceEnterTokenRef.current = token;
     setPracticeLoading(true);
-    void warmPracticeMapAssets(selectedMap).finally(() => {
+    void Promise.all([
+      warmPracticeMapAssets(selectedMap),
+      warmSkyAsset(selectedSkyId),
+    ]).finally(() => {
       if (practiceEnterTokenRef.current !== token) {
         return;
       }
@@ -682,8 +735,11 @@ export function GameRoot({
     });
   }, [
     practiceMapReady,
+    selectedSkyId,
+    skyAssetReady,
     selectedMap,
     startPracticeSession,
+    warmSkyAsset,
     warmPracticeMapAssets,
   ]);
 
@@ -822,6 +878,7 @@ export function GameRoot({
           stressCount,
           audioVolumes,
           selectedCharacterId,
+          selectedSkyId,
           selectedMapId,
         },
         null,
@@ -833,6 +890,7 @@ export function GameRoot({
       stressCount,
       audioVolumes,
       selectedCharacterId,
+      selectedSkyId,
       selectedMapId,
     ],
   );
@@ -871,6 +929,7 @@ export function GameRoot({
       setStressCount(next.stressCount);
       setAudioVolumes(next.audioVolumes);
       setSelectedCharacterId(next.selectedCharacterId);
+      setSelectedSkyId(next.selectedSkyId);
       setSelectedMapId(next.selectedMapId);
       toast.success("Settings profile imported.");
     } catch (error) {
@@ -1077,6 +1136,7 @@ export function GameRoot({
       stressCount,
       audioVolumes,
       selectedCharacterId,
+      selectedSkyId,
       selectedMapId,
     });
   }, [
@@ -1085,6 +1145,7 @@ export function GameRoot({
     stressCount,
     audioVolumes,
     selectedCharacterId,
+    selectedSkyId,
     selectedMapId,
   ]);
 
@@ -1542,6 +1603,7 @@ export function GameRoot({
         audioVolumes={audioVolumes}
         stressCount={sceneStressCount}
         practiceMap={selectedMap}
+        selectedSkyId={selectedSkyId}
         booting={booting}
         deferredAssetsEnabled={deferredAssetsEnabled}
         presentation={renderedPresentation}
@@ -1570,6 +1632,8 @@ export function GameRoot({
             onInstallUpdate={() => { void handleInstallUpdate(); }}
             selectedCharacterId={selectedCharacterId}
             onCharacterSelect={setSelectedCharacterId}
+            selectedSkyId={selectedSkyId}
+            onSkySelect={setSelectedSkyId}
             selectedMapId={selectedMapId}
             onMapSelect={setSelectedMapId}
             updaterStatus={updaterStatus}

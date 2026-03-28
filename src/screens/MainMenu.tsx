@@ -113,6 +113,7 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
   const [hudPanels] = useState<HudOverlayToggles>(persisted.hudPanels);
   const [audioVolumes, setAudioVolumes] = useState<AudioVolumeSettings>(persisted.audioVolumes);
   const [selectedCharacterId, setSelectedCharacterId] = useState<string>(persisted.selectedCharacterId);
+  const selectedSkyId = persisted.selectedSkyId;
   const selectedMapId = persisted.selectedMapId;
 
   useEffect(() => {
@@ -122,9 +123,10 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
       audioVolumes,
       stressCount: 0,
       selectedCharacterId,
+      selectedSkyId,
       selectedMapId,
     });
-  }, [settings, hudPanels, audioVolumes, selectedCharacterId, selectedMapId]);
+  }, [settings, hudPanels, audioVolumes, selectedCharacterId, selectedSkyId, selectedMapId]);
 
   useEffect(() => {
     if (!bindingCapture) return;

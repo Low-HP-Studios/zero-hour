@@ -1,5 +1,10 @@
 import { type AudioVolumeSettings, DEFAULT_AUDIO_VOLUMES } from "../Audio";
 import {
+  DEFAULT_SKY_ID,
+  isSkyId,
+  type SkyId,
+} from "../sky-registry";
+import {
   DEFAULT_PRACTICE_MAP_ID,
   DEFAULT_AIM_SENSITIVITY_SETTINGS,
   DEFAULT_CONTROLLER_BINDINGS,
@@ -108,6 +113,7 @@ export type PersistedSettings = {
   audioVolumes: AudioVolumeSettings;
   selectedCharacterId: string;
   selectedMapId: MapId;
+  selectedSkyId: SkyId;
 };
 
 export function createDefaultPersistedSettings(): PersistedSettings {
@@ -131,6 +137,7 @@ export function createDefaultPersistedSettings(): PersistedSettings {
     audioVolumes: { ...DEFAULT_AUDIO_VOLUMES },
     selectedCharacterId: "trooper",
     selectedMapId: DEFAULT_PRACTICE_MAP_ID,
+    selectedSkyId: DEFAULT_SKY_ID,
   };
 }
 
@@ -164,6 +171,10 @@ function readMapId(value: unknown, fallback: MapId): MapId {
   return PRACTICE_MAP_IDS.includes(value as MapId)
     ? (value as MapId)
     : fallback;
+}
+
+function readSkyId(value: unknown, fallback: SkyId): SkyId {
+  return isSkyId(value) ? value : fallback;
 }
 
 function readClampedNumber(
@@ -881,6 +892,7 @@ export function parsePersistedSettings(value: unknown): PersistedSettings {
       defaults.selectedCharacterId,
     ),
     selectedMapId: readMapId(value.selectedMapId, defaults.selectedMapId),
+    selectedSkyId: readSkyId(value.selectedSkyId, defaults.selectedSkyId),
     audioVolumes: {
       master: readClampedNumber(
         audioVolumes.master,

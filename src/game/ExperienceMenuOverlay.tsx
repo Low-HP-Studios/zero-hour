@@ -4,6 +4,7 @@ import {
   CHARACTER_REGISTRY,
   getCharacterById,
 } from "./characters";
+import { SKY_OPTIONS, getSkyById, type SkyId } from "./sky-registry";
 import { PRACTICE_MAP_OPTIONS, getPracticeMapById } from "./scene/practice-maps";
 import type { MapId } from "./types";
 
@@ -16,6 +17,8 @@ type ExperienceMenuOverlayProps = {
   onInstallUpdate: () => void;
   selectedCharacterId: string;
   onCharacterSelect: (characterId: string) => void;
+  selectedSkyId: SkyId;
+  onSkySelect: (skyId: SkyId) => void;
   selectedMapId: MapId;
   onMapSelect: (mapId: MapId) => void;
   updaterStatus: UpdaterStatusPayload;
@@ -25,6 +28,7 @@ type ExperienceMenuOverlayProps = {
 };
 
 type LobbyTab = "play" | "collection" | "store" | "updates";
+type CollectionTab = "characters" | "skies";
 
 type NavItem = {
   id: LobbyTab;
@@ -76,8 +80,8 @@ function ArrowIcon() {
   );
 }
 
-function getCharacterMonogram(displayName: string) {
-  return displayName
+function getCatalogMonogram(label: string) {
+  return label
     .split(/\s+/)
     .map((part) => part[0]?.toUpperCase() ?? "")
     .join("")
@@ -175,6 +179,8 @@ export function ExperienceMenuOverlay({
   onInstallUpdate,
   selectedCharacterId,
   onCharacterSelect,
+  selectedSkyId,
+  onSkySelect,
   selectedMapId,
   onMapSelect,
   updaterStatus,
@@ -183,6 +189,7 @@ export function ExperienceMenuOverlay({
   onCheckForUpdates,
 }: ExperienceMenuOverlayProps) {
   const [activeTab, setActiveTab] = useState<LobbyTab>("play");
+  const [collectionTab, setCollectionTab] = useState<CollectionTab>("characters");
 
   // Track download speed as %/sec samples
   const speedSamplesRef = useRef<number[]>([]);
@@ -228,13 +235,19 @@ export function ExperienceMenuOverlay({
     0,
     CHARACTER_REGISTRY.findIndex((char) => char.id === selectedCharacterId),
   );
+  const selectedSky = getSkyById(selectedSkyId);
+  const selectedSkyIndex = Math.max(
+    0,
+    SKY_OPTIONS.findIndex((sky) => sky.id === selectedSkyId),
+  );
   const selectedMap = getPracticeMapById(selectedMapId);
 
   const isDownloading = updaterStatus.phase === "downloading";
   const progress = typeof updaterStatus.progress === "number" ? updaterStatus.progress : null;
-  const selectedCharacterMonogram = getCharacterMonogram(
+  const selectedCharacterMonogram = getCatalogMonogram(
     selectedCharacterDef.displayName,
   );
+  const selectedSkyMonogram = getCatalogMonogram(selectedSky.label);
 
   return (
     <div className="lobby-layout-v2 lobby-layout-v3">
@@ -339,52 +352,121 @@ export function ExperienceMenuOverlay({
           <div className="lobby-collection-v2 lobby-collection-v3">
             <div className="lobby-collection-list-v2 lobby-panel-v3">
               <div className="lobby-collection-list-header-v2">
-                <h2>Characters</h2>
-                <span className="lobby-collection-count-v2">{CHARACTER_REGISTRY.length}</span>
+                <h2>{collectionTab === "characters" ? "Characters" : "Skies"}</h2>
+                <span className="lobby-collection-count-v2">
+                  {collectionTab === "characters" ? CHARACTER_REGISTRY.length : SKY_OPTIONS.length}
+                </span>
+              </div>
+              <div className="lobby-collection-catalog-tabs-v3" role="tablist" aria-label="Collection categories">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={collectionTab === "characters"}
+                  className={`lobby-collection-catalog-tab-v3 ${collectionTab === "characters" ? "active" : ""}`}
+                  onClick={() => setCollectionTab("characters")}
+                >
+                  Characters
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={collectionTab === "skies"}
+                  className={`lobby-collection-catalog-tab-v3 ${collectionTab === "skies" ? "active" : ""}`}
+                  onClick={() => setCollectionTab("skies")}
+                >
+                  Skies
+                </button>
               </div>
               <div className="lobby-collection-grid-v2">
-                {CHARACTER_REGISTRY.map((char) => (
-                  <button
-                    key={char.id}
-                    type="button"
-                    className={`lobby-char-card-v2 ${selectedCharacterId === char.id ? "equipped" : ""}`}
-                    onClick={() => onCharacterSelect(char.id)}
-                  >
-                    <span className="lobby-char-name-v2">{char.displayName}</span>
-                    {selectedCharacterId === char.id && (
-                      <span className="lobby-char-equipped-v2">Equipped</span>
-                    )}
-                  </button>
-                ))}
+                {collectionTab === "characters"
+                  ? CHARACTER_REGISTRY.map((char) => (
+                    <button
+                      key={char.id}
+                      type="button"
+                      className={`lobby-char-card-v2 ${selectedCharacterId === char.id ? "equipped" : ""}`}
+                      onClick={() => onCharacterSelect(char.id)}
+                    >
+                      <span className="lobby-char-name-v2">{char.displayName}</span>
+                      {selectedCharacterId === char.id && (
+                        <span className="lobby-char-equipped-v2">Equipped</span>
+                      )}
+                    </button>
+                  ))
+                  : SKY_OPTIONS.map((sky) => (
+                    <button
+                      key={sky.id}
+                      type="button"
+                      className={`lobby-sky-card-v3 ${selectedSkyId === sky.id ? "equipped" : ""}`}
+                      onClick={() => onSkySelect(sky.id)}
+                    >
+                      <span className="lobby-sky-name-v3">{sky.label}</span>
+                      <span className="lobby-sky-copy-v3">{sky.description}</span>
+                      {selectedSkyId === sky.id && (
+                        <span className="lobby-char-equipped-v2">Equipped</span>
+                      )}
+                    </button>
+                  ))}
               </div>
             </div>
-            <section className="lobby-panel-v3 lobby-character-dossier-v3">
-              <div className="lobby-character-mark-v3">
-                {selectedCharacterMonogram}
-              </div>
-              <span className="lobby-section-label-v3">Selected Operative</span>
-              <h2 className="lobby-character-title-v3">{selectedCharacterDef.displayName}</h2>
-              <p className="lobby-character-copy-v3">
-                This selection drives the live lobby background now. One render,
-                one rifle, and fewer fake preview boxes cluttering the crime scene.
-              </p>
-              <div className="lobby-character-facts-v3">
-                <article className="lobby-meta-card-v3">
-                  <span>Registry</span>
-                  <strong>
-                    {formatCatalogIndex(selectedCharacterIndex)}/{CHARACTER_REGISTRY.length}
-                  </strong>
-                </article>
-                <article className="lobby-meta-card-v3">
-                  <span>Status</span>
-                  <strong>Equipped</strong>
-                </article>
-                <article className="lobby-meta-card-v3">
-                  <span>Presentation</span>
-                  <strong>Noir live feed</strong>
-                </article>
-              </div>
-            </section>
+            {collectionTab === "characters"
+              ? (
+                <section className="lobby-panel-v3 lobby-character-dossier-v3">
+                  <div className="lobby-character-mark-v3">
+                    {selectedCharacterMonogram}
+                  </div>
+                  <span className="lobby-section-label-v3">Selected Operative</span>
+                  <h2 className="lobby-character-title-v3">{selectedCharacterDef.displayName}</h2>
+                  <p className="lobby-character-copy-v3">
+                    This selection drives the live lobby background now. One render,
+                    one rifle, and fewer fake preview boxes cluttering the crime scene.
+                  </p>
+                  <div className="lobby-character-facts-v3">
+                    <article className="lobby-meta-card-v3">
+                      <span>Registry</span>
+                      <strong>
+                        {formatCatalogIndex(selectedCharacterIndex)}/{CHARACTER_REGISTRY.length}
+                      </strong>
+                    </article>
+                    <article className="lobby-meta-card-v3">
+                      <span>Status</span>
+                      <strong>Equipped</strong>
+                    </article>
+                    <article className="lobby-meta-card-v3">
+                      <span>Presentation</span>
+                      <strong>Noir live feed</strong>
+                    </article>
+                  </div>
+                </section>
+              )
+              : (
+                <section className="lobby-panel-v3 lobby-character-dossier-v3 lobby-sky-dossier-v3">
+                  <div className="lobby-character-mark-v3 lobby-sky-mark-v3">
+                    {selectedSkyMonogram}
+                  </div>
+                  <span className="lobby-section-label-v3">Active Sky</span>
+                  <h2 className="lobby-character-title-v3">{selectedSky.label}</h2>
+                  <p className="lobby-character-copy-v3">
+                    {selectedSky.description} Clicking a card swaps the live lobby backdrop
+                    immediately, because extra confirmation buttons are just paperwork in disguise.
+                  </p>
+                  <div className="lobby-character-facts-v3">
+                    <article className="lobby-meta-card-v3">
+                      <span>Registry</span>
+                      <strong>
+                        {formatCatalogIndex(selectedSkyIndex)}/{SKY_OPTIONS.length}
+                      </strong>
+                    </article>
+                    <article className="lobby-meta-card-v3">
+                      <span>Status</span>
+                      <strong>Equipped</strong>
+                    </article>
+                    <article className="lobby-meta-card-v3">
+                      <span>Scope</span>
+                      <strong>Lobby + Practice</strong>
+                    </article>
+                  </div>
+                </section>
+              )}
           </div>
         )}
 
@@ -402,7 +484,7 @@ export function ExperienceMenuOverlay({
             <div className="lobby-store-grid-v2">
               {CHARACTER_REGISTRY.map((char, index) => {
                 const isEquipped = selectedCharacterId === char.id;
-                const monogram = getCharacterMonogram(char.displayName);
+                const monogram = getCatalogMonogram(char.displayName);
                 return (
                   <div
                     key={char.id}
