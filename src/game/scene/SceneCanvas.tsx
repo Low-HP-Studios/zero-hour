@@ -12,6 +12,8 @@ import { Canvas, useThree } from "@react-three/fiber";
 import { Perf } from "r3f-perf";
 import * as THREE from "three";
 import type { AudioVolumeSettings } from "../Audio";
+import { applyBotDamage, createInitialBots } from "../BotAI";
+import { BotSystem } from "../BotSystem";
 import { markBootEvent } from "../boot-trace";
 import {
   getSkyById,
@@ -25,6 +27,7 @@ import {
   type TargetVisualHandle,
 } from "../Targets";
 import type {
+  BotState,
   GameSettings,
   InventoryMoveLocation,
   InventoryMoveRequest,
@@ -151,6 +154,11 @@ function blendLightingPresets(
 export type SceneHandle = {
   requestPointerLock: () => void;
   releasePointerLock: () => void;
+  respawnPlayer: (
+    position: [number, number, number],
+    yawRadians?: number,
+    pitchRadians?: number,
+  ) => void;
   dropWeaponForReturn: () => void;
   moveInventoryItem: (request: InventoryMoveRequest) => InventoryMoveResult;
   quickMoveInventoryItem: (location: InventoryMoveLocation) => InventoryMoveResult;
@@ -167,9 +175,11 @@ type SceneProps = {
   deferredAssetsEnabled: boolean;
   presentation: ScenePresentation;
   gameplayInputEnabled: boolean;
+  playerDead: boolean;
   onPlayerSnapshot: (snapshot: PlayerSnapshot) => void;
   onPerfMetrics: (metrics: PerfMetrics) => void;
   onHitMarker: (kind: HitMarkerKind, damage: number, targetId: string) => void;
+  onPlayerDamaged: (damage: number) => void;
   onShotFired: (state: ShotFiredState) => void;
   onWeaponEquippedChange: (equipped: boolean) => void;
   onActiveWeaponChange: (weapon: WeaponKind) => void;
@@ -317,9 +327,11 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
   deferredAssetsEnabled,
   presentation,
   gameplayInputEnabled,
+  playerDead,
   onPlayerSnapshot,
   onPerfMetrics,
   onHitMarker,
+  onPlayerDamaged,
   onShotFired,
   onWeaponEquippedChange,
   onActiveWeaponChange,
@@ -333,10 +345,18 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
   const [targets, setTargets] = useState<TargetState[]>(() =>
     clonePracticeMapTargets(practiceMap.targets),
   );
+  const [bots, setBots] = useState<BotState[]>(() =>
+    createInitialBots(practiceMap.botSpawns ?? [], 5),
+  );
   const targetVisualRegistryRef = useRef<Map<string, TargetVisualHandle>>(
     new Map(),
   );
   const sceneTargetsRef = useRef(targets);
+  const playerPositionRef = useRef<[number, number, number]>([
+    practiceMap.playerSpawn.position[0],
+    practiceMap.playerSpawn.position[1],
+    practiceMap.playerSpawn.position[2],
+  ]);
   const runtimeRef = useRef<GameplayRuntimeHandle | null>(null);
   const recoveringContextRef = useRef(false);
   const [runtimeAssetsReady, setRuntimeAssetsReady] = useState(false);
@@ -372,6 +392,10 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
       ],
     };
   }, [practiceMap, glbCollisionVolumes]);
+  const shootableTargets = useMemo<TargetState[]>(
+    () => [...targets, ...bots],
+    [targets, bots],
+  );
 
   const renderedPracticeMap = !booting && presentation.phase === "playing"
     ? practiceMap
@@ -450,6 +474,18 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
 
   const handleTargetHit = useCallback(
     (targetId: string, damage: number, nowMs: number) => {
+      if (targetId.startsWith("bot_")) {
+        const respawnSpawns = practiceMap.botSpawns ?? [practiceMap.playerSpawn.position];
+        setBots((previousBots) =>
+          previousBots.map((bot) =>
+            bot.id === targetId
+              ? applyBotDamage(bot, damage, nowMs, respawnSpawns)
+              : bot
+          ),
+        );
+        return;
+      }
+
       // No startTransition — kills must render immediately
       setTargets((previousTargets) =>
         previousTargets.map((target) => {
@@ -485,7 +521,7 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
         resetTimeoutsRef.current.set(targetId, timeoutId);
       }
     },
-    [],
+    [practiceMap.botSpawns, practiceMap.playerSpawn.position],
   );
 
   const handleResetTargets = useCallback(() => {
@@ -495,8 +531,9 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
     resetTimeoutsRef.current.clear();
     startTransition(() => {
       setTargets((previousTargets) => resetTargets(previousTargets));
+      setBots(createInitialBots(practiceMap.botSpawns ?? [], 5));
     });
-  }, []);
+  }, [practiceMap.botSpawns]);
 
   useEffect(() => {
     for (const timeoutId of resetTimeoutsRef.current.values()) {
@@ -505,8 +542,19 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
     resetTimeoutsRef.current.clear();
     startTransition(() => {
       setTargets(clonePracticeMapTargets(practiceMap.targets));
+      setBots(createInitialBots(practiceMap.botSpawns ?? [], 5));
     });
+    playerPositionRef.current = [
+      practiceMap.playerSpawn.position[0],
+      practiceMap.playerSpawn.position[1],
+      practiceMap.playerSpawn.position[2],
+    ];
   }, [practiceMap]);
+
+  const handlePlayerSnapshot = useCallback((snapshot: PlayerSnapshot) => {
+    playerPositionRef.current = [snapshot.x, snapshot.y, snapshot.z];
+    onPlayerSnapshot(snapshot);
+  }, [onPlayerSnapshot]);
 
   const handleSceneContextLost = useCallback(() => {
     if (recoveringContextRef.current) {
@@ -528,6 +576,9 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
     },
     releasePointerLock: () => {
       runtimeRef.current?.releasePointerLock();
+    },
+    respawnPlayer: (position, yawRadians, pitchRadians) => {
+      runtimeRef.current?.respawnPlayer(position, yawRadians, pitchRadians);
     },
     dropWeaponForReturn: () => {
       runtimeRef.current?.dropWeaponForReturn();
@@ -626,6 +677,25 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
         characterOverride={characterOverride}
         visualRegistryRef={targetVisualRegistryRef}
       />
+      {presentation.phase === "playing" &&
+      practiceMap.botSpawns &&
+      practiceMap.botWaypoints
+        ? (
+          <BotSystem
+            bots={bots}
+            playerPositionRef={playerPositionRef}
+            playerDead={playerDead}
+            blockingVolumes={runtimePracticeMap.blockingVolumes ?? []}
+            waypoints={practiceMap.botWaypoints}
+            shadows={settings.shadows && worldTheme > 0.6}
+            reveal={presentation.targetReveal}
+            visualRegistryRef={targetVisualRegistryRef}
+            characterOverride={characterOverride}
+            onBotStateUpdate={setBots}
+            onBotFiredAtPlayer={onPlayerDamaged}
+          />
+        )
+        : null}
       <StressBoxes
         count={practiceMap.supportsStressMode ? stressCount : 0}
         shadows={settings.shadows}
@@ -646,11 +716,11 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
         weaponAlignment={settings.weaponAlignment}
         movement={settings.movement}
         weaponRecoilProfiles={settings.weaponRecoilProfiles}
-        targets={targets}
+        targets={shootableTargets}
         targetVisualRegistryRef={targetVisualRegistryRef}
         onTargetHit={handleTargetHit}
         onResetTargets={handleResetTargets}
-        onPlayerSnapshot={onPlayerSnapshot}
+        onPlayerSnapshot={handlePlayerSnapshot}
         onPerfMetrics={onPerfMetrics}
         onHitMarker={onHitMarker}
         onShotFired={onShotFired}

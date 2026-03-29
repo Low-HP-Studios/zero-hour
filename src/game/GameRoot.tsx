@@ -15,8 +15,10 @@ import { ControllerCursor } from "./ControllerCursor";
 import { ExperienceMenuOverlay } from "./ExperienceMenuOverlay";
 import { playControllerRumble } from "./GamepadHaptics";
 import { findCompatibleGamepad } from "./GamepadManager";
+import { KillFeed } from "./hud/KillFeed";
 import { MinimalStatsBar } from "./hud/MinimalStatsBar";
 import { PubgHud } from "./hud/PubgHud";
+import { ScoreDisplay } from "./hud/ScoreDisplay";
 import {
   type AimingState,
   type HitMarkerKind,
@@ -45,14 +47,18 @@ import {
   type InventoryMoveLocation,
   type InventoryMoveRequest,
   type InventoryMoveResult,
+  type KillFeedEntry,
   type MapId,
   type PerfMetrics,
+  type PlayerHealthState,
   type PlayerSnapshot,
   type ScenePresentation,
   type StressModeCount,
+  type TdmMatchState,
 } from "./types";
 import {
   getPracticeMapById,
+  type PracticeMapDefinition,
 } from "./scene/practice-maps";
 import { LobbyMusicController } from "./LobbyMusicController";
 import {
@@ -88,6 +94,13 @@ const UPDATE_AVAILABLE_TOAST_ID = "greytrace-updater-available";
 const READY_TO_INSTALL_TOAST_ID = "greytrace-updater-ready";
 const MENU_AUTO_UPDATE_CHECK_COOLDOWN_MS = 30_000;
 const MAX_SHOT_BLOOM = 24;
+const TDM_TARGET_SCORE = 30;
+const PLAYER_MAX_HP = 100;
+const PLAYER_RESPAWN_DELAY_MS = 3000;
+const PLAYER_REGEN_DELAY_MS = 5000;
+const PLAYER_REGEN_INTERVAL_MS = 100;
+const PLAYER_REGEN_AMOUNT = 2;
+const DAMAGE_FLASH_DURATION_MS = 300;
 const CONTROLLER_CAPTURE_CANCEL_HOLD_MS = 800;
 const RIFLE_FIRE_RUMBLE = {
   durationMs: 24,
@@ -248,6 +261,43 @@ const INITIAL_SKY_ASSET_READY_STATE = SKY_IDS.reduce(
   {} as Record<SkyId, boolean>,
 );
 
+function createInitialPlayerHealthState(): PlayerHealthState {
+  return {
+    hp: PLAYER_MAX_HP,
+    maxHp: PLAYER_MAX_HP,
+    lastDamageTime: 0,
+    isDead: false,
+    respawnAt: 0,
+  };
+}
+
+function createInitialTdmMatchState(): TdmMatchState {
+  return {
+    blueScore: 0,
+    redScore: 0,
+    targetScore: TDM_TARGET_SCORE,
+    killFeed: [],
+    roundOver: false,
+    winner: null,
+  };
+}
+
+function appendKillFeedEntry(
+  entries: KillFeedEntry[],
+  entry: KillFeedEntry,
+) {
+  return [entry, ...entries].slice(0, 8);
+}
+
+function pickRandomPlayerSpawn(practiceMap: PracticeMapDefinition) {
+  const spawns = practiceMap.playerSpawns;
+  if (!spawns || spawns.length === 0) {
+    return [...practiceMap.playerSpawn.position] as [number, number, number];
+  }
+  const chosen = spawns[Math.floor(Math.random() * spawns.length)];
+  return [chosen[0], chosen[1], chosen[2]] as [number, number, number];
+}
+
 function PracticeLoadingOverlay({ mapLabel }: { mapLabel: string }) {
   return (
     <div className="loading-screen loading-screen--main">
@@ -330,6 +380,7 @@ export function GameRoot({
     () => getPracticeMapById(selectedMapId),
     [selectedMapId],
   );
+  const isTdmMap = selectedMap.id === "map1";
   const characterOverride = useMemo(() => {
     const def = getCharacterById(selectedCharacterId);
     return {
@@ -344,7 +395,18 @@ export function GameRoot({
   const [player, setPlayerRaw] = useState<PlayerSnapshot>(
     DEFAULT_PLAYER_SNAPSHOT,
   );
+  const [playerHealth, setPlayerHealth] = useState<PlayerHealthState>(
+    createInitialPlayerHealthState,
+  );
+  const [matchState, setMatchState] = useState<TdmMatchState>(
+    createInitialTdmMatchState,
+  );
+  const [damageFlashOpacity, setDamageFlashOpacity] = useState(0);
   const playerRef = useRef(player);
+  const playerHealthRef = useRef(playerHealth);
+  const matchStateRef = useRef(matchState);
+  const damageFlashTimerRef = useRef<number | null>(null);
+  const respawnTimerRef = useRef<number | null>(null);
   const setPlayer = useCallback((snapshot: PlayerSnapshot) => {
     const prev = playerRef.current;
     if (isPlayerSnapshotEqual(prev, snapshot)) {
@@ -411,9 +473,62 @@ export function GameRoot({
       !inventoryOpen &&
       !player.controllerConnected);
 
+  const resetTdmSessionState = useCallback(() => {
+    if (damageFlashTimerRef.current !== null) {
+      window.clearTimeout(damageFlashTimerRef.current);
+      damageFlashTimerRef.current = null;
+    }
+    if (respawnTimerRef.current !== null) {
+      window.clearTimeout(respawnTimerRef.current);
+      respawnTimerRef.current = null;
+    }
+    const nextPlayerHealth = createInitialPlayerHealthState();
+    const nextMatchState = createInitialTdmMatchState();
+    playerHealthRef.current = nextPlayerHealth;
+    matchStateRef.current = nextMatchState;
+    setPlayerHealth(nextPlayerHealth);
+    setMatchState(nextMatchState);
+    setDamageFlashOpacity(0);
+    setDamageNumbers([]);
+  }, []);
+
+  const triggerDamageFlash = useCallback(() => {
+    if (damageFlashTimerRef.current !== null) {
+      window.clearTimeout(damageFlashTimerRef.current);
+    }
+    setDamageFlashOpacity(0.34);
+    damageFlashTimerRef.current = window.setTimeout(() => {
+      damageFlashTimerRef.current = null;
+      setDamageFlashOpacity(0);
+    }, DAMAGE_FLASH_DURATION_MS);
+  }, []);
+
   useEffect(() => {
     pauseMenuOpenRef.current = pauseMenuOpen;
   }, [pauseMenuOpen]);
+
+  useEffect(() => {
+    playerHealthRef.current = playerHealth;
+  }, [playerHealth]);
+
+  useEffect(() => {
+    matchStateRef.current = matchState;
+  }, [matchState]);
+
+  useEffect(() => {
+    return () => {
+      if (damageFlashTimerRef.current !== null) {
+        window.clearTimeout(damageFlashTimerRef.current);
+      }
+      if (respawnTimerRef.current !== null) {
+        window.clearTimeout(respawnTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    resetTdmSessionState();
+  }, [resetTdmSessionState, selectedMap.id]);
 
   useEffect(() => {
     bindingCaptureRef.current = bindingCapture;
@@ -431,6 +546,42 @@ export function GameRoot({
       setHasBeenLocked(true);
     }
   }, [player.pointerLocked, hasBeenLocked]);
+
+  useEffect(() => {
+    if (!isTdmMap || phase !== "playing" || playerHealth.isDead || matchState.roundOver) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      setPlayerHealth((previous) => {
+        if (
+          previous.isDead ||
+          previous.hp >= previous.maxHp ||
+          performance.now() - previous.lastDamageTime < PLAYER_REGEN_DELAY_MS
+        ) {
+          return previous;
+        }
+        const nextHealth = {
+          ...previous,
+          hp: Math.min(previous.maxHp, previous.hp + PLAYER_REGEN_AMOUNT),
+        };
+        playerHealthRef.current = nextHealth;
+        return nextHealth;
+      });
+    }, PLAYER_REGEN_INTERVAL_MS);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [isTdmMap, matchState.roundOver, phase, playerHealth.isDead]);
+
+  useEffect(() => {
+    if (!matchState.roundOver) {
+      return;
+    }
+    setNeedsPointerLock(false);
+    sceneRef.current?.releasePointerLock();
+  }, [matchState.roundOver]);
 
   useEffect(() => {
     if (phase !== "entering" && phase !== "returning") {
@@ -552,6 +703,8 @@ export function GameRoot({
   const showClickToContinueOverlay =
     phase === "playing" &&
     needsPointerLock &&
+    !playerHealth.isDead &&
+    !matchState.roundOver &&
     !showSettingsModal &&
     !player.controllerConnected;
 
@@ -703,6 +856,7 @@ export function GameRoot({
 
   const startPracticeSession = useCallback(() => {
     flushSync(() => {
+      resetTdmSessionState();
       setPracticeLoading(false);
       setMenuSettingsOpen(false);
       setPauseMenuOpen(false);
@@ -714,7 +868,7 @@ export function GameRoot({
     });
     window.focus();
     setNeedsPointerLock(true);
-  }, []);
+  }, [resetTdmSessionState]);
 
   const handleEnterPractice = useCallback(() => {
     if (practiceMapReady[selectedMap.id] && skyAssetReady[selectedSkyId]) {
@@ -745,6 +899,7 @@ export function GameRoot({
   ]);
 
   const handleReturnToLobby = useCallback(() => {
+    resetTdmSessionState();
     setNeedsPointerLock(false);
     setBindingCapture(null);
     setControllerBindingCapture(null);
@@ -756,7 +911,88 @@ export function GameRoot({
     setHitMarker({ until: 0, kind: "body" });
     setHasBeenLocked(false);
     setPhase("menu");
-  }, []);
+  }, [resetTdmSessionState]);
+
+  const handleRestartMatch = useCallback(() => {
+    resetTdmSessionState();
+    setHitMarker({ until: 0, kind: "body" });
+    sceneRef.current?.resetForMenu();
+    window.focus();
+    setNeedsPointerLock(true);
+  }, [resetTdmSessionState]);
+
+  const handlePlayerDamaged = useCallback((damage: number) => {
+    const currentMatch = matchStateRef.current;
+    const currentHealth = playerHealthRef.current;
+
+    if (!isTdmMap || phase !== "playing" || currentMatch.roundOver || currentHealth.isDead) {
+      return;
+    }
+
+    const now = performance.now();
+    const hp = Math.max(0, currentHealth.hp - damage);
+    const playerDied = hp <= 0;
+    const deathRespawnAt = playerDied ? now + PLAYER_RESPAWN_DELAY_MS : 0;
+    const nextHealth: PlayerHealthState = {
+      ...currentHealth,
+      hp,
+      lastDamageTime: now,
+      isDead: playerDied,
+      respawnAt: deathRespawnAt,
+    };
+    playerHealthRef.current = nextHealth;
+    setPlayerHealth(nextHealth);
+
+    triggerDamageFlash();
+
+    if (!playerDied) {
+      return;
+    }
+
+    setNeedsPointerLock(false);
+    sceneRef.current?.releasePointerLock();
+
+    const redScore = currentMatch.redScore + 1;
+    const roundEnded = redScore >= currentMatch.targetScore;
+    const nextMatchState: TdmMatchState = {
+      ...currentMatch,
+      redScore,
+      roundOver: roundEnded,
+      winner: roundEnded ? "red" : currentMatch.winner,
+      killFeed: appendKillFeedEntry(currentMatch.killFeed, {
+        id: `death-${now}`,
+        killerName: "Red Bot",
+        victimName: "Blue Team",
+        weapon: "rifle",
+        timestamp: now,
+        isPlayerKill: false,
+      }),
+    };
+    matchStateRef.current = nextMatchState;
+    setMatchState(nextMatchState);
+
+    if (roundEnded) {
+      return;
+    }
+
+    if (respawnTimerRef.current !== null) {
+      window.clearTimeout(respawnTimerRef.current);
+    }
+    respawnTimerRef.current = window.setTimeout(() => {
+      respawnTimerRef.current = null;
+      const spawn = pickRandomPlayerSpawn(selectedMap);
+      sceneRef.current?.respawnPlayer(
+        spawn,
+        selectedMap.playerSpawn.yaw,
+        selectedMap.playerSpawn.pitch,
+      );
+      const respawnHealth = createInitialPlayerHealthState();
+      playerHealthRef.current = respawnHealth;
+      setPlayerHealth(respawnHealth);
+      window.focus();
+      setNeedsPointerLock(true);
+    }, Math.max(0, deathRespawnAt - now));
+  }, [isTdmMap, phase, selectedMap, triggerDamageFlash]);
 
   const reportInventoryResult = useCallback((result: InventoryMoveResult) => {
     if (result.ok) {
@@ -833,8 +1069,38 @@ export function GameRoot({
         setKillPulseAmount(0);
         setKillPulseToken((previous) => previous + 1);
       }
+
+      if (
+        isTdmMap &&
+        phase === "playing" &&
+        targetId.startsWith("bot_") &&
+        kind === "kill"
+      ) {
+        const timestamp = performance.now();
+        const currentMatch = matchStateRef.current;
+        if (!currentMatch.roundOver) {
+          const blueScore = currentMatch.blueScore + 1;
+          const roundOver = blueScore >= currentMatch.targetScore;
+          const nextMatchState: TdmMatchState = {
+            ...currentMatch,
+            blueScore,
+            roundOver,
+            winner: roundOver ? "blue" : currentMatch.winner,
+            killFeed: appendKillFeedEntry(currentMatch.killFeed, {
+              id: `kill-${timestamp}-${targetId}`,
+              killerName: "Blue Team",
+              victimName: "Red Bot",
+              weapon: activeWeapon,
+              timestamp,
+              isPlayerKill: true,
+            }),
+          };
+          matchStateRef.current = nextMatchState;
+          setMatchState(nextMatchState);
+        }
+      }
     },
-    [phase, settings.controller.vibrationEnabled],
+    [activeWeapon, isTdmMap, phase, settings.controller.vibrationEnabled],
   );
 
   const handleShotFired = useCallback((state: ShotFiredState) => {
@@ -1446,7 +1712,11 @@ export function GameRoot({
   const renderedPresentation = booting ? BOOT_PRESENTATION : scenePresentation;
 
   const hitMarkerVisible = hitMarker.until > performance.now();
-  const isAimingDownSight = aimingState.ads && phase === "playing" && !isGameplayPaused;
+  const combatSuspended =
+    isGameplayPaused || playerHealth.isDead || matchState.roundOver;
+  const isAimingDownSight = aimingState.ads &&
+    phase === "playing" &&
+    !combatSuspended;
   const sniperRechamberProgress =
     activeWeapon === "sniper" && sniperRechamber.active
       ? sniperRechamber.progress
@@ -1544,8 +1814,11 @@ export function GameRoot({
   const canInstallUpdate = updaterStatus.phase === "downloaded";
   const installUpdateInProgress = updaterBusyAction === "install";
   const gameplayHudVisible = phase === "playing";
-  const showInventoryOverlay = gameplayHudVisible && player.inventoryPanelOpen;
-  const showInteractPrompt = gameplayHudVisible && !isGameplayPaused &&
+  const showInventoryOverlay = gameplayHudVisible &&
+    !playerHealth.isDead &&
+    !matchState.roundOver &&
+    player.inventoryPanelOpen;
+  const showInteractPrompt = gameplayHudVisible && !combatSuspended &&
     !showInventoryOverlay &&
     player.canInteract;
   const combatHudVisible = gameplayHudVisible && !showInventoryOverlay;
@@ -1659,10 +1932,17 @@ export function GameRoot({
         booting={booting}
         deferredAssetsEnabled={deferredAssetsEnabled}
         presentation={renderedPresentation}
-        gameplayInputEnabled={!pauseMenuOpen && phase === "playing"}
+        gameplayInputEnabled={
+          !pauseMenuOpen &&
+          phase === "playing" &&
+          !playerHealth.isDead &&
+          !matchState.roundOver
+        }
+        playerDead={playerHealth.isDead || matchState.roundOver}
         onPerfMetrics={setPerfMetrics}
         onPlayerSnapshot={setPlayer}
         onHitMarker={handleHitMarker}
+        onPlayerDamaged={handlePlayerDamaged}
         onShotFired={handleShotFired}
         onWeaponEquippedChange={setWeaponEquipped}
         onActiveWeaponChange={setActiveWeapon}
@@ -1699,6 +1979,22 @@ export function GameRoot({
       {practiceLoading ? <PracticeLoadingOverlay mapLabel={selectedMap.label} /> : null}
 
       <div className={uiOverlayClassName}>
+        {isTdmMap
+          ? (
+            <>
+              <ScoreDisplay
+                blueScore={matchState.blueScore}
+                redScore={matchState.redScore}
+                targetScore={matchState.targetScore}
+                visible={combatHudVisible}
+              />
+              <KillFeed
+                entries={matchState.killFeed}
+                visible={combatHudVisible}
+              />
+            </>
+          )
+          : null}
         {combatHudVisible && hudPanels.statsBar
           ? (
             <div className="corner-top-right">
@@ -1708,7 +2004,7 @@ export function GameRoot({
           : null}
 
         <div className="center-stack">
-          {combatHudVisible && !isGameplayPaused && !isAimingDownSight
+          {combatHudVisible && !combatSuspended && !isAimingDownSight
             ? (
               renderCrosshair(
                 activeWeapon === "sniper" && sniperRechamber.active
@@ -1718,7 +2014,7 @@ export function GameRoot({
               )
             )
             : null}
-          {combatHudVisible && !isGameplayPaused && isAimingDownSight && activeWeapon === "rifle"
+          {combatHudVisible && !combatSuspended && isAimingDownSight && activeWeapon === "rifle"
             ? renderRedDotCrosshair()
             : null}
           {isAimingDownSight && activeWeapon === "sniper" && combatHudVisible
@@ -1757,7 +2053,7 @@ export function GameRoot({
               </div>
             )
             : null}
-          {combatHudVisible && !isGameplayPaused
+          {combatHudVisible && !combatSuspended
             ? (
               <div
                 className={`hit-marker ${
@@ -1766,7 +2062,7 @@ export function GameRoot({
               />
             )
             : null}
-          {combatHudVisible && !isGameplayPaused && damageNumbers.length > 0
+          {combatHudVisible && !combatSuspended && damageNumbers.length > 0
             ? (
               <div className="damage-numbers-container">
                 {damageNumbers.map((dn) => {
@@ -3533,11 +3829,110 @@ export function GameRoot({
             : null}
         </div>
 
-        {combatHudVisible && !isGameplayPaused ? (
-          <PubgHud player={player} visible />
+        {combatHudVisible && !matchState.roundOver ? (
+          <PubgHud player={player} playerHealth={playerHealth} visible />
         ) : null}
 
       </div>
+      {damageFlashOpacity > 0 ? (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            pointerEvents: "none",
+            background:
+              "radial-gradient(circle at center, rgba(255, 72, 72, 0.12), rgba(255, 0, 0, 0.42))",
+            opacity: damageFlashOpacity,
+            transition: "opacity 180ms ease-out",
+          }}
+        />
+      ) : null}
+      {isTdmMap && playerHealth.isDead && !matchState.roundOver ? (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            display: "grid",
+            placeItems: "center",
+            pointerEvents: "none",
+            background: "rgba(8, 10, 14, 0.46)",
+          }}
+        >
+          <div
+            style={{
+              padding: "18px 24px",
+              borderRadius: 18,
+              background: "rgba(10, 14, 22, 0.86)",
+              border: "1px solid rgba(248, 113, 113, 0.34)",
+              color: "#fecaca",
+              fontSize: 22,
+              fontWeight: 800,
+              letterSpacing: "0.12em",
+              textTransform: "uppercase",
+            }}
+          >
+            Respawning...
+          </div>
+        </div>
+      ) : null}
+      {isTdmMap && matchState.roundOver ? (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            display: "grid",
+            placeItems: "center",
+            background: "rgba(5, 7, 12, 0.72)",
+            backdropFilter: "blur(10px)",
+          }}
+        >
+          <div
+            style={{
+              width: "min(480px, calc(100vw - 32px))",
+              padding: "28px 28px 24px",
+              borderRadius: 24,
+              background: "rgba(10, 14, 22, 0.94)",
+              border: "1px solid rgba(255, 255, 255, 0.12)",
+              boxShadow: "0 28px 80px rgba(0, 0, 0, 0.38)",
+              color: "#f8fafc",
+              textAlign: "center",
+            }}
+          >
+            <div
+              style={{
+                color: matchState.winner === "blue" ? "#93c5fd" : "#fca5a5",
+                fontSize: 14,
+                fontWeight: 800,
+                letterSpacing: "0.16em",
+                textTransform: "uppercase",
+                marginBottom: 10,
+              }}
+            >
+              {matchState.winner === "blue" ? "Victory" : "Defeat"}
+            </div>
+            <div
+              style={{
+                fontSize: 34,
+                fontWeight: 900,
+                letterSpacing: "0.04em",
+                marginBottom: 8,
+              }}
+            >
+              {matchState.blueScore} - {matchState.redScore}
+            </div>
+            <div style={{ opacity: 0.72, marginBottom: 22 }}>
+              First to {matchState.targetScore}. Civilization reduced to arithmetic.
+            </div>
+            <button
+              type="button"
+              className="btn"
+              onClick={handleRestartMatch}
+            >
+              Play Again
+            </button>
+          </div>
+        </div>
+      ) : null}
       {showClickToContinueOverlay ? (
         <div
           className="click-to-continue-overlay"

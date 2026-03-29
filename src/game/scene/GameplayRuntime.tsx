@@ -105,6 +105,11 @@ export type ShotFiredState = {
 export type GameplayRuntimeHandle = {
   requestPointerLock: () => void;
   releasePointerLock: () => void;
+  respawnPlayer: (
+    position: [number, number, number],
+    yawRadians?: number,
+    pitchRadians?: number,
+  ) => void;
   dropWeaponForReturn: () => void;
   moveInventoryItem: (request: InventoryMoveRequest) => InventoryMoveResult;
   quickMoveInventoryItem: (
@@ -1221,10 +1226,6 @@ export const GameplayRuntime = forwardRef<
   const spawnPosition = practiceMap.playerSpawn.position;
   const spawnYaw = practiceMap.playerSpawn.yaw;
   const spawnPitch = practiceMap.playerSpawn.pitch;
-  const spawnPositionVector = useMemo(
-    () => new THREE.Vector3(spawnPosition[0], spawnPosition[1], spawnPosition[2]),
-    [spawnPosition],
-  );
 
   const {
     model: characterModel,
@@ -2050,14 +2051,22 @@ export const GameplayRuntime = forwardRef<
 
   controllerRef.current = controller;
 
-  const resetForMenu = useCallback(() => {
+  const resetForSpawn = useCallback((
+    nextSpawnPosition: [number, number, number],
+    nextSpawnYaw = spawnYaw,
+    nextSpawnPitch = spawnPitch,
+  ) => {
     audioRef.current.cancelReload();
     audioRef.current.cancelSniperShelling();
     weaponRef.current.reset();
     controllerRef.current?.setPose(
-      spawnPositionVector,
-      spawnYaw,
-      spawnPitch,
+      new THREE.Vector3(
+        nextSpawnPosition[0],
+        nextSpawnPosition[1],
+        nextSpawnPosition[2],
+      ),
+      nextSpawnYaw,
+      nextSpawnPitch,
     );
     setImpactMarks([]);
     setBloodSplats([]);
@@ -2079,7 +2088,7 @@ export const GameplayRuntime = forwardRef<
     rifleRunStateRef.current = "idle";
     rifleRunStateUntilRef.current = 0;
     rifleRunInputGraceUntilRef.current = 0;
-    rifleRunHeadingYawRef.current = spawnYaw;
+    rifleRunHeadingYawRef.current = nextSpawnYaw;
     crouchTransitionStateRef.current = "idle";
     crouchTransitionStartedAtRef.current = 0;
     crouchTransitionDurationRef.current = 0;
@@ -2148,11 +2157,12 @@ export const GameplayRuntime = forwardRef<
     practiceMap.infiniteAmmo,
     practiceMap.groundSpawns,
     practiceMap.spawnWithRifle,
-    spawnPitch,
-    spawnPosition,
-    spawnPositionVector,
     spawnYaw,
   ]);
+
+  const resetForMenu = useCallback(() => {
+    resetForSpawn(spawnPosition, spawnYaw, spawnPitch);
+  }, [resetForSpawn, spawnPitch, spawnPosition, spawnYaw]);
 
   const handleMoveInventoryItem = useCallback((
     request: InventoryMoveRequest,
@@ -2337,6 +2347,9 @@ export const GameplayRuntime = forwardRef<
     releasePointerLock: () => {
       controllerRef.current?.releasePointerLock();
     },
+    respawnPlayer: (position, yawRadians = spawnYaw, pitchRadians = spawnPitch) => {
+      resetForSpawn(position, yawRadians, pitchRadians);
+    },
     dropWeaponForReturn: () => {
       const playerPosition = controllerRef.current?.getPosition();
       if (!playerPosition) {
@@ -2362,6 +2375,9 @@ export const GameplayRuntime = forwardRef<
     dropWeaponFromSlot,
     handleMoveInventoryItem,
     handleQuickMoveInventoryItem,
+    resetForSpawn,
+    spawnPitch,
+    spawnYaw,
     resetForMenu,
   ]);
 

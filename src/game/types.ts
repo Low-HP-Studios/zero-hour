@@ -630,3 +630,55 @@ export type TargetState = {
   hp: number;
   maxHp: number;
 };
+
+// ── TDM Bot types ──────────────────────────────────────────
+
+export type BotAIState = 'patrol' | 'chase' | 'attack' | 'cover' | 'dead';
+
+export type BotState = {
+  id: string;
+  position: [number, number, number];
+  facingYaw: number;
+  radius: number;
+  hp: number;
+  maxHp: number;
+  disabled: boolean;
+  hitUntil: number;
+  aiState: BotAIState;
+  currentWaypointIndex: number;
+  lastShotTime: number;
+  /** Timestamp when bot should respawn (0 if alive) */
+  respawnAt: number;
+  targetVisible: boolean;
+  moveSpeed: number;
+  /** Time (ms) since player was last visible — used for chase→patrol fallback */
+  lostSightTime: number;
+  /** Time (ms) when bot entered cover state */
+  coverEnteredAt: number;
+};
+
+export type PlayerHealthState = {
+  hp: number;
+  maxHp: number;
+  lastDamageTime: number;
+  isDead: boolean;
+  respawnAt: number;
+};
+
+export type KillFeedEntry = {
+  id: string;
+  killerName: string;
+  victimName: string;
+  weapon: WeaponSnapshotKind;
+  timestamp: number;
+  isPlayerKill: boolean;
+};
+
+export type TdmMatchState = {
+  blueScore: number;
+  redScore: number;
+  targetScore: number;
+  killFeed: KillFeedEntry[];
+  roundOver: boolean;
+  winner: 'blue' | 'red' | null;
+};

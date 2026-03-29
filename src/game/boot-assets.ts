@@ -24,6 +24,8 @@ export const TARGET_IDLE_ANIMATION_URL =
   "/assets/animations/movement/standing/idle.fbx";
 export const TARGET_DEATH_ANIMATION_URL =
   "/assets/animations/common/death.fbx";
+export const TDM_BOT_WALK_ANIMATION_URL =
+  "/assets/animations/movement/standing/walk-forward.fbx";
 const PRACTICE_GRASS_TEXTURE_URL = "/assets/grass-texture.jpg";
 
 export const TARGET_TEXTURE_URLS: string[] = [];
@@ -134,6 +136,13 @@ export function createDeferredBootPreloadManifest(
       bucket: "asset",
       load: () => loadFbxAnimation(TARGET_DEATH_ANIMATION_URL, "death"),
     },
+    {
+      id: "tdm:bot-walk",
+      label: "Bot walk animation",
+      weight: 2,
+      bucket: "asset",
+      load: () => loadFbxAnimation(TDM_BOT_WALK_ANIMATION_URL, "walk"),
+    },
     ...TARGET_TEXTURE_URLS.map((url) => ({
       id: `texture:${url}`,
       label: `Target texture ${humanize(fileName(url))}`,
@@ -171,6 +180,12 @@ export async function preloadPracticeMapAssets(
       break;
     case "school-blockout":
       requests.push(preloadTextureAsset(PRACTICE_GRASS_TEXTURE_URL));
+      break;
+    case "tdm-procedural":
+      requests.push(loadFbxAsset(TARGET_CHARACTER_MODEL_URL));
+      requests.push(loadFbxAnimation(TARGET_IDLE_ANIMATION_URL, "idle"));
+      requests.push(loadFbxAnimation(TARGET_DEATH_ANIMATION_URL, "death"));
+      requests.push(loadFbxAnimation(TDM_BOT_WALK_ANIMATION_URL, "walk"));
       break;
     case "range-procedural":
       break;

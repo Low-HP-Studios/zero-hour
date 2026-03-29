@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import type * as THREE from "three";
 import { loadFbxAsset } from "../AssetLoader";
 import { WEAPON_MODEL_URLS } from "../scene/scene-constants";
-import type { PlayerSnapshot } from "../types";
+import type { PlayerHealthState, PlayerSnapshot } from "../types";
 import { AmmoDisplay } from "./AmmoDisplay";
 import { HealthBar } from "./HealthBar";
 import { WeaponSlotCard } from "./WeaponSlotCard";
@@ -10,6 +10,7 @@ import "./pubg-hud.css";
 
 type PubgHudProps = {
   player: PlayerSnapshot;
+  playerHealth: PlayerHealthState;
   visible: boolean;
 };
 
@@ -30,7 +31,7 @@ const CONTROLLER_HELP_ROWS = [
   { button: "Menu", action: "Pause" },
 ] as const;
 
-function PubgHudInner({ player, visible }: PubgHudProps) {
+function PubgHudInner({ player, playerHealth, visible }: PubgHudProps) {
   const [models, setModels] = useState<WeaponModelsState>({
     rifle: null,
     sniper: null,
@@ -109,7 +110,7 @@ function PubgHudInner({ player, visible }: PubgHudProps) {
             reloadProgress={weaponReload.progress}
           />
         ) : null}
-        <HealthBar health={100} maxHealth={100} />
+        <HealthBar health={playerHealth.hp} maxHealth={playerHealth.maxHp} />
       </div>
     </>
   );
