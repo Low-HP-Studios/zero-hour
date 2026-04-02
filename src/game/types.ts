@@ -5,6 +5,9 @@ export type WindowMode = "windowed" | "fullscreen" | "borderless";
 export type MapId = "range" | "map1";
 export const DEFAULT_PRACTICE_MAP_ID: MapId = "range";
 export const PRACTICE_MAP_IDS: readonly MapId[] = ["range", "map1"];
+export function isMapId(value: unknown): value is MapId {
+  return typeof value === "string" && PRACTICE_MAP_IDS.includes(value as MapId);
+}
 
 export type ExperiencePhase = 'menu' | 'entering' | 'playing' | 'returning';
 

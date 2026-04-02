@@ -8,7 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { Canvas, useThree } from "@react-three/fiber";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Perf } from "r3f-perf";
 import * as THREE from "three";
 import type { AudioVolumeSettings } from "../Audio";
@@ -44,7 +44,7 @@ import {
   type ShotFiredState,
 } from "./GameplayRuntime";
 import type { BlockingVolume } from "../map-layout";
-import type { CharacterModelOverride } from "./CharacterModel";
+import { type CharacterModelOverride, useCharacterModel } from "./CharacterModel";
 import { PracticeMapEnvironment, StressBoxes } from "./MapEnvironment";
 import {
   clonePracticeMapTargets,
@@ -53,6 +53,7 @@ import {
 } from "./practice-maps";
 import {
   CANVAS_CAMERA,
+  CHARACTER_YAW_OFFSET,
   CANVAS_GL,
   TARGET_FLASH_MS,
 } from "./scene-constants";
@@ -177,8 +178,45 @@ type SceneProps = {
   onAimingStateChange: (state: AimingState) => void;
   onBootReady: () => void;
   characterOverride?: CharacterModelOverride;
+  playerSpawnOverride?: PracticeMapDefinition["playerSpawn"];
+  remoteAvatar?: {
+    position: [number, number, number];
+    yaw: number;
+    characterOverride: CharacterModelOverride;
+  } | null;
   onPauseMenuToggle?: () => void;
 };
+
+function StaticRemoteAvatar({
+  position,
+  yaw,
+  characterOverride,
+}: {
+  position: [number, number, number];
+  yaw: number;
+  characterOverride: CharacterModelOverride;
+}) {
+  const { model } = useCharacterModel(characterOverride);
+
+  useFrame((_state, delta) => {
+    const mixer = model?.userData.__mixer as THREE.AnimationMixer | undefined;
+    if (mixer) {
+      mixer.update(Math.min(delta, 1 / 20));
+    }
+  });
+
+  if (!model) {
+    return null;
+  }
+
+  return (
+    <primitive
+      object={model}
+      position={position}
+      rotation={[0, yaw + CHARACTER_YAW_OFFSET, 0]}
+    />
+  );
+}
 
 function waitForAnimationFrame() {
   return new Promise<void>((resolve) => {
@@ -327,6 +365,8 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
   onAimingStateChange,
   onBootReady,
   characterOverride,
+  playerSpawnOverride,
+  remoteAvatar,
   onPauseMenuToggle,
 }: SceneProps, ref) {
   const [canvasEpoch, setCanvasEpoch] = useState(0);
@@ -630,6 +670,15 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
         count={practiceMap.supportsStressMode ? stressCount : 0}
         shadows={settings.shadows}
       />
+      {remoteAvatar
+        ? (
+          <StaticRemoteAvatar
+            position={remoteAvatar.position}
+            yaw={remoteAvatar.yaw}
+            characterOverride={remoteAvatar.characterOverride}
+          />
+        )
+        : null}
       <GameplayRuntime
         ref={runtimeRef}
         practiceMap={runtimePracticeMap}
@@ -661,6 +710,7 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
         deferredAssetsEnabled={deferredAssetsEnabled}
         onCriticalAssetsReadyChange={setRuntimeAssetsReady}
         characterOverride={characterOverride}
+        playerSpawnOverride={playerSpawnOverride}
         onPauseMenuToggle={onPauseMenuToggle}
       />
       <SceneBootCompiler enabled={compileReady} onReady={onBootReady} />

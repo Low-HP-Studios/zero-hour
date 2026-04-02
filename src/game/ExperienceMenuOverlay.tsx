@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { toast } from "sonner";
+import { useEffect, useRef, useState } from "react";
 import {
   CHARACTER_REGISTRY,
   getCharacterById,
 } from "./characters";
+import type { OnlineController } from "./online/types";
 import { SKY_OPTIONS, getSkyById, type SkyId } from "./sky-registry";
 import { PRACTICE_MAP_OPTIONS, getPracticeMapById } from "./scene/practice-maps";
 import type { MapId } from "./types";
@@ -21,6 +21,8 @@ type ExperienceMenuOverlayProps = {
   onSkySelect: (skyId: SkyId) => void;
   selectedMapId: MapId;
   onMapSelect: (mapId: MapId) => void;
+  online: OnlineController;
+  onOpenStartupGate: () => void;
   updaterStatus: UpdaterStatusPayload;
   updaterBusyAction: "check" | "install" | "repair" | null;
   updaterAvailable: boolean;
@@ -90,6 +92,10 @@ function getCatalogMonogram(label: string) {
 
 function formatCatalogIndex(index: number) {
   return String(index + 1).padStart(2, "0");
+}
+
+function normalizeLobbyCode(value: string) {
+  return value.replace(/[^a-z0-9]/gi, "").toUpperCase().slice(0, 6);
 }
 
 function LobbyFpsCounter() {
@@ -183,6 +189,8 @@ export function ExperienceMenuOverlay({
   onSkySelect,
   selectedMapId,
   onMapSelect,
+  online,
+  onOpenStartupGate,
   updaterStatus,
   updaterBusyAction,
   updaterAvailable,
@@ -190,6 +198,7 @@ export function ExperienceMenuOverlay({
 }: ExperienceMenuOverlayProps) {
   const [activeTab, setActiveTab] = useState<LobbyTab>("play");
   const [collectionTab, setCollectionTab] = useState<CollectionTab>("characters");
+  const [joinCode, setJoinCode] = useState("");
 
   // Track download speed as %/sec samples
   const speedSamplesRef = useRef<number[]>([]);
@@ -222,14 +231,6 @@ export function ExperienceMenuOverlay({
     }
   }, [updaterStatus.phase, updaterStatus.progress]);
 
-  const showOnlineToast = useCallback(() => {
-    toast.warning("Online Deployment is in alpha", {
-      description:
-        "This lane is still under development. Practice is the only live module in the current build.",
-      duration: 4200,
-    });
-  }, []);
-
   const selectedCharacterDef = getCharacterById(selectedCharacterId);
   const selectedCharacterIndex = Math.max(
     0,
@@ -248,6 +249,30 @@ export function ExperienceMenuOverlay({
     selectedCharacterDef.displayName,
   );
   const selectedSkyMonogram = getCatalogMonogram(selectedSky.label);
+  const onlineBusy = online.authBusyAction !== null || online.lobbyBusyAction !== null;
+  const currentLobbyPlayer = online.user && online.lobby
+    ? (online.lobby.players.find((player) => player.userId === online.user?.id) ?? null)
+    : null;
+  const isCurrentPlayerHost = currentLobbyPlayer?.isHost ?? false;
+  const onlineSelectedMap = online.lobby ? getPracticeMapById(online.lobby.selectedMapId) : selectedMap;
+  const allPlayersReady = online.lobby?.players.every((player) => player.isReady) ?? false;
+  const canStartMatch = Boolean(
+    online.lobby &&
+      isCurrentPlayerHost &&
+      online.lobby.status === "open" &&
+      online.lobby.players.length === 2 &&
+      allPlayersReady &&
+      online.realtimeStatus === "connected",
+  );
+
+  const handleJoinSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    const success = await online.joinLobby(joinCode, selectedCharacterId);
+    if (success) {
+      setJoinCode("");
+    }
+  };
 
   return (
     <div className="lobby-layout-v2 lobby-layout-v3">
@@ -340,10 +365,289 @@ export function ExperienceMenuOverlay({
                   <span>Enter Practice</span>
                   <ArrowIcon />
                 </button>
-                <button type="button" className="lobby-play-btn-v2 secondary" onClick={showOnlineToast}>
-                  Online in Development
-                </button>
               </div>
+            </section>
+
+            <section className="lobby-panel-v3 lobby-online-panel-v3">
+              <div className="lobby-card-header-v2">
+                <h2 className="online-panel-title-v3">Online Lobby</h2>
+                <span className={`lobby-card-badge-v2 ${online.user ? "ready" : ""}`}>
+                  {online.lobby
+                    ? `${online.lobby.players.length}/${online.lobby.maxPlayers}`
+                    : online.backendStatus === "checking" || online.authStatus === "checking"
+                    ? "Syncing"
+                    : online.user
+                    ? "Signed in"
+                    : online.backendStatus === "unavailable"
+                    ? "Offline"
+                    : "Locked"}
+                </span>
+              </div>
+
+              <p className="lobby-hero-copy-v3">
+                Room codes, ready checks, and just enough account plumbing to prove the backend
+                exists. No chat, no matchmaking, no delusions of grandeur yet.
+              </p>
+
+              {online.notice ? (
+                <p className="online-status-note-v3">{online.notice}</p>
+              ) : null}
+
+              {online.backendStatus === "checking" || online.authStatus === "checking"
+                ? (
+                  <div className="online-empty-state-v3">
+                    <strong>Startup checks still running</strong>
+                    <p>The pre-game gate is still deciding whether the backend trusts you.</p>
+                  </div>
+                )
+                : null}
+
+              {online.backendStatus === "unavailable"
+                ? (
+                  <div className="online-session-shell-v3">
+                    <div className="online-empty-state-v3">
+                      <strong>Backend offline</strong>
+                      <p>Online access is locked until the backend stops ghosting the client.</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="lobby-play-btn-v2 online-submit-btn-v3"
+                      onClick={onOpenStartupGate}
+                    >
+                      Open startup gate
+                    </button>
+                  </div>
+                )
+                : null}
+
+              {online.backendStatus === "connected" && online.authStatus === "signed_out"
+                ? (
+                  <div className="online-session-shell-v3">
+                    <div className="online-empty-state-v3">
+                      <strong>Login moved outside the game</strong>
+                      <p>Use the startup gate to authenticate, then come back once the paperwork clears.</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="lobby-play-btn-v2 online-submit-btn-v3"
+                      onClick={onOpenStartupGate}
+                    >
+                      Open login
+                    </button>
+                  </div>
+                )
+                : null}
+
+              {online.backendStatus === "connected" && online.authStatus === "authenticated" && online.user !== null && !online.lobby
+                ? (
+                  <div className="online-session-shell-v3">
+                    <div className="online-session-head-v3">
+                      <div>
+                        <span className="lobby-section-label-v3">Signed in as</span>
+                        <strong className="online-user-name-v3">{online.user.username}</strong>
+                      </div>
+                      <button
+                        type="button"
+                        className="online-secondary-btn-v3"
+                        onClick={() => {
+                          void online.signOut().then(() => {
+                            onOpenStartupGate();
+                          });
+                        }}
+                        disabled={onlineBusy}
+                      >
+                        {online.authBusyAction === "logout" ? "Switching..." : "Change account"}
+                      </button>
+                    </div>
+
+                    <div className="online-create-card-v3">
+                      <span className="online-block-label-v3">Create a room</span>
+                      <p className="online-status-note-v3">
+                        Creates a 2-player lobby using your currently selected operative and map.
+                      </p>
+                      <button
+                        type="button"
+                        className="lobby-play-btn-v2 online-submit-btn-v3"
+                        onClick={() => { void online.createLobby(2, selectedCharacterId, selectedMapId); }}
+                        disabled={onlineBusy}
+                      >
+                        {online.lobbyBusyAction === "create" ? "Creating..." : "Create lobby"}
+                      </button>
+                    </div>
+
+                    <form className="online-join-form-v3" onSubmit={handleJoinSubmit}>
+                      <label className="online-field-v3">
+                        <span>Join by code</span>
+                        <input
+                          className="online-input-v3 online-code-input-v3"
+                          type="text"
+                          value={joinCode}
+                          autoComplete="off"
+                          spellCheck={false}
+                          onChange={(event) => setJoinCode(normalizeLobbyCode(event.target.value))}
+                          placeholder="ABC123"
+                          disabled={onlineBusy}
+                        />
+                      </label>
+                      <button
+                        type="submit"
+                        className="online-secondary-btn-v3 online-join-btn-v3"
+                        disabled={onlineBusy || joinCode.length !== 6}
+                      >
+                        {online.lobbyBusyAction === "join" ? "Joining..." : "Join lobby"}
+                      </button>
+                    </form>
+                  </div>
+                )
+                : null}
+
+              {online.backendStatus === "connected" && online.authStatus === "authenticated" && online.user !== null && online.lobby
+                ? (
+                  <div className="online-session-shell-v3">
+                    <div className="online-session-head-v3">
+                      <div>
+                        <span className="lobby-section-label-v3">Signed in as</span>
+                        <strong className="online-user-name-v3">{online.user.username}</strong>
+                      </div>
+                      <button
+                        type="button"
+                        className="online-secondary-btn-v3"
+                        onClick={() => {
+                          void online.signOut().then(() => {
+                            onOpenStartupGate();
+                          });
+                        }}
+                        disabled={onlineBusy}
+                      >
+                        {online.authBusyAction === "logout" ? "Switching..." : "Change account"}
+                      </button>
+                    </div>
+
+                    <div className="online-lobby-meta-v3">
+                      <article className="online-meta-card-v3">
+                        <span>Room code</span>
+                        <strong>{online.lobby.code}</strong>
+                      </article>
+                      <article className="online-meta-card-v3">
+                        <span>Capacity</span>
+                        <strong>{online.lobby.players.length}/{online.lobby.maxPlayers}</strong>
+                      </article>
+                      <article className="online-meta-card-v3">
+                        <span>Realtime</span>
+                        <strong>{online.realtimeStatus}</strong>
+                      </article>
+                    </div>
+
+                    <div className="lobby-map-panel-v3">
+                      <div className="lobby-map-selector-header-v2">
+                        <span className="lobby-map-selector-label-v2">Lobby map</span>
+                        <span className="lobby-map-selector-value-v2">{onlineSelectedMap.label}</span>
+                      </div>
+                      <div className="segmented-row lobby-map-pills-v3">
+                        {PRACTICE_MAP_OPTIONS.map((option) => (
+                          <button
+                            key={option.id}
+                            type="button"
+                            className={`chip-btn ${online.lobby?.selectedMapId === option.id ? "active" : ""}`}
+                            onClick={() => onMapSelect(option.id)}
+                            disabled={onlineBusy || !isCurrentPlayerHost || online.lobby?.status !== "open"}
+                          >
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="lobby-map-selector-note-v2">
+                        {isCurrentPlayerHost
+                          ? "Host controls the shared map. Changing it clears both ready states, because life is rude like that."
+                          : "Host chooses the map for this match."}
+                      </p>
+                    </div>
+
+                    <div className="online-roster-v3">
+                      {online.lobby.players.map((player) => (
+                        <article
+                          key={player.userId}
+                          className={`online-roster-card-v3 ${player.isHost ? "host" : ""} ${player.isReady ? "ready" : ""} ${player.userId === online.user?.id ? "self" : ""}`}
+                        >
+                          <div className="online-roster-top-v3">
+                            <strong>{player.username}</strong>
+                            <span className="online-roster-role-v3">
+                              {player.isHost ? "Host" : player.isReady ? "Ready" : "Waiting"}
+                            </span>
+                          </div>
+                          <div className="online-roster-bottom-v3">
+                            <span>{player.userId === online.user?.id ? "You" : "Member"}</span>
+                            <span>
+                              {getCharacterById(player.selectedCharacterId).displayName}
+                              {" · "}
+                              {player.isReady ? "Locked in" : "Not ready"}
+                            </span>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+
+                    <div className="online-lobby-actions-v3">
+                      {isCurrentPlayerHost ? (
+                        <button
+                          type="button"
+                          className="lobby-play-btn-v2"
+                          onClick={() => { void online.startMatch(); }}
+                          disabled={onlineBusy || !canStartMatch}
+                        >
+                          {online.lobbyBusyAction === "start"
+                            ? "Starting..."
+                            : online.lobby.status === "in_match"
+                            ? "Match live"
+                            : "Start match"}
+                        </button>
+                      ) : null}
+                      {currentLobbyPlayer ? (
+                        <button
+                          type="button"
+                          className="lobby-play-btn-v2 secondary"
+                          onClick={() => { void online.toggleReady(!currentLobbyPlayer.isReady); }}
+                          disabled={onlineBusy}
+                        >
+                          {online.lobbyBusyAction === "ready"
+                            ? "Updating..."
+                            : currentLobbyPlayer.isReady
+                            ? "Mark not ready"
+                            : "Mark ready"}
+                        </button>
+                      ) : null}
+                      {online.lobby.status === "in_match" ? (
+                        <button
+                          type="button"
+                          className="online-secondary-btn-v3"
+                          onClick={() => { void online.endMatch(); }}
+                          disabled={onlineBusy}
+                        >
+                          {online.lobbyBusyAction === "end_match" ? "Ending..." : "End match"}
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="online-secondary-btn-v3"
+                        onClick={() => { void online.leaveLobby(); }}
+                        disabled={onlineBusy}
+                      >
+                        {online.lobbyBusyAction === "leave" ? "Leaving..." : "Leave lobby"}
+                      </button>
+                      {currentLobbyPlayer?.isHost ? (
+                        <button
+                          type="button"
+                          className="updates-action-btn-v2 danger"
+                          onClick={() => { void online.disbandLobby(); }}
+                          disabled={onlineBusy}
+                        >
+                          {online.lobbyBusyAction === "disband" ? "Disbanding..." : "Disband lobby"}
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                )
+                : null}
             </section>
           </div>
         )}

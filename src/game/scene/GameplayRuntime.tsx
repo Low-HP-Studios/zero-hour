@@ -144,6 +144,7 @@ type GameplayRuntimeProps = {
   deferredAssetsEnabled?: boolean;
   onCriticalAssetsReadyChange?: (ready: boolean) => void;
   characterOverride?: CharacterModelOverride;
+  playerSpawnOverride?: PracticeMapDefinition["playerSpawn"];
   onPauseMenuToggle?: () => void;
 };
 
@@ -1397,14 +1398,16 @@ export const GameplayRuntime = forwardRef<
   deferredAssetsEnabled = true,
   onCriticalAssetsReadyChange,
   characterOverride,
+  playerSpawnOverride,
   onPauseMenuToggle,
 }: GameplayRuntimeProps, ref) {
   const gl = useThree((state) => state.gl);
   const camera = useThree((state) => state.camera);
   const scene = useThree((state) => state.scene);
-  const spawnPosition = practiceMap.playerSpawn.position;
-  const spawnYaw = practiceMap.playerSpawn.yaw;
-  const spawnPitch = practiceMap.playerSpawn.pitch;
+  const resolvedPlayerSpawn = playerSpawnOverride ?? practiceMap.playerSpawn;
+  const spawnPosition = resolvedPlayerSpawn.position;
+  const spawnYaw = resolvedPlayerSpawn.yaw;
+  const spawnPitch = resolvedPlayerSpawn.pitch;
   const jumpPads = practiceMap.jumpPads ?? EMPTY_JUMP_PADS;
   const spawnPositionVector = useMemo(
     () => new THREE.Vector3(spawnPosition[0], spawnPosition[1], spawnPosition[2]),

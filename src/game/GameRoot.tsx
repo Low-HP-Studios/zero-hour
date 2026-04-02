@@ -50,11 +50,14 @@ import {
   type PlayerSnapshot,
   type ScenePresentation,
   type StressModeCount,
+  isMapId,
 } from "./types";
 import {
   getPracticeMapById,
 } from "./scene/practice-maps";
 import { LobbyMusicController } from "./LobbyMusicController";
+import type { CharacterModelOverride } from "./scene/CharacterModel";
+import type { OnlineActiveMatchSlot, OnlineController } from "./online/types";
 import {
   type BindingKey,
   type SettingsTabId,
@@ -248,6 +251,26 @@ const INITIAL_SKY_ASSET_READY_STATE = SKY_IDS.reduce(
   {} as Record<SkyId, boolean>,
 );
 
+type ActiveSession =
+  | { kind: "practice" }
+  | {
+      kind: "multiplayer";
+      lobbyCode: string;
+      startedAt: string;
+      mapId: MapId;
+      localSlot: OnlineActiveMatchSlot;
+      remoteSlot: OnlineActiveMatchSlot | null;
+    };
+
+function resolveCharacterOverride(characterId: string): CharacterModelOverride {
+  const def = getCharacterById(characterId);
+  return {
+    modelUrl: def.modelUrl,
+    textureBasePath: def.textureBasePath,
+    textures: def.textures,
+  };
+}
+
 function PracticeLoadingOverlay({ mapLabel }: { mapLabel: string }) {
   return (
     <div className="loading-screen loading-screen--main">
@@ -274,12 +297,16 @@ type GameRootProps = {
   booting: boolean;
   deferredAssetsEnabled: boolean;
   onSceneBootReady: () => void;
+  online: OnlineController;
+  onOpenStartupGate: () => void;
 };
 
 export function GameRoot({
   booting,
   deferredAssetsEnabled,
   onSceneBootReady,
+  online,
+  onOpenStartupGate,
 }: GameRootProps) {
   const persistedSettings = useMemo(loadPersistedSettings, []);
   const appShellRef = useRef<HTMLDivElement | null>(null);
@@ -314,6 +341,8 @@ export function GameRoot({
   const [selectedMapId, setSelectedMapId] = useState<MapId>(
     persistedSettings.selectedMapId,
   );
+  const [activeSession, setActiveSession] = useState<ActiveSession | null>(null);
+  const [loadingMapLabel, setLoadingMapLabel] = useState<string | null>(null);
   const practiceMapWarmupsRef = useRef<Partial<Record<MapId, Promise<void>>>>(
     {},
   );
@@ -330,14 +359,39 @@ export function GameRoot({
     () => getPracticeMapById(selectedMapId),
     [selectedMapId],
   );
-  const characterOverride = useMemo(() => {
-    const def = getCharacterById(selectedCharacterId);
+  const currentMapId = activeSession?.kind === "multiplayer"
+    ? activeSession.mapId
+    : selectedMapId;
+  const currentMap = useMemo(
+    () => getPracticeMapById(currentMapId),
+    [currentMapId],
+  );
+  const currentCharacterId = activeSession?.kind === "multiplayer"
+    ? activeSession.localSlot.selectedCharacterId
+    : selectedCharacterId;
+  const characterOverride = useMemo(
+    () => resolveCharacterOverride(currentCharacterId),
+    [currentCharacterId],
+  );
+  const playerSpawnOverride = activeSession?.kind === "multiplayer"
+    ? currentMap.multiplayerSpawns?.[activeSession.localSlot.spawnSlot] ?? currentMap.playerSpawn
+    : undefined;
+  const remoteAvatar = useMemo(() => {
+    if (activeSession?.kind !== "multiplayer" || !activeSession.remoteSlot) {
+      return null;
+    }
+
+    const spawn = currentMap.multiplayerSpawns?.[activeSession.remoteSlot.spawnSlot];
+    if (!spawn) {
+      return null;
+    }
+
     return {
-      modelUrl: def.modelUrl,
-      textureBasePath: def.textureBasePath,
-      textures: def.textures,
+      position: spawn.position,
+      yaw: spawn.yaw,
+      characterOverride: resolveCharacterOverride(activeSession.remoteSlot.selectedCharacterId),
     };
-  }, [selectedCharacterId]);
+  }, [activeSession, currentMap]);
   const [perfMetrics, setPerfMetrics] = useState<PerfMetrics>(
     DEFAULT_PERF_METRICS,
   );
@@ -414,6 +468,24 @@ export function GameRoot({
   useEffect(() => {
     pauseMenuOpenRef.current = pauseMenuOpen;
   }, [pauseMenuOpen]);
+
+  useEffect(() => {
+    const currentLobbyPlayer = online.user && online.lobby
+      ? online.lobby.players.find((player) => player.userId === online.user?.id)
+      : null;
+
+    if (currentLobbyPlayer && currentLobbyPlayer.selectedCharacterId !== selectedCharacterId) {
+      setSelectedCharacterId(currentLobbyPlayer.selectedCharacterId);
+    }
+  }, [online.lobby, online.user, selectedCharacterId]);
+
+  useEffect(() => {
+    if (!online.lobby || !isMapId(online.lobby.selectedMapId) || online.lobby.selectedMapId === selectedMapId) {
+      return;
+    }
+
+    setSelectedMapId(online.lobby.selectedMapId);
+  }, [online.lobby, selectedMapId]);
 
   useEffect(() => {
     bindingCaptureRef.current = bindingCapture;
@@ -701,14 +773,16 @@ export function GameRoot({
     };
   }, [showSettingsModal]);
 
-  const startPracticeSession = useCallback(() => {
+  const startSceneSession = useCallback((nextSession: ActiveSession) => {
     flushSync(() => {
       setPracticeLoading(false);
+      setLoadingMapLabel(null);
       setMenuSettingsOpen(false);
       setPauseMenuOpen(false);
       setBindingCapture(null);
       setControllerBindingCapture(null);
       setHitMarker({ until: 0, kind: "body" });
+      setActiveSession(nextSession);
       enteredPlayingAtRef.current = performance.now();
       setPhase("playing");
     });
@@ -717,14 +791,16 @@ export function GameRoot({
   }, []);
 
   const handleEnterPractice = useCallback(() => {
+    const nextSession: ActiveSession = { kind: "practice" };
     if (practiceMapReady[selectedMap.id] && skyAssetReady[selectedSkyId]) {
-      startPracticeSession();
+      startSceneSession(nextSession);
       return;
     }
 
     const token = practiceEnterTokenRef.current + 1;
     practiceEnterTokenRef.current = token;
     setPracticeLoading(true);
+    setLoadingMapLabel(selectedMap.label);
     void Promise.all([
       warmPracticeMapAssets(selectedMap),
       warmSkyAsset(selectedSkyId),
@@ -732,24 +808,27 @@ export function GameRoot({
       if (practiceEnterTokenRef.current !== token) {
         return;
       }
-      startPracticeSession();
+      startSceneSession(nextSession);
     });
   }, [
     practiceMapReady,
     selectedSkyId,
     skyAssetReady,
     selectedMap,
-    startPracticeSession,
+    startSceneSession,
     warmSkyAsset,
     warmPracticeMapAssets,
   ]);
 
-  const handleReturnToLobby = useCallback(() => {
+  const returnToLobbyView = useCallback(() => {
     setNeedsPointerLock(false);
     setBindingCapture(null);
     setControllerBindingCapture(null);
     setMenuSettingsOpen(false);
     setPauseMenuOpen(false);
+    setPracticeLoading(false);
+    setLoadingMapLabel(null);
+    setActiveSession(null);
     sceneRef.current?.releasePointerLock();
     sceneRef.current?.dropWeaponForReturn();
     sceneRef.current?.resetForMenu();
@@ -757,6 +836,83 @@ export function GameRoot({
     setHasBeenLocked(false);
     setPhase("menu");
   }, []);
+
+  const handleReturnToLobby = useCallback(() => {
+    if (activeSession?.kind === "multiplayer") {
+      void online.endMatch();
+      return;
+    }
+
+    returnToLobbyView();
+  }, [activeSession, online, returnToLobbyView]);
+
+  useEffect(() => {
+    if (!online.activeMatch || !online.lobby || !online.user) {
+      return;
+    }
+
+    const localSlot = online.activeMatch.slots.find((slot) => slot.userId === online.user?.id);
+    if (!localSlot || !isMapId(online.lobby.selectedMapId)) {
+      return;
+    }
+
+    const nextSession: ActiveSession = {
+      kind: "multiplayer",
+      lobbyCode: online.lobby.code,
+      startedAt: online.activeMatch.startedAt,
+      mapId: online.lobby.selectedMapId,
+      localSlot,
+      remoteSlot: online.activeMatch.slots.find((slot) => slot.userId !== online.user?.id) ?? null,
+    };
+
+    if (
+      activeSession?.kind === "multiplayer" &&
+      activeSession.lobbyCode === nextSession.lobbyCode &&
+      activeSession.startedAt === nextSession.startedAt
+    ) {
+      return;
+    }
+
+    const multiplayerMap = getPracticeMapById(nextSession.mapId);
+    const token = practiceEnterTokenRef.current + 1;
+    practiceEnterTokenRef.current = token;
+    setPracticeLoading(true);
+    setLoadingMapLabel(multiplayerMap.label);
+
+    void Promise.all([
+      warmPracticeMapAssets(multiplayerMap),
+      warmSkyAsset(selectedSkyId),
+    ]).finally(() => {
+      if (practiceEnterTokenRef.current !== token) {
+        return;
+      }
+
+      startSceneSession(nextSession);
+    });
+  }, [
+    activeSession,
+    online.activeMatch,
+    online.lobby,
+    online.user,
+    selectedSkyId,
+    startSceneSession,
+    warmPracticeMapAssets,
+    warmSkyAsset,
+  ]);
+
+  useEffect(() => {
+    if (activeSession?.kind !== "multiplayer") {
+      return;
+    }
+
+    const matchStillActive = online.activeMatch?.startedAt === activeSession.startedAt &&
+      online.lobby?.code === activeSession.lobbyCode;
+    if (matchStillActive) {
+      return;
+    }
+
+    returnToLobbyView();
+  }, [activeSession, online.activeMatch, online.lobby, returnToLobbyView]);
 
   const reportInventoryResult = useCallback((result: InventoryMoveResult) => {
     if (result.ok) {
@@ -784,6 +940,22 @@ export function GameRoot({
     reportInventoryResult(result);
     return result;
   }, [reportInventoryResult]);
+
+  const handleCharacterSelect = useCallback((characterId: string) => {
+    setSelectedCharacterId(characterId);
+
+    if (online.lobby?.status === "open") {
+      void online.selectLobbyCharacter(characterId);
+    }
+  }, [online]);
+
+  const handleMapSelect = useCallback((mapId: MapId) => {
+    setSelectedMapId(mapId);
+
+    if (online.lobby?.status === "open" && online.user?.id === online.lobby.hostUserId) {
+      void online.selectLobbyMap(mapId);
+    }
+  }, [online]);
 
   const handleHitMarker = useCallback(
     (kind: HitMarkerKind, damage: number, targetId: string) => {
@@ -1654,7 +1826,7 @@ export function GameRoot({
         settings={settings}
         audioVolumes={audioVolumes}
         stressCount={sceneStressCount}
-        practiceMap={selectedMap}
+        practiceMap={currentMap}
         selectedSkyId={selectedSkyId}
         booting={booting}
         deferredAssetsEnabled={deferredAssetsEnabled}
@@ -1670,6 +1842,8 @@ export function GameRoot({
         onAimingStateChange={setAimingState}
         onBootReady={onSceneBootReady}
         characterOverride={characterOverride}
+        playerSpawnOverride={playerSpawnOverride}
+        remoteAvatar={phase === "playing" ? remoteAvatar : null}
         onPauseMenuToggle={handlePauseMenuToggle}
       />
 
@@ -1683,11 +1857,13 @@ export function GameRoot({
             installingUpdate={installUpdateInProgress}
             onInstallUpdate={() => { void handleInstallUpdate(); }}
             selectedCharacterId={selectedCharacterId}
-            onCharacterSelect={setSelectedCharacterId}
+            onCharacterSelect={handleCharacterSelect}
             selectedSkyId={selectedSkyId}
             onSkySelect={setSelectedSkyId}
             selectedMapId={selectedMapId}
-            onMapSelect={setSelectedMapId}
+            onMapSelect={handleMapSelect}
+            online={online}
+            onOpenStartupGate={onOpenStartupGate}
             updaterStatus={updaterStatus}
             updaterBusyAction={updaterBusyAction}
             updaterAvailable={updaterAvailable}
@@ -1696,7 +1872,9 @@ export function GameRoot({
         )
         : null}
 
-      {practiceLoading ? <PracticeLoadingOverlay mapLabel={selectedMap.label} /> : null}
+      {practiceLoading
+        ? <PracticeLoadingOverlay mapLabel={loadingMapLabel ?? currentMap.label} />
+        : null}
 
       <div className={uiOverlayClassName}>
         {combatHudVisible && hudPanels.statsBar

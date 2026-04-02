@@ -2716,6 +2716,132 @@ code {
   }
 }
 
+.startup-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 9800;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(2, 5, 9, 0.76);
+  font-family:
+    'Google Sans Text', 'Google Sans', 'Roboto', 'Segoe UI', system-ui,
+    sans-serif;
+}
+
+.startup-gate-backdrop {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(128deg, rgba(5, 8, 12, 0.96) 0%, rgba(8, 11, 16, 0.84) 52%, rgba(5, 8, 12, 0.94) 100%),
+    url('/assets/branding/background.png') center center / cover no-repeat;
+  filter: saturate(110%) blur(2px);
+}
+
+.startup-gate-panel {
+  position: relative;
+  z-index: 1;
+  width: min(720px, 100%);
+  display: grid;
+  gap: 20px;
+  padding: 30px;
+  border-radius: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 24%),
+    linear-gradient(180deg, rgba(13, 19, 28, 0.96), rgba(8, 12, 19, 0.92));
+  box-shadow: 0 32px 90px rgba(0, 0, 0, 0.38);
+  backdrop-filter: blur(18px) saturate(120%);
+}
+
+.startup-gate-brand {
+  display: grid;
+  gap: 10px;
+}
+
+.startup-gate-kicker {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(214, 180, 138, 0.72);
+}
+
+.startup-gate-title {
+  margin: 0;
+  font-family: var(--font-logo, inherit);
+  font-size: clamp(34px, 5vw, 58px);
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  line-height: 0.92;
+  color: #f4f7fb;
+}
+
+.startup-gate-copy {
+  margin: 0;
+  max-width: 62ch;
+  color: rgba(230, 237, 247, 0.82);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.startup-status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.startup-status-card {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.startup-status-card span {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(246, 241, 234, 0.42);
+}
+
+.startup-status-card strong {
+  color: #f4f7fb;
+  font-size: 18px;
+}
+
+.startup-status-note-v3 {
+  margin-top: -4px;
+}
+
+.startup-auth-layout {
+  display: grid;
+  gap: 16px;
+}
+
+.startup-gate-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 720px) {
+  .startup-gate {
+    padding: 16px;
+  }
+
+  .startup-gate-panel {
+    padding: 24px 20px;
+    border-radius: 22px;
+  }
+
+  .startup-status-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ==========================================
    LOBBY / MAIN MENU
    ========================================== */
@@ -4859,14 +4985,15 @@ code {
 }
 
 .lobby-play-stage-v3 {
-  width: clamp(340px, 29vw, 500px);
-  max-width: min(30%, calc(100% - 16px));
+  width: min(1040px, calc(100% - 16px));
+  max-width: calc(100% - 16px);
   margin-right: auto;
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  align-items: end;
-  flex: 0 0 auto;
-  align-self: flex-end;
+  grid-template-columns: minmax(340px, 1fr) minmax(340px, 1fr);
+  gap: 24px;
+  align-items: stretch;
+  flex: 0 1 auto;
+  align-self: flex-start;
 }
 
 .lobby-play-hero-v3 {
@@ -4876,6 +5003,241 @@ code {
   padding: 30px 30px 28px;
   min-height: 430px;
   justify-content: flex-end;
+}
+
+.lobby-online-panel-v3 {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 28px 28px 26px;
+  min-height: 430px;
+}
+
+.online-panel-title-v3 {
+  font-size: clamp(28px, 3vw, 40px);
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--lobby-text);
+}
+
+.online-status-note-v3 {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(214, 180, 138, 0.2);
+  background: rgba(214, 180, 138, 0.08);
+  color: rgba(246, 241, 234, 0.82);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.online-empty-state-v3 {
+  display: grid;
+  gap: 6px;
+  padding: 18px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.online-empty-state-v3 strong,
+.online-user-name-v3 {
+  color: var(--lobby-text);
+  font-size: 20px;
+}
+
+.online-empty-state-v3 p,
+.online-roster-bottom-v3,
+.online-block-label-v3,
+.online-field-v3 span {
+  margin: 0;
+  color: rgba(246, 241, 234, 0.66);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.online-auth-shell-v3,
+.online-session-shell-v3 {
+  display: grid;
+  gap: 18px;
+}
+
+.online-auth-tabs-v3,
+.online-size-pills-v3 {
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.online-form-v3,
+.online-join-form-v3 {
+  display: grid;
+  gap: 14px;
+}
+
+.online-field-v3 {
+  display: grid;
+  gap: 8px;
+}
+
+.online-input-v3 {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  background: rgba(9, 11, 16, 0.7);
+  color: var(--lobby-text);
+  font: inherit;
+  padding: 14px 16px;
+  outline: none;
+  transition: border-color 0.18s ease, transform 0.18s ease, background 0.18s ease;
+}
+
+.online-input-v3:focus {
+  border-color: rgba(214, 180, 138, 0.52);
+  background: rgba(9, 11, 16, 0.84);
+  transform: translateY(-1px);
+}
+
+.online-input-v3::placeholder {
+  color: rgba(246, 241, 234, 0.34);
+}
+
+.online-code-input-v3 {
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+}
+
+.online-submit-btn-v3 {
+  justify-content: center;
+}
+
+.online-secondary-btn-v3 {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--lobby-text);
+  font: inherit;
+  font-weight: 600;
+  padding: 12px 16px;
+  cursor: pointer;
+  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+}
+
+.online-secondary-btn-v3:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(214, 180, 138, 0.4);
+  background: rgba(214, 180, 138, 0.08);
+}
+
+.online-secondary-btn-v3:disabled,
+.online-input-v3:disabled {
+  opacity: 0.62;
+  cursor: not-allowed;
+}
+
+.online-session-head-v3 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.online-create-card-v3 {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.online-block-label-v3 {
+  color: rgba(246, 241, 234, 0.74);
+}
+
+.online-lobby-meta-v3 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.online-meta-card-v3,
+.online-roster-card-v3 {
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.online-meta-card-v3 {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+}
+
+.online-meta-card-v3 span {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: rgba(246, 241, 234, 0.42);
+}
+
+.online-meta-card-v3 strong {
+  font-size: 22px;
+  color: var(--lobby-text);
+  letter-spacing: 0.08em;
+}
+
+.online-roster-v3 {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+
+.online-roster-card-v3 {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+}
+
+.online-roster-card-v3.host {
+  border-color: rgba(214, 180, 138, 0.32);
+  background: rgba(214, 180, 138, 0.08);
+}
+
+.online-roster-card-v3.ready {
+  box-shadow: inset 0 0 0 1px rgba(121, 192, 120, 0.18);
+}
+
+.online-roster-card-v3.self {
+  transform: translateY(-1px);
+}
+
+.online-roster-top-v3,
+.online-roster-bottom-v3,
+.online-lobby-actions-v3 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.online-roster-top-v3 strong,
+.online-roster-role-v3 {
+  color: var(--lobby-text);
+}
+
+.online-roster-role-v3 {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.online-join-btn-v3 {
+  justify-self: start;
 }
 
 .lobby-layout-v3 .lobby-card-title-v2 {
@@ -5271,7 +5633,8 @@ code {
   }
 
   .lobby-play-stage-v3 {
-    width: min(420px, 100%);
+    width: 100%;
+    grid-template-columns: 1fr;
   }
 
   .lobby-collection-v3 {
@@ -5317,6 +5680,10 @@ code {
   .lobby-collection-v3 {
     grid-template-columns: 1fr;
     width: 100%;
+  }
+
+  .online-lobby-meta-v3 {
+    grid-template-columns: 1fr;
   }
 
   .lobby-character-facts-v3,

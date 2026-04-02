@@ -5,9 +5,13 @@ import { markBootEvent } from "../game/boot-trace";
 type LoadingScreenProps = {
   canDismiss: boolean;
   musicVolume: number;
-  onMainPhaseStart: () => void;
+  onMainPhaseStart?: () => void;
   onFadeOutStart: () => void;
   onComplete: () => void;
+  introEnabled?: boolean;
+  statusLabel?: string;
+  statusDetail?: string;
+  title?: string;
 };
 
 const INTRO_WORDMARK = "LOW HP STUDIOS";
@@ -112,18 +116,27 @@ export function LoadingScreen({
   onMainPhaseStart,
   onFadeOutStart,
   onComplete,
+  introEnabled = true,
+  statusLabel = MAIN_STATUS_LABEL,
+  statusDetail = "GreyTrace is currently in alpha stage. Please report issues.",
+  title = "GreyTrace",
 }: LoadingScreenProps) {
-  const [phase, setPhase] = useState<LoadingPhase>("black");
+  const [phase, setPhase] = useState<LoadingPhase>(introEnabled ? "black" : "main");
   const [fadingOut, setFadingOut] = useState(false);
   const mountTimeRef = useRef(performance.now());
   const fadeStartedRef = useRef(false);
   const mainPhaseStartedRef = useRef(false);
+  const minimumVisibleMs = introEnabled ? MIN_LOADING_SCREEN_MS : 450;
 
   useEffect(() => {
     getIntroAudio().volume = clamp01(musicVolume);
   }, [musicVolume]);
 
   useEffect(() => {
+    if (!introEnabled) {
+      return;
+    }
+
     primeIntroAudio();
 
     const enterTimer = window.setTimeout(() => {
@@ -146,7 +159,15 @@ export function LoadingScreen({
       window.clearTimeout(exitTimer);
       window.clearTimeout(showMainTimer);
     };
-  }, []);
+  }, [introEnabled]);
+
+  useEffect(() => {
+    if (introEnabled) {
+      return;
+    }
+
+    setPhase("main");
+  }, [introEnabled]);
 
   useEffect(() => {
     if (phase !== "main" || mainPhaseStartedRef.current) {
@@ -154,7 +175,7 @@ export function LoadingScreen({
     }
 
     mainPhaseStartedRef.current = true;
-    onMainPhaseStart();
+    onMainPhaseStart?.();
   }, [onMainPhaseStart, phase]);
 
   useEffect(() => {
@@ -168,7 +189,7 @@ export function LoadingScreen({
 
     fadeStartedRef.current = true;
     const elapsed = performance.now() - mountTimeRef.current;
-    const remaining = Math.max(0, MIN_LOADING_SCREEN_MS - elapsed);
+    const remaining = Math.max(0, minimumVisibleMs - elapsed);
     let finishTimer = 0;
 
     const startTimer = window.setTimeout(() => {
@@ -183,7 +204,7 @@ export function LoadingScreen({
         window.clearTimeout(finishTimer);
       }
     };
-  }, [canDismiss, onComplete, onFadeOutStart, phase]);
+  }, [canDismiss, minimumVisibleMs, onComplete, onFadeOutStart, phase]);
 
   useEffect(() => {
     return () => {
@@ -206,13 +227,13 @@ export function LoadingScreen({
       <div className="loading-main">
         <div className="loading-content">
           <div className="loading-hero">
-            <h1 className="loading-logo-text">GreyTrace</h1>
+            <h1 className="loading-logo-text">{title}</h1>
           </div>
         </div>
         <div className="loading-bottom-left">
-          <div className="loading-bottom-left-brand">{MAIN_STATUS_LABEL}</div>
+          <div className="loading-bottom-left-brand">{statusLabel}</div>
           <p className="loading-alpha-note">
-            GreyTrace is currently in alpha stage. Please report issues.
+            {statusDetail}
           </p>
         </div>
         <div className="loading-bottom-right" aria-hidden="true">

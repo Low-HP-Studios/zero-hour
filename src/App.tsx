@@ -6,8 +6,10 @@ import { sharedAudioManager } from "./game/Audio";
 import { createDeferredBootPreloadManifest } from "./game/boot-assets";
 import { markBootEvent } from "./game/boot-trace";
 import { GameRoot } from "./game/GameRoot";
+import { useOnlineState } from "./game/online/useOnlineState";
 import { loadPersistedSettings } from "./game/settings";
 import { LoadingScreen } from "./screens/LoadingScreen";
+import { StartupGate } from "./screens/StartupGate";
 
 type IdleDeadlineLike = {
   didTimeout: boolean;
@@ -48,26 +50,49 @@ function scheduleIdleTask(task: () => void): () => void {
 
 function App() {
   const [booting, setBooting] = useState(true);
-  const [loadingOverlayVisible, setLoadingOverlayVisible] = useState(true);
+  const [initialLoadingVisible, setInitialLoadingVisible] = useState(true);
+  const [launchLoadingVisible, setLaunchLoadingVisible] = useState(false);
+  const [startupGateVisible, setStartupGateVisible] = useState(false);
   const [sceneMounted, setSceneMounted] = useState(false);
   const [sceneReady, setSceneReady] = useState(false);
-  const mainPhaseStartedRef = useRef(false);
+  const [initialMainPhaseStarted, setInitialMainPhaseStarted] = useState(false);
   const deferredWarmupStartedRef = useRef(false);
   const persistedSettings = useMemo(loadPersistedSettings, []);
   const deferredManifest = useMemo(
     () => createDeferredBootPreloadManifest(sharedAudioManager),
     [],
   );
-  const canDismiss = sceneReady;
+  const online = useOnlineState({
+    pollEnabled: sceneMounted && !startupGateVisible,
+  });
+  const autoLaunchEligible =
+    online.bootstrapComplete &&
+    online.backendStatus === "connected" &&
+    online.authStatus === "authenticated";
+  const initialCanDismiss = online.bootstrapComplete && (!autoLaunchEligible || sceneReady);
 
-  const handleMainPhaseStart = useCallback(() => {
-    if (mainPhaseStartedRef.current) {
+  const requestSceneLaunch = useCallback(() => {
+    setStartupGateVisible(false);
+
+    if (!sceneMounted) {
+      markBootEvent("boot:scene-mount-start");
+      setSceneMounted(true);
+      if (!sceneReady) {
+        setLaunchLoadingVisible(true);
+      }
       return;
     }
 
-    mainPhaseStartedRef.current = true;
-    markBootEvent("boot:scene-mount-start");
-    setSceneMounted(true);
+    if (!sceneReady) {
+      setLaunchLoadingVisible(true);
+      return;
+    }
+
+    setBooting(false);
+  }, [sceneMounted, sceneReady]);
+
+  const handleInitialMainPhaseStart = useCallback(() => {
+    setInitialMainPhaseStarted(true);
   }, []);
 
   const handleSceneReady = useCallback(() => {
@@ -79,18 +104,45 @@ function App() {
     });
   }, []);
 
-  const handleFadeOutStart = useCallback(() => {
+  const handleInitialFadeOutStart = useCallback(() => {
     markBootEvent("boot:overlay-fade-start");
+    if (autoLaunchEligible) {
+      setBooting(false);
+    }
+  }, [autoLaunchEligible]);
+
+  const handleLaunchFadeOutStart = useCallback(() => {
     setBooting(false);
   }, []);
 
-  const handleOverlayComplete = useCallback(() => {
+  const handleInitialOverlayComplete = useCallback(() => {
     markBootEvent("boot:overlay-complete");
-    setLoadingOverlayVisible(false);
+    setInitialLoadingVisible(false);
+    if (!autoLaunchEligible) {
+      setStartupGateVisible(true);
+    }
+  }, [autoLaunchEligible]);
+
+  const handleLaunchOverlayComplete = useCallback(() => {
+    setLaunchLoadingVisible(false);
   }, []);
 
   useEffect(() => {
-    if (loadingOverlayVisible) {
+    if (
+      !initialLoadingVisible ||
+      !initialMainPhaseStarted ||
+      !autoLaunchEligible ||
+      sceneMounted
+    ) {
+      return;
+    }
+
+    markBootEvent("boot:scene-mount-start");
+    setSceneMounted(true);
+  }, [autoLaunchEligible, initialLoadingVisible, initialMainPhaseStarted, sceneMounted]);
+
+  useEffect(() => {
+    if (initialLoadingVisible || launchLoadingVisible || startupGateVisible) {
       return;
     }
 
@@ -126,26 +178,72 @@ function App() {
       cancelled = true;
       cancelIdleTask();
     };
-  }, [deferredManifest, loadingOverlayVisible]);
+  }, [deferredManifest, initialLoadingVisible, launchLoadingVisible, startupGateVisible]);
+
+  const loadingStatusLabel = online.backendStatus === "checking"
+    ? "Checking backend connection"
+    : online.backendStatus === "unavailable"
+    ? "Backend unavailable"
+    : online.authStatus === "checking"
+    ? "Validating session"
+    : online.authStatus === "authenticated"
+    ? "Session restored"
+    : "Backend connected";
+
+  const loadingStatusDetail = online.backendStatus === "checking"
+    ? "Verifying the Greytrace backend before we hand you the keys to the lobby."
+    : online.backendStatus === "unavailable"
+    ? "The backend is not answering right now. We will hand off to the startup gate so you can retry or continue offline."
+    : online.authStatus === "checking"
+    ? "Stored credentials found. Confirming they still belong to someone the server remembers."
+    : online.authStatus === "authenticated"
+    ? "Backend is online and the token checked out. Preparing the lobby."
+    : "Backend is online, but there is no valid session. Login will happen outside the game.";
 
   return (
     <>
       {sceneMounted ? (
         <GameRoot
           booting={booting}
-          deferredAssetsEnabled={!loadingOverlayVisible}
+          deferredAssetsEnabled={!initialLoadingVisible && !launchLoadingVisible}
           onSceneBootReady={handleSceneReady}
+          online={online}
+          onOpenStartupGate={() => setStartupGateVisible(true)}
         />
       ) : null}
-      {loadingOverlayVisible ? (
+
+      {initialLoadingVisible ? (
         <LoadingScreen
-          canDismiss={canDismiss}
+          canDismiss={initialCanDismiss}
           musicVolume={persistedSettings.audioVolumes.music}
-          onMainPhaseStart={handleMainPhaseStart}
-          onFadeOutStart={handleFadeOutStart}
-          onComplete={handleOverlayComplete}
+          onMainPhaseStart={handleInitialMainPhaseStart}
+          onFadeOutStart={handleInitialFadeOutStart}
+          onComplete={handleInitialOverlayComplete}
+          statusLabel={loadingStatusLabel}
+          statusDetail={loadingStatusDetail}
         />
       ) : null}
+
+      {launchLoadingVisible ? (
+        <LoadingScreen
+          canDismiss={sceneReady}
+          musicVolume={persistedSettings.audioVolumes.music}
+          onFadeOutStart={handleLaunchFadeOutStart}
+          onComplete={handleLaunchOverlayComplete}
+          introEnabled={false}
+          statusLabel="Preparing lobby"
+          statusDetail="Warming the scene after the startup gate did its paperwork."
+        />
+      ) : null}
+
+      {startupGateVisible ? (
+        <StartupGate
+          online={online}
+          onContinueOffline={requestSceneLaunch}
+          onContinueToLobby={requestSceneLaunch}
+        />
+      ) : null}
+
       <Toaster />
     </>
   );
