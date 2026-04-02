@@ -449,6 +449,59 @@ export class AudioManager {
     void this.prepareBuffer(bufferKey);
   }
 
+  playJumpPadLaunch() {
+    if (
+      !this.context ||
+      this.context.state !== 'running' ||
+      !this.footstepGain
+    ) {
+      return;
+    }
+
+    const now = this.context.currentTime;
+    const launchGain = this.context.createGain();
+    launchGain.gain.setValueAtTime(0.001, now);
+    launchGain.gain.exponentialRampToValueAtTime(0.18, now + 0.02);
+    launchGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.24);
+    launchGain.connect(this.footstepGain);
+
+    const chirp = this.context.createOscillator();
+    const chirpGain = this.context.createGain();
+    chirp.type = 'triangle';
+    chirp.frequency.setValueAtTime(180, now);
+    chirp.frequency.exponentialRampToValueAtTime(540, now + 0.09);
+    chirp.frequency.exponentialRampToValueAtTime(240, now + 0.22);
+    chirpGain.gain.setValueAtTime(0.001, now);
+    chirpGain.gain.exponentialRampToValueAtTime(0.14, now + 0.012);
+    chirpGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
+    chirp.connect(chirpGain);
+    chirpGain.connect(launchGain);
+    chirp.start(now);
+    chirp.stop(now + 0.2);
+
+    if (this.whiteNoiseBuffer) {
+      const noise = this.context.createBufferSource();
+      const highpass = this.context.createBiquadFilter();
+      const bandpass = this.context.createBiquadFilter();
+      const noiseGain = this.context.createGain();
+      noise.buffer = this.whiteNoiseBuffer;
+      highpass.type = 'highpass';
+      highpass.frequency.setValueAtTime(850, now);
+      bandpass.type = 'bandpass';
+      bandpass.frequency.setValueAtTime(1800, now);
+      bandpass.Q.value = 0.65;
+      noiseGain.gain.setValueAtTime(0.001, now);
+      noiseGain.gain.exponentialRampToValueAtTime(0.22, now + 0.01);
+      noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.16);
+      noise.connect(highpass);
+      highpass.connect(bandpass);
+      bandpass.connect(noiseGain);
+      noiseGain.connect(launchGain);
+      noise.start(now);
+      noise.stop(now + 0.2);
+    }
+  }
+
   playGunshot(kind: WeaponKind = 'rifle') {
     if (!this.context || this.context.state !== 'running' || !this.gunGain) {
       return;

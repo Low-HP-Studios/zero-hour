@@ -1418,7 +1418,7 @@ function TdmProceduralEnvironment({
   showSkyBackdrop: boolean;
   skyAssetUrl: string;
 }) {
-  const { worldBounds, blockingVolumes = [], jumpPads = [] } = practiceMap;
+  const { worldBounds, blockingVolumes = [] } = practiceMap;
   const mapW  = worldBounds.maxX - worldBounds.minX;
   const mapCx = (worldBounds.minX + worldBounds.maxX) / 2;
 
@@ -1497,27 +1497,6 @@ function TdmProceduralEnvironment({
         </mesh>
       ))}
 
-      {/* ── Jump pads ── */}
-      {jumpPads.map((pad, i) => {
-        const pw = pad.maxX - pad.minX;
-        const pd = pad.maxZ - pad.minZ;
-        const cx = (pad.minX + pad.maxX) / 2;
-        const cz = (pad.minZ + pad.maxZ) / 2;
-        const isBlue = cz < 0;
-        const padColor = isBlue ? '#38bdf8' : '#f87171';
-        return (
-          <mesh key={i} position={[cx, pad.y + 0.05, cz]} rotation={[-Math.PI / 2, 0, 0]}>
-            <planeGeometry args={[pw, pd]} />
-            <meshStandardMaterial color={padColor} emissive={padColor} emissiveIntensity={0.6} roughness={0.4} />
-          </mesh>
-        );
-      })}
-
-      {/* ── Team banners ── */}
-      <mesh position={[-15, 3.5, -52]}><boxGeometry args={[0.25, 7, 0.08]} /><meshStandardMaterial color="#2563eb" emissive="#2563eb" emissiveIntensity={0.6} /></mesh>
-      <mesh position={[ 15, 3.5, -52]}><boxGeometry args={[0.25, 7, 0.08]} /><meshStandardMaterial color="#2563eb" emissive="#2563eb" emissiveIntensity={0.6} /></mesh>
-      <mesh position={[-15, 3.5,  52]}><boxGeometry args={[0.25, 7, 0.08]} /><meshStandardMaterial color="#dc2626" emissive="#dc2626" emissiveIntensity={0.6} /></mesh>
-      <mesh position={[ 15, 3.5,  52]}><boxGeometry args={[0.25, 7, 0.08]} /><meshStandardMaterial color="#dc2626" emissive="#dc2626" emissiveIntensity={0.6} /></mesh>
 
       {/* ── Lighting ── */}
       <ambientLight intensity={0.5} />

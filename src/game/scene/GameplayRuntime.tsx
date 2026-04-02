@@ -13,6 +13,7 @@ import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { type AudioVolumeSettings, sharedAudioManager } from "../Audio";
 import { playControllerRumble } from "../GamepadHaptics";
+import type { JumpPad } from "../map-layout";
 import {
   type PlayerControllerApi,
   type RunFacingPhase,
@@ -199,11 +200,173 @@ const RELOAD_RUMBLE = {
   strongMagnitude: 0.34,
   throttleMs: 140,
 } as const;
+const EMPTY_JUMP_PADS: readonly JumpPad[] = [];
+const JUMP_PAD_FLASH_MS = 260;
 
 // ADS weapon positioning: camera-local offsets so the sight aligns with screen center.
 // x = right, y = up, z = forward (in camera space). Will be tuned iteratively.
 const RIFLE_ADS_CAMERA_OFFSET = { x: 0, y: -0.05, z: 0.264 };
 const SNIPER_ADS_CAMERA_OFFSET = { x: 0.007, y: 0.016, z: 0.105 };
+
+function getJumpPadCenter(pad: JumpPad) {
+  return {
+    x: (pad.minX + pad.maxX) / 2,
+    z: (pad.minZ + pad.maxZ) / 2,
+    width: pad.maxX - pad.minX,
+    depth: pad.maxZ - pad.minZ,
+  };
+}
+
+function findJumpPadIndexAtXZ(
+  pads: readonly JumpPad[],
+  x: number,
+  z: number,
+): number {
+  for (let index = 0; index < pads.length; index += 1) {
+    const pad = pads[index];
+    if (x >= pad.minX && x <= pad.maxX && z >= pad.minZ && z <= pad.maxZ) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function JumpPadFx({
+  pad,
+  index,
+  activatedAtMs,
+}: {
+  pad: JumpPad;
+  index: number;
+  activatedAtMs: number;
+}) {
+  const baseMatRef = useRef<THREE.MeshStandardMaterial>(null);
+  const haloMatRef = useRef<THREE.MeshBasicMaterial>(null);
+  const beamMatRef = useRef<THREE.MeshBasicMaterial>(null);
+  const flashMatRef = useRef<THREE.MeshBasicMaterial>(null);
+  const haloRef = useRef<THREE.Mesh>(null);
+  const flashRef = useRef<THREE.Mesh>(null);
+  const glowLightRef = useRef<THREE.PointLight>(null);
+  const { x, z, width, depth } = useMemo(() => getJumpPadCenter(pad), [pad]);
+  const padColor = useMemo(
+    () => new THREE.Color(z < 0 ? "#38bdf8" : "#fb7185"),
+    [z],
+  );
+  const accentColor = useMemo(
+    () => padColor.clone().lerp(new THREE.Color("#ffffff"), 0.3),
+    [padColor],
+  );
+  const outerRadius = Math.max(width, depth) * 0.42;
+  const innerRadius = Math.max(outerRadius - 0.16, outerRadius * 0.7);
+  const beamRadius = Math.max(Math.min(width, depth) * 0.16, 0.42);
+
+  useFrame((state) => {
+    const elapsed = state.clock.elapsedTime;
+    const pulse = 0.58 + 0.42 * (0.5 + 0.5 * Math.sin(elapsed * 2.6 + index));
+    if (baseMatRef.current) {
+      baseMatRef.current.emissive.copy(padColor);
+      baseMatRef.current.emissiveIntensity = 0.5 + pulse * 0.75;
+    }
+    if (haloMatRef.current) {
+      haloMatRef.current.opacity = 0.14 + pulse * 0.18;
+    }
+    if (beamMatRef.current) {
+      beamMatRef.current.opacity = 0.08 + pulse * 0.14;
+    }
+    if (haloRef.current) {
+      haloRef.current.rotation.z = elapsed * 1.35 * (index % 2 === 0 ? 1 : -1);
+    }
+    if (glowLightRef.current) {
+      glowLightRef.current.intensity = 0.5 + pulse * 0.8;
+      glowLightRef.current.distance = 3.8 + pulse * 1.4;
+    }
+    if (flashMatRef.current && flashRef.current) {
+      const flashProgress = activatedAtMs > 0
+        ? THREE.MathUtils.clamp(
+            (performance.now() - activatedAtMs) / JUMP_PAD_FLASH_MS,
+            0,
+            1,
+          )
+        : 1;
+      const flashStrength = 1 - flashProgress;
+      flashMatRef.current.opacity = flashStrength * 0.45;
+      const flashScale = 0.9 + flashProgress * 1.45;
+      flashRef.current.scale.setScalar(flashScale);
+    }
+  });
+
+  return (
+    <group position={[x, pad.y, z]}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.045, 0]}>
+        <planeGeometry args={[width * 1.02, depth * 1.02]} />
+        <meshStandardMaterial
+          ref={baseMatRef}
+          color={padColor}
+          emissive={padColor}
+          emissiveIntensity={0.75}
+          roughness={0.24}
+          metalness={0.08}
+        />
+      </mesh>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.06, 0]}>
+        <ringGeometry args={[innerRadius, outerRadius, 44]} />
+        <meshBasicMaterial
+          color={accentColor}
+          transparent
+          opacity={0.22}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+      <mesh ref={haloRef} rotation={[Math.PI / 2, 0, 0]} position={[0, 0.18, 0]}>
+        <torusGeometry args={[outerRadius, 0.08, 12, 40]} />
+        <meshBasicMaterial
+          ref={haloMatRef}
+          color={accentColor}
+          transparent
+          opacity={0.24}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+      <mesh position={[0, 1.1, 0]}>
+        <cylinderGeometry args={[beamRadius, beamRadius * 0.62, 2.2, 18, 1, true]} />
+        <meshBasicMaterial
+          ref={beamMatRef}
+          color={padColor}
+          transparent
+          opacity={0.16}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+          toneMapped={false}
+        />
+      </mesh>
+      <mesh
+        ref={flashRef}
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, 0.14, 0]}
+      >
+        <ringGeometry args={[outerRadius * 0.45, outerRadius * 1.15, 44]} />
+        <meshBasicMaterial
+          ref={flashMatRef}
+          color="#ffffff"
+          transparent
+          opacity={0}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+      <pointLight
+        ref={glowLightRef}
+        position={[0, 1.05, 0]}
+        color={accentColor}
+        intensity={0.7}
+        distance={4.6}
+        decay={1.8}
+      />
+    </group>
+  );
+}
 
 // The weapon model's base rotation to align its barrel with camera forward.
 // The weapon FBX barrel points along +X in model space, so rotating +PI/2 around Y
@@ -270,7 +433,7 @@ function resolveCrouchTransitionTargetPose(
 type RifleRunVisualState = "idle" | "start" | "running" | "stop";
 type UnarmedWalkVisualState = "idle" | "start" | "moving" | "stop";
 type CrouchTransitionState = "idle" | "enter" | "exit";
-type CharacterVisibilityCategory = "glove" | "shoe" | "hidden";
+type CharacterVisibilityCategory = "glove" | "shoe" | "headpart" | "hidden";
 type CharacterVisibilityMaterialEntry = {
   material: THREE.Material;
   category: CharacterVisibilityCategory;
@@ -747,6 +910,24 @@ function resolveFirstPersonVisibilityCategory(
   if (normalized.includes("shoe")) {
     return "shoe";
   }
+  // Head and upper-body parts that clip through the camera in FPP — hide them
+  if (
+    normalized.includes("head") ||
+    normalized.includes("eye") ||
+    normalized.includes("hair") ||
+    normalized.includes("face") ||
+    normalized.includes("teeth") ||
+    normalized.includes("glass") ||
+    normalized.includes("mask") ||
+    normalized.includes("neck") ||
+    normalized.includes("ear") ||
+    normalized.includes("body") ||
+    normalized.includes("torso") ||
+    normalized.includes("collar") ||
+    normalized.includes("chest")
+  ) {
+    return "headpart";
+  }
   return "hidden";
 }
 
@@ -799,6 +980,7 @@ function applyCharacterFirstPersonMask(
   maskBlend: number,
   gloveVisibility: number,
   shoeVisibility: number,
+  headVisibility: number,
 ): void {
   const clampedMaskBlend = THREE.MathUtils.clamp(maskBlend, 0, 1);
   if (clampedMaskBlend <= 0.001) {
@@ -819,7 +1001,9 @@ function applyCharacterFirstPersonMask(
       ? gloveVisibility
       : entry.category === "shoe"
       ? shoeVisibility
-      : 0;
+      : entry.category === "headpart"
+      ? headVisibility
+      : 0; // "hidden" — any unrecognized material is invisible in FPP
     const nextOpacity = entry.baseOpacity * THREE.MathUtils.clamp(
       categoryVisibility,
       0,
@@ -1221,6 +1405,7 @@ export const GameplayRuntime = forwardRef<
   const spawnPosition = practiceMap.playerSpawn.position;
   const spawnYaw = practiceMap.playerSpawn.yaw;
   const spawnPitch = practiceMap.playerSpawn.pitch;
+  const jumpPads = practiceMap.jumpPads ?? EMPTY_JUMP_PADS;
   const spawnPositionVector = useMemo(
     () => new THREE.Vector3(spawnPosition[0], spawnPosition[1], spawnPosition[2]),
     [spawnPosition],
@@ -1271,6 +1456,9 @@ export const GameplayRuntime = forwardRef<
     GroundAmmoVisualState
   >(
     () => inventoryRef.current.getGroundAmmoVisualState(),
+  );
+  const [jumpPadActivatedAt, setJumpPadActivatedAt] = useState<number[]>(
+    () => jumpPads.map(() => Number.NEGATIVE_INFINITY),
   );
 
   const playerSnapshotCallbackRef = useRef(onPlayerSnapshot);
@@ -1350,6 +1538,11 @@ export const GameplayRuntime = forwardRef<
   const lastImpactCleanupAtRef = useRef(0);
   const lastSniperRechamberActiveRef = useRef<boolean | null>(null);
   const lastSniperRechamberProgressStepRef = useRef(-1);
+  const characterOutlineMaterialRef = useRef<THREE.MeshBasicMaterial | null>(null);
+  const characterMeshOriginalMaterialsRef = useRef(
+    new Map<THREE.Mesh, THREE.Material | THREE.Material[]>(),
+  );
+  const characterGloveMeshesRef = useRef(new Set<THREE.Mesh>());
   const lastReloadActiveRef = useRef<boolean | null>(null);
   const lastReloadWeaponKindRef = useRef<WeaponKind | null>(null);
   const characterWeaponAttachBoneRef = useRef<THREE.Bone | null>(null);
@@ -1563,17 +1756,78 @@ export const GameplayRuntime = forwardRef<
       characterModel,
     );
     characterVisibilityMaterialsRef.current = visibilityMaterials;
-    applyCharacterFirstPersonMask(visibilityMaterials, 0, 1, 1);
+    applyCharacterFirstPersonMask(visibilityMaterials, 0, 1, 1, 1);
 
     return () => {
-      applyCharacterFirstPersonMask(visibilityMaterials, 0, 1, 1);
+      applyCharacterFirstPersonMask(visibilityMaterials, 0, 1, 1, 1);
       characterVisibilityMaterialsRef.current = [];
+    };
+  }, [characterModel]);
+
+  // Create a white DoubleSide material used for the Mirage-style body silhouette
+  // when the player looks down in FPP instead of seeing inner mesh faces.
+  useEffect(() => {
+    if (!characterModel) {
+      characterOutlineMaterialRef.current?.dispose();
+      characterOutlineMaterialRef.current = null;
+      characterMeshOriginalMaterialsRef.current = new Map();
+      return;
+    }
+
+    const outlineMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    characterOutlineMaterialRef.current = outlineMaterial;
+
+    const originalMaterials = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>();
+    const gloveMeshes = new Set<THREE.Mesh>();
+    characterModel.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) {
+        const mesh = child as THREE.Mesh;
+        originalMaterials.set(mesh, mesh.material);
+        // Track glove meshes so they keep their textures during the outline pass
+        const mats = ([] as THREE.Material[]).concat(
+          mesh.material as THREE.Material | THREE.Material[],
+        );
+        if (mats.some((m) =>
+          m.name.trim().toLowerCase().includes("glove"),
+        )) {
+          gloveMeshes.add(mesh);
+        }
+      }
+    });
+    characterMeshOriginalMaterialsRef.current = originalMaterials;
+    characterGloveMeshesRef.current = gloveMeshes;
+
+    return () => {
+      originalMaterials.forEach((original, mesh) => {
+        mesh.material = original;
+      });
+      outlineMaterial.dispose();
+      characterOutlineMaterialRef.current = null;
+      characterMeshOriginalMaterialsRef.current = new Map();
+      characterGloveMeshesRef.current = new Set();
     };
   }, [characterModel]);
 
   useEffect(() => {
     audioRef.current.setVolumes(audioVolumes);
   }, [audioVolumes]);
+
+  useEffect(() => {
+    setJumpPadActivatedAt(jumpPads.map(() => Number.NEGATIVE_INFINITY));
+  }, [jumpPads, spawnPosition]);
+
+  useEffect(() => {
+    return () => {
+      audioRef.current.cancelReload();
+      audioRef.current.cancelSniperShelling();
+    };
+  }, []);
 
   useEffect(() => {
     movementSettingsRef.current = movement;
@@ -2145,7 +2399,9 @@ export const GameplayRuntime = forwardRef<
       weaponEquippedCallbackRef.current(false);
     }
     latestControllerSnapshotRef.current = null;
+    setJumpPadActivatedAt(jumpPads.map(() => Number.NEGATIVE_INFINITY));
   }, [
+    jumpPads,
     practiceMap.infiniteAmmo,
     practiceMap.groundSpawns,
     practiceMap.spawnWithRifle,
@@ -2462,6 +2718,7 @@ export const GameplayRuntime = forwardRef<
     }
 
     const grounded = controller.isGrounded();
+    const playerPosition = controller.getPosition();
     const moving = controller.isMoving() && grounded;
     const sprinting = controller.isSprinting();
     const sprintPressed = controller.isSprintPressed();
@@ -2535,9 +2792,23 @@ export const GameplayRuntime = forwardRef<
     wasCrouchedRef.current = crouched;
     const previousGrounded = wasGroundedRef.current;
     const justLanded = grounded && !previousGrounded;
+    const jumpPadLaunchIndex = !grounded && previousGrounded
+      ? findJumpPadIndexAtXZ(jumpPads, playerPosition.x, playerPosition.z)
+      : -1;
     wasGroundedRef.current = grounded;
     if (justLanded) {
       audio.playLanding();
+    } else if (!grounded) {
+      if (jumpPadLaunchIndex !== -1) {
+        audio.playJumpPadLaunch();
+        setJumpPadActivatedAt((previous) => {
+          const next = previous.length === jumpPads.length
+            ? [...previous]
+            : jumpPads.map(() => Number.NEGATIVE_INFINITY);
+          next[jumpPadLaunchIndex] = nowMs;
+          return next;
+        });
+      }
     }
 
     let crouchTransitionState = crouchTransitionStateRef.current;
@@ -3227,33 +3498,59 @@ export const GameplayRuntime = forwardRef<
     const firstPersonBodyMaskBlend = presentation.phase === "playing"
       ? THREE.MathUtils.smoothstep(viewLerp, 0.68, 0.9)
       : 0;
+    // Head fades earlier than body to prevent camera clipping through face geometry
+    const headPartMaskBlend = presentation.phase === "playing"
+      ? THREE.MathUtils.smoothstep(viewLerp, 0.2, 0.5)
+      : 0;
+    const overallMaskBlend = Math.max(firstPersonBodyMaskBlend, headPartMaskBlend);
     const downLookAmount = THREE.MathUtils.smoothstep(
       -controller.getPitch(),
       0.58,
       1.04,
     );
-    const adsLerp = controller.getAdsLerp();
     const shoeVisibility = firstPersonBodyMaskBlend *
       downLookAmount *
       (controller.isGrounded() ? 1 : 0);
-    // During ADS, fade out gloves so they don't float detached from the weapon
-    const gloveVisibility = firstPersonBodyMaskBlend *
-      THREE.MathUtils.lerp(1, 0.88, downLookAmount) *
-      (1 - adsLerp);
+    const gloveVisibility = 1;
+    const headVisibility = 1 - headPartMaskBlend;
     applyCharacterFirstPersonMask(
       characterVisibilityMaterialsRef.current,
-      firstPersonBodyMaskBlend,
+      overallMaskBlend,
       gloveVisibility,
       shoeVisibility,
+      headVisibility,
     );
+
+    // When looking down in FPP, swap to a white Mirage-style silhouette so the
+    // player sees an outer body shape instead of the hollow inner mesh faces.
+    // Glove meshes are excluded so hands keep their original textures.
+    const outlineBlend = overallMaskBlend * downLookAmount;
+    const outlineMaterial = characterOutlineMaterialRef.current;
+    const originalMaterialsMap = characterMeshOriginalMaterialsRef.current;
+    const gloveMeshes = characterGloveMeshesRef.current;
+    if (outlineMaterial && originalMaterialsMap.size > 0) {
+      if (outlineBlend > 0.001) {
+        outlineMaterial.opacity = Math.min(outlineBlend * 0.5, 0.4);
+        originalMaterialsMap.forEach((_orig, mesh) => {
+          if (!gloveMeshes.has(mesh) && mesh.material !== outlineMaterial) {
+            mesh.material = outlineMaterial;
+          }
+        });
+      } else {
+        originalMaterialsMap.forEach((original, mesh) => {
+          if (mesh.material !== original) {
+            mesh.material = original;
+          }
+        });
+      }
+    }
 
     const playerChar = playerCharacterRef.current;
     if (playerChar) {
-      const position = controller.getPosition();
       playerChar.position.set(
-        position.x,
-        position.y - SLIDE_CHARACTER_DROP * slidePoseBlend,
-        position.z,
+        playerPosition.x,
+        playerPosition.y - SLIDE_CHARACTER_DROP * slidePoseBlend,
+        playerPosition.z,
       );
       playerChar.rotation.y = controller.getBodyYaw() + CHARACTER_YAW_OFFSET;
       playerChar.visible = true;
@@ -3330,13 +3627,7 @@ export const GameplayRuntime = forwardRef<
 
     const headBone = characterHeadBoneRef.current;
     if (headBone) {
-      if (presentation.phase === "playing") {
-        const viewLerp = controller.getViewModeLerp();
-        const headScale = 1 - THREE.MathUtils.smoothstep(viewLerp, 0.2, 0.5);
-        headBone.scale.setScalar(headScale);
-      } else {
-        headBone.scale.setScalar(1);
-      }
+      headBone.scale.setScalar(1);
       if (presentation.phase === "playing" && !firstPerson) {
         const headYawOffset = controller.getHeadYawOffset();
         if (Math.abs(headYawOffset) > 0.001) {
@@ -4011,6 +4302,14 @@ export const GameplayRuntime = forwardRef<
         decay={2}
         color="#8eb5ff"
       />
+      {jumpPads.map((pad, index) => (
+        <JumpPadFx
+          key={`jump-pad-${index}-${pad.minX.toFixed(2)}-${pad.minZ.toFixed(2)}`}
+          pad={pad}
+          index={index}
+          activatedAtMs={jumpPadActivatedAt[index] ?? Number.NEGATIVE_INFINITY}
+        />
+      ))}
       <group ref={playerCharacterRef}>
         {characterModel ? <primitive object={characterModel} /> : (
           <>
