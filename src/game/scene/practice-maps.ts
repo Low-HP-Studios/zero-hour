@@ -252,49 +252,39 @@ const TDM_WALKABLE_SURFACES: readonly WalkableSurface[] = [
 
 // ── Jump pads ─────────────────────────────────────────────
 // Two pads per spawn side (left + right of the spawn wall gap), 4 total.
-// Placed at z=±29 — just inside mid after crossing the spawn wall at z=±33.
-const TDM_JUMP_PAD_BOOST = 50;
-const TDM_JUMP_PAD_LAUNCH_SPEED = 30;
+// Placed inside the protected spawn flank lanes at z=±40.
+const TDM_JUMP_PAD_BOOST = 35;
+const TDM_JUMP_PAD_LAUNCH_SPEED = 21;
+const TDM_JUMP_PAD_BASE_WIDTH = 8;
+const TDM_JUMP_PAD_BASE_DEPTH = 6;
+const TDM_JUMP_PAD_AREA_SCALE = 0.6;
+const TDM_JUMP_PAD_DIMENSION_SCALE = Math.sqrt(TDM_JUMP_PAD_AREA_SCALE);
+const TDM_JUMP_PAD_WIDTH = TDM_JUMP_PAD_BASE_WIDTH *
+  TDM_JUMP_PAD_DIMENSION_SCALE;
+const TDM_JUMP_PAD_DEPTH = TDM_JUMP_PAD_BASE_DEPTH *
+  TDM_JUMP_PAD_DIMENSION_SCALE;
+
+function createTdmJumpPad(centerX: number, centerZ: number): JumpPad {
+  const halfWidth = TDM_JUMP_PAD_WIDTH / 2;
+  const halfDepth = TDM_JUMP_PAD_DEPTH / 2;
+  return {
+    minX: centerX - halfWidth,
+    maxX: centerX + halfWidth,
+    minZ: centerZ - halfDepth,
+    maxZ: centerZ + halfDepth,
+    y: 0,
+    boostVelocity: TDM_JUMP_PAD_BOOST,
+    launchPlanarSpeed: TDM_JUMP_PAD_LAUNCH_SPEED,
+  };
+}
 
 const TDM_JUMP_PADS: readonly JumpPad[] = [
   // blue side
-  {
-    minX: -35,
-    maxX: -27,
-    minZ: -31,
-    maxZ: -25,
-    y: 0,
-    boostVelocity: TDM_JUMP_PAD_BOOST,
-    launchPlanarSpeed: TDM_JUMP_PAD_LAUNCH_SPEED,
-  },
-  {
-    minX: 27,
-    maxX: 35,
-    minZ: -31,
-    maxZ: -25,
-    y: 0,
-    boostVelocity: TDM_JUMP_PAD_BOOST,
-    launchPlanarSpeed: TDM_JUMP_PAD_LAUNCH_SPEED,
-  },
+  createTdmJumpPad(-31, -40),
+  createTdmJumpPad(31, -40),
   // red side (z-mirrored)
-  {
-    minX: -35,
-    maxX: -27,
-    minZ: 25,
-    maxZ: 31,
-    y: 0,
-    boostVelocity: TDM_JUMP_PAD_BOOST,
-    launchPlanarSpeed: TDM_JUMP_PAD_LAUNCH_SPEED,
-  },
-  {
-    minX: 27,
-    maxX: 35,
-    minZ: 25,
-    maxZ: 31,
-    y: 0,
-    boostVelocity: TDM_JUMP_PAD_BOOST,
-    launchPlanarSpeed: TDM_JUMP_PAD_LAUNCH_SPEED,
-  },
+  createTdmJumpPad(-31, 40),
+  createTdmJumpPad(31, 40),
 ];
 
 // ── Spawn ─────────────────────────────────────────────────
