@@ -1036,6 +1036,49 @@ export class WeaponSystem {
     return true;
   }
 
+  ensureMultiplayerRifleLoadout() {
+    this.clearSlot('slotB');
+    this.applySlotDefaultsForWeapon(this.slotA, 'rifle');
+    this.slotA.hasWeapon = true;
+    this.slotA.weaponKind = 'rifle';
+    this.slotA.infiniteReserveAmmo = true;
+    this.slotA.reserveAmmo = this.slotA.maxReserveAmmo;
+    this.slotA.magAmmo = Math.min(this.slotA.maxMagAmmo, Math.max(0, this.slotA.magAmmo || 30));
+    this.activeSlot = 'slotA';
+    this.raisedSlot = 'slotA';
+    this.clearSwitchState();
+    this.clearSniperRechamber();
+    this.sniperRechamberRestartPending = false;
+  }
+
+  syncMultiplayerRifleState(options: {
+    magAmmo: number;
+    reloadEndsAtMs: number | null;
+    nowMs: number;
+  }) {
+    this.ensureMultiplayerRifleLoadout();
+
+    const slot = this.getSlotById('slotA');
+    slot.magAmmo = Math.max(0, Math.min(slot.maxMagAmmo, Math.round(options.magAmmo)));
+    slot.reserveAmmo = slot.maxReserveAmmo;
+    slot.infiniteReserveAmmo = true;
+    this.setSlotById('slotA', slot);
+
+    if (options.reloadEndsAtMs !== null && options.reloadEndsAtMs > options.nowMs) {
+      this.reloadSlot = 'slotA';
+      this.reloadWeaponKind = 'rifle';
+      this.reloadUntilMs = options.reloadEndsAtMs;
+      this.reloadStartedAtMs = options.reloadEndsAtMs - WEAPON_CONFIG.rifle.reloadMs;
+      this.reloadAmmoToLoad = Math.max(0, slot.maxMagAmmo - slot.magAmmo);
+    } else if (this.reloadSlot === 'slotA' || this.reloadWeaponKind === 'rifle') {
+      this.reloadSlot = null;
+      this.reloadWeaponKind = null;
+      this.reloadStartedAtMs = 0;
+      this.reloadUntilMs = 0;
+      this.reloadAmmoToLoad = 0;
+    }
+  }
+
   beginReload(nowMs: number): boolean {
     this.applyPendingReloadCompletion(nowMs);
     this.applyPendingSwitch(nowMs);

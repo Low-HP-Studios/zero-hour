@@ -21,6 +21,57 @@ export type OnlineActiveMatch = {
   slots: OnlineActiveMatchSlot[];
 };
 
+export type OnlineMatchPlayerState = {
+  userId: string;
+  spawnSlot: OnlineMatchSpawnSlot;
+  health: number;
+  alive: boolean;
+  respawnAt: string | null;
+  magAmmo: number;
+  reloadingUntil: string | null;
+};
+
+export type OnlineMatchState = {
+  startedAt: string;
+  mapId: "map1";
+  players: OnlineMatchPlayerState[];
+};
+
+export type OnlineRealtimePlayerState = {
+  userId: string;
+  seq: number;
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  pitch: number;
+  moving: boolean;
+  sprinting: boolean;
+  crouched: boolean;
+  grounded: boolean;
+  ads: boolean;
+  alive: boolean;
+};
+
+export type OnlineMatchPlayerInput = Omit<OnlineRealtimePlayerState, "userId" | "alive">;
+
+export type OnlineShotHit = {
+  userId: string;
+  zone: "head" | "body" | "leg";
+  damage: number;
+  remainingHealth: number;
+  killed: boolean;
+  impactPoint: [number, number, number];
+};
+
+export type OnlineShotFiredEvent = {
+  userId: string;
+  shotId: string;
+  origin: [number, number, number];
+  direction: [number, number, number];
+  hit: OnlineShotHit | null;
+};
+
 export type OnlineLobbyPlayer = {
   userId: string;
   username: string;
@@ -74,6 +125,9 @@ export type OnlineController = {
   user: OnlineUser | null;
   lobby: OnlineLobby | null;
   activeMatch: OnlineActiveMatch | null;
+  matchState: OnlineMatchState | null;
+  realtimePlayers: OnlineRealtimePlayerState[];
+  latestShotEvent: OnlineShotFiredEvent | null;
   refreshConnection: () => Promise<boolean>;
   signUp: (username: string, password: string) => Promise<boolean>;
   signIn: (username: string, password: string) => Promise<boolean>;
@@ -87,4 +141,7 @@ export type OnlineController = {
   endMatch: () => Promise<boolean>;
   leaveLobby: () => Promise<boolean>;
   disbandLobby: () => Promise<boolean>;
+  sendMatchPlayerState: (state: OnlineMatchPlayerInput) => void;
+  sendMatchFire: (shotId: string) => void;
+  sendMatchReload: (requestId: string) => void;
 };

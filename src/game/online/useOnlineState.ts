@@ -29,6 +29,10 @@ import type {
   OnlineActiveMatch,
   OnlineController,
   OnlineLobby,
+  OnlineMatchPlayerInput,
+  OnlineMatchState,
+  OnlineRealtimePlayerState,
+  OnlineShotFiredEvent,
   OnlineUser,
   RealtimeStatus,
 } from "./types";
@@ -41,6 +45,9 @@ type RealtimeServerMessage =
   | { type: "auth_ok" }
   | { type: "lobby_state"; lobby: OnlineLobby | null }
   | { type: "match_started"; match: OnlineActiveMatch }
+  | { type: "match_state"; state: OnlineMatchState }
+  | { type: "player_state"; player: OnlineRealtimePlayerState }
+  | { type: "shot_fired"; shot: OnlineShotFiredEvent }
   | { type: "match_ended"; reason: string }
   | { type: "error"; message: string };
 
@@ -81,6 +88,9 @@ export function useOnlineState({ pollEnabled: _pollEnabled }: UseOnlineStateOpti
   const [user, setUser] = useState<OnlineUser | null>(null);
   const [lobby, setLobby] = useState<OnlineLobby | null>(null);
   const [activeMatch, setActiveMatch] = useState<OnlineActiveMatch | null>(null);
+  const [matchState, setMatchState] = useState<OnlineMatchState | null>(null);
+  const [realtimePlayers, setRealtimePlayers] = useState<OnlineRealtimePlayerState[]>([]);
+  const [latestShotEvent, setLatestShotEvent] = useState<OnlineShotFiredEvent | null>(null);
 
   const tokenRef = useRef<string | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
@@ -100,6 +110,12 @@ export function useOnlineState({ pollEnabled: _pollEnabled }: UseOnlineStateOpti
     authStatusRef.current = authStatus;
   }, [authStatus]);
 
+  const clearMatchRuntime = useCallback(() => {
+    setMatchState(null);
+    setRealtimePlayers([]);
+    setLatestShotEvent(null);
+  }, []);
+
   const clearReconnectTimeout = useCallback(() => {
     if (reconnectTimeoutRef.current !== null) {
       window.clearTimeout(reconnectTimeoutRef.current);
@@ -112,7 +128,10 @@ export function useOnlineState({ pollEnabled: _pollEnabled }: UseOnlineStateOpti
     desiredLobbyCodeRef.current = nextLobby?.code ?? null;
     setLobby(nextLobby);
     setActiveMatch(nextLobby?.activeMatch ?? null);
-  }, []);
+    if (!nextLobby || nextLobby.status !== "in_match") {
+      clearMatchRuntime();
+    }
+  }, [clearMatchRuntime]);
 
   const disconnectRealtime = useCallback(() => {
     allowReconnectRef.current = false;
@@ -203,8 +222,29 @@ export function useOnlineState({ pollEnabled: _pollEnabled }: UseOnlineStateOpti
         return;
       }
 
+      if (message.type === "match_state") {
+        setMatchState(message.state);
+        return;
+      }
+
+      if (message.type === "player_state") {
+        setRealtimePlayers((previous) => {
+          const next = previous.filter((player) => player.userId !== message.player.userId);
+          next.push(message.player);
+          next.sort((left, right) => left.userId.localeCompare(right.userId));
+          return next;
+        });
+        return;
+      }
+
+      if (message.type === "shot_fired") {
+        setLatestShotEvent(message.shot);
+        return;
+      }
+
       if (message.type === "match_ended") {
         setActiveMatch(null);
+        clearMatchRuntime();
         const nextNotice = MATCH_ENDED_MESSAGES[message.reason] ?? "Match ended. Back to the lobby.";
         setNotice(nextNotice);
         toast.info(nextNotice);
@@ -243,7 +283,7 @@ export function useOnlineState({ pollEnabled: _pollEnabled }: UseOnlineStateOpti
         socket.close();
       }
     });
-  }, [clearReconnectTimeout, subscribeToLobby, syncLobbyState]);
+  }, [clearMatchRuntime, clearReconnectTimeout, subscribeToLobby, syncLobbyState]);
 
   const resetAuthState = useCallback((clearStorage: boolean) => {
     if (clearStorage) {
@@ -257,7 +297,8 @@ export function useOnlineState({ pollEnabled: _pollEnabled }: UseOnlineStateOpti
     setAuthStatus("signed_out");
     setAuthBusyAction(null);
     setLobbyBusyAction(null);
-  }, [disconnectRealtime, syncLobbyState]);
+    clearMatchRuntime();
+  }, [clearMatchRuntime, disconnectRealtime, syncLobbyState]);
 
   const applyAuthState = useCallback((token: string, nextUser: OnlineUser) => {
     tokenRef.current = token;
@@ -766,6 +807,37 @@ export function useOnlineState({ pollEnabled: _pollEnabled }: UseOnlineStateOpti
     }
   }, [handleUnauthorized, lobby, syncLobbyState]);
 
+  const sendRealtimeMessage = useCallback((payload: Record<string, unknown>) => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN || !socketAuthenticatedRef.current) {
+      return;
+    }
+
+    socket.send(JSON.stringify(payload));
+  }, []);
+
+  const sendMatchPlayerState = useCallback((state: OnlineMatchPlayerInput) => {
+    sendRealtimeMessage({
+      type: "player_state",
+      ...state,
+    });
+  }, [sendRealtimeMessage]);
+
+  const sendMatchFire = useCallback((shotId: string) => {
+    sendRealtimeMessage({
+      type: "fire",
+      shotId,
+      weaponType: "rifle",
+    });
+  }, [sendRealtimeMessage]);
+
+  const sendMatchReload = useCallback((requestId: string) => {
+    sendRealtimeMessage({
+      type: "reload",
+      requestId,
+    });
+  }, [sendRealtimeMessage]);
+
   return {
     backendStatus,
     realtimeStatus,
@@ -777,6 +849,9 @@ export function useOnlineState({ pollEnabled: _pollEnabled }: UseOnlineStateOpti
     user,
     lobby,
     activeMatch,
+    matchState,
+    realtimePlayers,
+    latestShotEvent,
     refreshConnection,
     signUp,
     signIn,
@@ -790,5 +865,8 @@ export function useOnlineState({ pollEnabled: _pollEnabled }: UseOnlineStateOpti
     endMatch,
     leaveLobby,
     disbandLobby,
+    sendMatchPlayerState,
+    sendMatchFire,
+    sendMatchReload,
   };
 }

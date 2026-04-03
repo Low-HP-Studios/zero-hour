@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
-import { loadFbxAsset, preloadTextureAsset } from "../game/AssetLoader";
+import { loadModelAsset, preloadTextureAsset } from "../game/AssetLoader";
 import { MapEnvironment } from "../game/scene/MapEnvironment";
 import type {
   CharacterDefinition,
@@ -108,13 +108,13 @@ function LobbyModel({ modelUrl, textureBasePath, textures }: LobbyModelProps) {
     setModel(null);
 
     (async () => {
-      const [fbx, SkeletonUtils] = await Promise.all([
-        loadFbxAsset(modelUrl),
+      const [modelAsset, SkeletonUtils] = await Promise.all([
+        loadModelAsset(modelUrl),
         import("three/examples/jsm/utils/SkeletonUtils.js"),
       ]);
-      if (disposed || !fbx) return;
+      if (disposed || !modelAsset) return;
 
-      const clone = SkeletonUtils.clone(fbx) as THREE.Group;
+      const clone = SkeletonUtils.clone(modelAsset) as THREE.Group;
 
       const box = new THREE.Box3().setFromObject(clone);
       const size = new THREE.Vector3();
@@ -141,7 +141,7 @@ function LobbyModel({ modelUrl, textureBasePath, textures }: LobbyModelProps) {
       if (model) disposeModel(model);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modelUrl]);
+  }, [modelUrl, textureBasePath, textures]);
 
   if (!model) return null;
 

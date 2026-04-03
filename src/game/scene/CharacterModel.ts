@@ -7,8 +7,8 @@ import {
 } from "react";
 import * as THREE from "three";
 import {
-  loadFbxAsset,
   loadFbxAnimation,
+  loadModelAsset,
   preloadTextureAsset,
 } from "../AssetLoader";
 import type { CharacterTextureEntry } from "../characters";
@@ -446,6 +446,10 @@ export async function applyCharacterTextures(
   textureBase?: string,
   dynamicTextures?: CharacterTextureEntry[] | null,
 ): Promise<void> {
+  if (dynamicTextures === null) {
+    return;
+  }
+
   const useBase = textureBase ?? CHARACTER_TEXTURE_BASE;
   const tasks: Promise<void>[] = [];
 
@@ -457,7 +461,7 @@ export async function applyCharacterTextures(
     const task = (async () => {
       const newMats = await Promise.all(
         mats.map(async (mat) => {
-          const entry = dynamicTextures
+          const entry = Array.isArray(dynamicTextures)
             ? findDynamicTextureEntry(mat.name || mesh.name, dynamicTextures)
             : findTextureEntry(mat.name);
           const phong = mat as THREE.MeshPhongMaterial;
@@ -558,19 +562,19 @@ export function useCharacterModel(
     (async () => {
       try {
         const modelUrl = override?.modelUrl ?? CHARACTER_MODEL_URL;
-        const [fbxModel, SkeletonUtils, ...clips] = await Promise.all([
-          loadFbxAsset(modelUrl),
+        const [characterModel, SkeletonUtils, ...clips] = await Promise.all([
+          loadModelAsset(modelUrl),
           import("three/examples/jsm/utils/SkeletonUtils.js"),
           ...ANIM_CLIPS.map((a) => loadFbxAnimation(a.url, a.name)),
         ]);
 
         if (disposed) return;
-        if (!fbxModel) {
+        if (!characterModel) {
           setReady(true);
           return;
         }
 
-        const clone = SkeletonUtils.clone(fbxModel) as THREE.Group;
+        const clone = SkeletonUtils.clone(characterModel) as THREE.Group;
 
         const box = new THREE.Box3().setFromObject(clone);
         const size = new THREE.Vector3();
@@ -684,7 +688,7 @@ export function useCharacterModel(
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [override?.modelUrl]);
+  }, [override?.modelUrl, override?.textureBasePath, override?.textures]);
 
   const setAnimState = useCallback((
     state: CharacterAnimState,

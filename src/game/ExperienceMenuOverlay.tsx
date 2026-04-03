@@ -254,7 +254,7 @@ export function ExperienceMenuOverlay({
     ? (online.lobby.players.find((player) => player.userId === online.user?.id) ?? null)
     : null;
   const isCurrentPlayerHost = currentLobbyPlayer?.isHost ?? false;
-  const onlineSelectedMap = online.lobby ? getPracticeMapById(online.lobby.selectedMapId) : selectedMap;
+  const onlineSelectedMap = getPracticeMapById(online.lobby?.selectedMapId ?? "map1");
   const allPlayersReady = online.lobby?.players.every((player) => player.isReady) ?? false;
   const canStartMatch = Boolean(
     online.lobby &&
@@ -463,12 +463,12 @@ export function ExperienceMenuOverlay({
                     <div className="online-create-card-v3">
                       <span className="online-block-label-v3">Create a room</span>
                       <p className="online-status-note-v3">
-                        Creates a 2-player lobby using your currently selected operative and map.
+                        Creates a 2-player rifle skirmish on map1 using your currently selected operative.
                       </p>
                       <button
                         type="button"
                         className="lobby-play-btn-v2 online-submit-btn-v3"
-                        onClick={() => { void online.createLobby(2, selectedCharacterId, selectedMapId); }}
+                        onClick={() => { void online.createLobby(2, selectedCharacterId, "map1"); }}
                         disabled={onlineBusy}
                       >
                         {online.lobbyBusyAction === "create" ? "Creating..." : "Create lobby"}
@@ -540,26 +540,20 @@ export function ExperienceMenuOverlay({
 
                     <div className="lobby-map-panel-v3">
                       <div className="lobby-map-selector-header-v2">
-                        <span className="lobby-map-selector-label-v2">Lobby map</span>
+                        <span className="lobby-map-selector-label-v2">Live combat map</span>
                         <span className="lobby-map-selector-value-v2">{onlineSelectedMap.label}</span>
                       </div>
                       <div className="segmented-row lobby-map-pills-v3">
-                        {PRACTICE_MAP_OPTIONS.map((option) => (
-                          <button
-                            key={option.id}
-                            type="button"
-                            className={`chip-btn ${online.lobby?.selectedMapId === option.id ? "active" : ""}`}
-                            onClick={() => onMapSelect(option.id)}
-                            disabled={onlineBusy || !isCurrentPlayerHost || online.lobby?.status !== "open"}
-                          >
-                            {option.label}
-                          </button>
-                        ))}
+                        <button
+                          type="button"
+                          className="chip-btn active"
+                          disabled
+                        >
+                          {onlineSelectedMap.label}
+                        </button>
                       </div>
                       <p className="lobby-map-selector-note-v2">
-                        {isCurrentPlayerHost
-                          ? "Host controls the shared map. Changing it clears both ready states, because life is rude like that."
-                          : "Host chooses the map for this match."}
+                        Live combat is locked to map1 and rifle-only for this version. Restraint is rare, but healthy.
                       </p>
                     </div>
 

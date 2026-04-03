@@ -9,7 +9,7 @@ import {
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
-import { loadFbxAnimation, loadFbxAsset } from "./AssetLoader";
+import { loadFbxAnimation, loadModelAsset } from "./AssetLoader";
 import {
   TARGET_CHARACTER_MODEL_URL,
   TARGET_DEATH_ANIMATION_URL,
@@ -452,19 +452,19 @@ function useTargetCharacterAsset(
 
     (async () => {
       try {
-        const [fbxModel, idleClip, deathClip] = await Promise.all([
-          loadFbxAsset(modelUrl),
+        const [characterModel, idleClip, deathClip] = await Promise.all([
+          loadModelAsset(modelUrl),
           loadFbxAnimation(TARGET_IDLE_ANIMATION_URL, "idle"),
           loadFbxAnimation(TARGET_DEATH_ANIMATION_URL, "death"),
         ]);
         if (disposed) return;
-        if (!fbxModel) {
-          console.warn("[Targets] FBX model is null for URL:", modelUrl);
+        if (!characterModel) {
+          console.warn("[Targets] Character model is null for URL:", modelUrl);
           setAsset({ model: null, idleClip: null, deathClip: null, ready: true });
           return;
         }
 
-        const preparedModel = SkeletonUtils.clone(fbxModel) as THREE.Group;
+        const preparedModel = SkeletonUtils.clone(characterModel) as THREE.Group;
         prepareTargetCharacterModel(preparedModel);
 
         await applyCharacterTextures(

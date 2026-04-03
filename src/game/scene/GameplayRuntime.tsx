@@ -14,6 +14,12 @@ import * as THREE from "three";
 import { type AudioVolumeSettings, sharedAudioManager } from "../Audio";
 import { playControllerRumble } from "../GamepadHaptics";
 import type { JumpPad } from "../map-layout";
+import type {
+  OnlineMatchPlayerInput,
+  OnlineMatchPlayerState,
+  OnlineRealtimePlayerState,
+  OnlineShotFiredEvent,
+} from "../online/types";
 import {
   type PlayerControllerApi,
   type RunFacingPhase,
@@ -103,6 +109,32 @@ export type ShotFiredState = {
   nowMs: number;
 };
 
+type HandGripPose = {
+  position: THREE.Vector3 | null;
+  quaternion: THREE.Quaternion | null;
+};
+
+type WeaponHandGripPoses = Record<
+  WeaponKind,
+  {
+    right: HandGripPose;
+    left: HandGripPose;
+  }
+>;
+
+function createWeaponHandGripPoses(): WeaponHandGripPoses {
+  return {
+    rifle: {
+      right: { position: null, quaternion: null },
+      left: { position: null, quaternion: null },
+    },
+    sniper: {
+      right: { position: null, quaternion: null },
+      left: { position: null, quaternion: null },
+    },
+  };
+}
+
 export type GameplayRuntimeHandle = {
   requestPointerLock: () => void;
   releasePointerLock: () => void;
@@ -145,6 +177,13 @@ type GameplayRuntimeProps = {
   onCriticalAssetsReadyChange?: (ready: boolean) => void;
   characterOverride?: CharacterModelOverride;
   playerSpawnOverride?: PracticeMapDefinition["playerSpawn"];
+  multiplayerEnabled?: boolean;
+  multiplayerLocalState?: OnlineMatchPlayerState | null;
+  multiplayerLocalPose?: OnlineRealtimePlayerState | null;
+  confirmedShotEvent?: OnlineShotFiredEvent | null;
+  onMatchPlayerState?: (state: OnlineMatchPlayerInput) => void;
+  onMatchFire?: (shotId: string) => void;
+  onMatchReload?: (requestId: string) => void;
   onPauseMenuToggle?: () => void;
 };
 
@@ -209,6 +248,7 @@ const JUMP_PAD_FLASH_MS = 260;
 const RIFLE_ADS_CAMERA_OFFSET = { x: 0, y: -0.05, z: 0.264 };
 const SNIPER_ADS_CAMERA_OFFSET = { x: 0.007, y: 0.016, z: 0.105 };
 
+
 function getJumpPadCenter(pad: JumpPad) {
   return {
     x: (pad.minX + pad.maxX) / 2,
@@ -253,33 +293,41 @@ function JumpPadFx({
     () => new THREE.Color(z < 0 ? "#38bdf8" : "#fb7185"),
     [z],
   );
+  const frameColor = useMemo(
+    () => padColor.clone().lerp(new THREE.Color("#1b222b"), 0.84),
+    [padColor],
+  );
   const accentColor = useMemo(
     () => padColor.clone().lerp(new THREE.Color("#ffffff"), 0.3),
     [padColor],
   );
-  const outerRadius = Math.max(width, depth) * 0.42;
-  const innerRadius = Math.max(outerRadius - 0.16, outerRadius * 0.7);
-  const beamRadius = Math.max(Math.min(width, depth) * 0.16, 0.42);
+  const outerRadius = Math.max(width, depth) * 0.38;
+  const innerRadius = Math.max(outerRadius - 0.18, outerRadius * 0.66);
+  const beamRadius = Math.max(Math.min(width, depth) * 0.11, 0.34);
+  const frameWidth = width + 0.9;
+  const frameDepth = depth + 0.9;
+  const braceOffsetX = width / 2 + 0.24;
+  const braceOffsetZ = depth / 2 + 0.24;
 
   useFrame((state) => {
     const elapsed = state.clock.elapsedTime;
     const pulse = 0.58 + 0.42 * (0.5 + 0.5 * Math.sin(elapsed * 2.6 + index));
     if (baseMatRef.current) {
       baseMatRef.current.emissive.copy(padColor);
-      baseMatRef.current.emissiveIntensity = 0.5 + pulse * 0.75;
+      baseMatRef.current.emissiveIntensity = 0.34 + pulse * 0.52;
     }
     if (haloMatRef.current) {
-      haloMatRef.current.opacity = 0.14 + pulse * 0.18;
+      haloMatRef.current.opacity = 0.12 + pulse * 0.16;
     }
     if (beamMatRef.current) {
-      beamMatRef.current.opacity = 0.08 + pulse * 0.14;
+      beamMatRef.current.opacity = 0.07 + pulse * 0.12;
     }
     if (haloRef.current) {
-      haloRef.current.rotation.z = elapsed * 1.35 * (index % 2 === 0 ? 1 : -1);
+      haloRef.current.rotation.z = elapsed * 0.95 * (index % 2 === 0 ? 1 : -1);
     }
     if (glowLightRef.current) {
-      glowLightRef.current.intensity = 0.5 + pulse * 0.8;
-      glowLightRef.current.distance = 3.8 + pulse * 1.4;
+      glowLightRef.current.intensity = 0.48 + pulse * 0.64;
+      glowLightRef.current.distance = 4 + pulse * 1.2;
     }
     if (flashMatRef.current && flashRef.current) {
       const flashProgress = activatedAtMs > 0
@@ -298,28 +346,102 @@ function JumpPadFx({
 
   return (
     <group position={[x, pad.y, z]}>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.045, 0]}>
+      <mesh position={[0, -0.07, 0]}>
+        <boxGeometry args={[frameWidth, 0.14, frameDepth]} />
+        <meshStandardMaterial
+          color={frameColor}
+          roughness={0.36}
+          metalness={0.7}
+        />
+      </mesh>
+      <mesh position={[0, 0.015, 0]}>
+        <boxGeometry args={[frameWidth - 0.18, 0.06, frameDepth - 0.18]} />
+        <meshStandardMaterial
+          color={frameColor.clone().lerp(new THREE.Color("#000000"), 0.12)}
+          roughness={0.4}
+          metalness={0.62}
+        />
+      </mesh>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.075, 0]} renderOrder={1}>
         <planeGeometry args={[width * 1.02, depth * 1.02]} />
         <meshStandardMaterial
           ref={baseMatRef}
-          color={padColor}
+          color={frameColor}
           emissive={padColor}
-          emissiveIntensity={0.75}
-          roughness={0.24}
-          metalness={0.08}
+          emissiveIntensity={0.62}
+          roughness={0.22}
+          metalness={0.22}
+          polygonOffset
+          polygonOffsetFactor={-1}
+          polygonOffsetUnits={-1}
         />
       </mesh>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.06, 0]}>
+      {[
+        [-braceOffsetX, 0.11, -braceOffsetZ],
+        [braceOffsetX, 0.11, -braceOffsetZ],
+        [-braceOffsetX, 0.11, braceOffsetZ],
+        [braceOffsetX, 0.11, braceOffsetZ],
+      ].map((position, braceIndex) => (
+        <mesh
+          key={`jump-pad-brace-${braceIndex}`}
+          position={position as [number, number, number]}
+        >
+          <boxGeometry args={[0.26, 0.22, 0.26]} />
+          <meshStandardMaterial
+            color={frameColor}
+            roughness={0.34}
+            metalness={0.74}
+          />
+        </mesh>
+      ))}
+      <mesh position={[0, 0.1, depth / 2 + 0.23]} renderOrder={2}>
+        <boxGeometry args={[width * 0.86, 0.05, 0.08]} />
+        <meshBasicMaterial
+          color={accentColor}
+          toneMapped={false}
+          depthWrite={false}
+          depthTest={false}
+        />
+      </mesh>
+      <mesh position={[0, 0.1, -depth / 2 - 0.23]} renderOrder={2}>
+        <boxGeometry args={[width * 0.86, 0.05, 0.08]} />
+        <meshBasicMaterial
+          color={accentColor}
+          toneMapped={false}
+          depthWrite={false}
+          depthTest={false}
+        />
+      </mesh>
+      <mesh position={[width / 2 + 0.23, 0.1, 0]} renderOrder={2}>
+        <boxGeometry args={[0.08, 0.05, depth * 0.66]} />
+        <meshBasicMaterial
+          color={accentColor}
+          toneMapped={false}
+          depthWrite={false}
+          depthTest={false}
+        />
+      </mesh>
+      <mesh position={[-width / 2 - 0.23, 0.1, 0]} renderOrder={2}>
+        <boxGeometry args={[0.08, 0.05, depth * 0.66]} />
+        <meshBasicMaterial
+          color={accentColor}
+          toneMapped={false}
+          depthWrite={false}
+          depthTest={false}
+        />
+      </mesh>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.14, 0]} renderOrder={3}>
         <ringGeometry args={[innerRadius, outerRadius, 44]} />
         <meshBasicMaterial
           color={accentColor}
           transparent
           opacity={0.22}
           depthWrite={false}
+          depthTest={false}
           toneMapped={false}
         />
       </mesh>
-      <mesh ref={haloRef} rotation={[Math.PI / 2, 0, 0]} position={[0, 0.18, 0]}>
+      <mesh ref={haloRef} rotation={[Math.PI / 2, 0, 0]} position={[0, 0.28, 0]} renderOrder={4}>
         <torusGeometry args={[outerRadius, 0.08, 12, 40]} />
         <meshBasicMaterial
           ref={haloMatRef}
@@ -327,17 +449,29 @@ function JumpPadFx({
           transparent
           opacity={0.24}
           depthWrite={false}
+          depthTest={false}
           toneMapped={false}
         />
       </mesh>
-      <mesh position={[0, 1.1, 0]}>
-        <cylinderGeometry args={[beamRadius, beamRadius * 0.62, 2.2, 18, 1, true]} />
+      <mesh position={[0, 0.16, 0]} renderOrder={2}>
+        <cylinderGeometry args={[beamRadius * 1.5, beamRadius * 1.7, 0.12, 24]} />
+        <meshStandardMaterial
+          color={frameColor}
+          roughness={0.28}
+          metalness={0.76}
+          emissive={padColor}
+          emissiveIntensity={0.22}
+        />
+      </mesh>
+      <mesh position={[0, 1.42, 0]} renderOrder={5}>
+        <cylinderGeometry args={[beamRadius, beamRadius * 0.72, 1.9, 18, 1, true]} />
         <meshBasicMaterial
           ref={beamMatRef}
           color={padColor}
           transparent
           opacity={0.16}
           depthWrite={false}
+          depthTest={false}
           side={THREE.DoubleSide}
           toneMapped={false}
         />
@@ -345,7 +479,8 @@ function JumpPadFx({
       <mesh
         ref={flashRef}
         rotation={[-Math.PI / 2, 0, 0]}
-        position={[0, 0.14, 0]}
+        position={[0, 0.2, 0]}
+        renderOrder={6}
       >
         <ringGeometry args={[outerRadius * 0.45, outerRadius * 1.15, 44]} />
         <meshBasicMaterial
@@ -354,6 +489,7 @@ function JumpPadFx({
           transparent
           opacity={0}
           depthWrite={false}
+          depthTest={false}
           toneMapped={false}
         />
       </mesh>
@@ -384,6 +520,19 @@ const _tempCameraUp = new THREE.Vector3();
 const _tempCameraForward = new THREE.Vector3();
 const _tempWeaponGroup = new THREE.Group();
 const _tempAlignQuat = new THREE.Quaternion();
+
+// Pre-allocated temp objects for hand bone ADS override (avoid per-frame allocation)
+const _tempHandWorldPos = new THREE.Vector3();
+const _tempHandTargetWorldPos = new THREE.Vector3();
+const _tempHandDisplacement = new THREE.Vector3();
+const _tempParentInverseMatrix = new THREE.Matrix4();
+const _tempNewLocalPos = new THREE.Vector3();
+const _tempHandWeaponLocalPos = new THREE.Vector3();
+const _tempHandWorldQuat = new THREE.Quaternion();
+const _tempWeaponWorldQuat = new THREE.Quaternion();
+const _tempParentWorldQuat = new THREE.Quaternion();
+const _tempHandTargetWorldQuat = new THREE.Quaternion();
+const _tempHandLocalQuat = new THREE.Quaternion();
 
 function resolveShotDamage(
   shot: WeaponShotEvent,
@@ -434,12 +583,23 @@ function resolveCrouchTransitionTargetPose(
 type RifleRunVisualState = "idle" | "start" | "running" | "stop";
 type UnarmedWalkVisualState = "idle" | "start" | "moving" | "stop";
 type CrouchTransitionState = "idle" | "enter" | "exit";
-type CharacterVisibilityCategory = "glove" | "shoe" | "headpart" | "hidden";
+type CharacterVisibilityCategory =
+  | "glove"
+  | "lowerbody"
+  | "upperbody"
+  | "headpart"
+  | "hidden";
 type CharacterVisibilityMaterialEntry = {
   material: THREE.Material;
   category: CharacterVisibilityCategory;
   baseOpacity: number;
   baseTransparent: boolean;
+  baseClippingPlanes: THREE.Plane[] | null;
+  baseClipShadows: boolean;
+};
+type CharacterVisibilityCollection = {
+  entries: CharacterVisibilityMaterialEntry[];
+  hasGloveParts: boolean;
 };
 
 const RIFLE_HOLD_DIAGONAL_THRESHOLD = 0.35;
@@ -469,6 +629,10 @@ const SLIDE_LOWER_BODY_FADE_SECONDS = 0.08;
 const RIFLE_LOCOMOTION_SCALE_MIN = PHASE1_MOVEMENT_CONFIG.locomotionScaleMin;
 const RIFLE_LOCOMOTION_SCALE_MAX = PHASE1_MOVEMENT_CONFIG.locomotionScaleMax;
 const INVENTORY_DROP_ZONE_NEARBY = "__drop_to_ground__";
+const FIRST_PERSON_UPPER_BODY_CLIP_NORMAL = new THREE.Vector3(0, -1, 0);
+const FIRST_PERSON_UPPER_BODY_CLIP_BLEND = 0.72;
+const FIRST_PERSON_UPPER_BODY_CLIP_OFFSET = 0.05;
+const FIRST_PERSON_UPPER_BODY_FALLBACK_HEIGHT = 1.02;
 // Keep these in sync with PlayerController movement constants.
 const PLAYER_WALK_SPEED = 5.3;
 const PLAYER_SPRINT_SPEED = 8.2;
@@ -902,16 +1066,28 @@ function normalizeAngle(angleRadians: number): number {
 }
 
 function resolveFirstPersonVisibilityCategory(
-  materialName: string,
+  label: string,
 ): CharacterVisibilityCategory {
-  const normalized = materialName.trim().toLowerCase();
+  const normalized = label.trim().toLowerCase();
   if (normalized.includes("glove")) {
     return "glove";
   }
-  if (normalized.includes("shoe")) {
-    return "shoe";
+  if (
+    normalized.includes("shoe") ||
+    normalized.includes("boot") ||
+    normalized.includes("foot") ||
+    normalized.includes("toe") ||
+    normalized.includes("bottom") ||
+    normalized.includes("pant") ||
+    normalized.includes("trouser") ||
+    normalized.includes("leg") ||
+    normalized.includes("thigh") ||
+    normalized.includes("calf") ||
+    normalized.includes("skirt")
+  ) {
+    return "lowerbody";
   }
-  // Head and upper-body parts that clip through the camera in FPP — hide them
+  // Explicit face/head parts should always disappear in FPP.
   if (
     normalized.includes("head") ||
     normalized.includes("eye") ||
@@ -921,20 +1097,27 @@ function resolveFirstPersonVisibilityCategory(
     normalized.includes("glass") ||
     normalized.includes("mask") ||
     normalized.includes("neck") ||
-    normalized.includes("ear") ||
-    normalized.includes("body") ||
-    normalized.includes("torso") ||
-    normalized.includes("collar") ||
-    normalized.includes("chest")
+    normalized.includes("ear")
   ) {
     return "headpart";
+  }
+  if (
+    normalized.includes("body") ||
+    normalized.includes("torso") ||
+    normalized.includes("chest") ||
+    normalized.includes("collar") ||
+    normalized.includes("arm") ||
+    normalized.includes("sleeve") ||
+    normalized.includes("shoulder")
+  ) {
+    return "upperbody";
   }
   return "hidden";
 }
 
 function collectCharacterVisibilityMaterials(
   model: THREE.Group,
-): CharacterVisibilityMaterialEntry[] {
+): CharacterVisibilityCollection {
   const seen = new Set<THREE.Material>();
   const entries: CharacterVisibilityMaterialEntry[] = [];
 
@@ -952,35 +1135,39 @@ function collectCharacterVisibilityMaterials(
         continue;
       }
       seen.add(material);
+      const label = `${mesh.name ?? ""} ${material.name ?? ""}`.trim();
       entries.push({
         material,
-        category: resolveFirstPersonVisibilityCategory(material.name ?? ""),
+        category: resolveFirstPersonVisibilityCategory(label),
         baseOpacity: material.opacity,
         baseTransparent: material.transparent,
+        baseClippingPlanes: material.clippingPlanes
+          ? [...material.clippingPlanes]
+          : null,
+        baseClipShadows: material.clipShadows,
       });
     }
   });
 
-  // If no material was categorized as "glove" or "shoe", this model doesn't
-  // use the Trooper naming convention.  Show the entire character in first
-  // person by treating all materials as visible ("glove").
-  const hasVisibleParts = entries.some(
-    (e) => e.category === "glove" || e.category === "shoe",
-  );
-  if (!hasVisibleParts) {
+  const hasRecognizedParts = entries.some((entry) => entry.category !== "hidden");
+  if (!hasRecognizedParts) {
     for (const entry of entries) {
-      entry.category = "glove";
+      entry.category = "upperbody";
     }
   }
 
-  return entries;
+  return {
+    entries,
+    hasGloveParts: entries.some((entry) => entry.category === "glove"),
+  };
 }
 
 function applyCharacterFirstPersonMask(
   entries: CharacterVisibilityMaterialEntry[],
   maskBlend: number,
   gloveVisibility: number,
-  shoeVisibility: number,
+  lowerBodyVisibility: number,
+  upperBodyVisibility: number,
   headVisibility: number,
 ): void {
   const clampedMaskBlend = THREE.MathUtils.clamp(maskBlend, 0, 1);
@@ -1000,8 +1187,10 @@ function applyCharacterFirstPersonMask(
   for (const entry of entries) {
     const categoryVisibility = entry.category === "glove"
       ? gloveVisibility
-      : entry.category === "shoe"
-      ? shoeVisibility
+      : entry.category === "lowerbody"
+      ? lowerBodyVisibility
+      : entry.category === "upperbody"
+      ? upperBodyVisibility
       : entry.category === "headpart"
       ? headVisibility
       : 0; // "hidden" — any unrecognized material is invisible in FPP
@@ -1018,6 +1207,46 @@ function applyCharacterFirstPersonMask(
     }
     entry.material.visible = nextVisible;
     entry.material.opacity = nextOpacity;
+  }
+}
+
+function sameClippingPlanes(
+  current: THREE.Plane[] | null | undefined,
+  next: THREE.Plane[] | null,
+): boolean {
+  const normalizedCurrent = current ?? null;
+  if (normalizedCurrent === next) {
+    return true;
+  }
+  if (!normalizedCurrent || !next) {
+    return normalizedCurrent === next;
+  }
+  if (normalizedCurrent.length !== next.length) {
+    return false;
+  }
+  for (let index = 0; index < normalizedCurrent.length; index += 1) {
+    if (normalizedCurrent[index] !== next[index]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function applyCharacterUpperBodyClip(
+  entries: CharacterVisibilityMaterialEntry[],
+  plane: THREE.Plane | null,
+): void {
+  for (const entry of entries) {
+    const nextPlanes = plane ? [plane] : entry.baseClippingPlanes;
+    const nextClipShadows = plane ? true : entry.baseClipShadows;
+    if (!sameClippingPlanes(entry.material.clippingPlanes, nextPlanes)) {
+      entry.material.clippingPlanes = nextPlanes;
+      entry.material.needsUpdate = true;
+    }
+    if (entry.material.clipShadows !== nextClipShadows) {
+      entry.material.clipShadows = nextClipShadows;
+      entry.material.needsUpdate = true;
+    }
   }
 }
 
@@ -1249,6 +1478,99 @@ function updateCharacterWeaponMesh(
   }
 }
 
+/**
+ * After the weapon is positioned for ADS, override hand bone positions so they
+ * follow the weapon instead of staying at their skeletal animation positions.
+ *
+ * Standing ADS already looks correct, so we cache that pose as weapon-local
+ * offsets and reuse it during crouch ADS. This keeps crouch from inventing its
+ * own weird hand placement while still preserving the existing standing pose.
+ */
+function overrideHandBonesForADS(
+  rightHandBone: THREE.Bone | null,
+  leftHandBone: THREE.Bone | null,
+  weaponGroup: THREE.Group | null,
+  adsT: number,
+  firstPerson: boolean,
+  activeWeapon: WeaponKind,
+  allowStandingGripCapture: boolean,
+  standingAdsGripPoses: WeaponHandGripPoses,
+): void {
+  if (adsT <= 0.001 || !firstPerson || !weaponGroup || !weaponGroup.visible) {
+    return;
+  }
+
+  const cachedGripPoses = standingAdsGripPoses[activeWeapon];
+  const adsBlendT = THREE.MathUtils.smoothstep(adsT, 0.08, 0.98);
+
+  // _tempHipPos was set by updateCharacterWeaponMesh earlier this frame.
+  // It contains the weapon's world position at hip-fire (adsT=0).
+  _tempHandDisplacement.copy(weaponGroup.position).sub(_tempHipPos);
+  weaponGroup.updateWorldMatrix(true, false);
+  weaponGroup.getWorldQuaternion(_tempWeaponWorldQuat);
+
+  const handTargets = [
+    { bone: rightHandBone, cachedPose: cachedGripPoses.right },
+    { bone: leftHandBone, cachedPose: cachedGripPoses.left },
+  ];
+  for (const { bone, cachedPose } of handTargets) {
+    if (!bone || !bone.parent) continue;
+
+    bone.parent.updateWorldMatrix(true, false);
+    bone.updateWorldMatrix(false, false);
+
+    bone.getWorldPosition(_tempHandWorldPos);
+    _tempHandTargetWorldPos.copy(_tempHandWorldPos).add(_tempHandDisplacement);
+
+    if (cachedPose.position) {
+      _tempHandWeaponLocalPos.copy(cachedPose.position);
+      weaponGroup.localToWorld(_tempHandWeaponLocalPos);
+      _tempHandTargetWorldPos.lerp(_tempHandWeaponLocalPos, adsBlendT);
+    }
+
+    if (cachedPose.quaternion) {
+      bone.parent.getWorldQuaternion(_tempParentWorldQuat);
+      _tempHandTargetWorldQuat.copy(_tempWeaponWorldQuat).multiply(
+        cachedPose.quaternion,
+      );
+      _tempHandLocalQuat.copy(_tempParentWorldQuat).invert().multiply(
+        _tempHandTargetWorldQuat,
+      );
+      bone.quaternion.slerp(_tempHandLocalQuat, adsBlendT);
+    }
+
+    _tempParentInverseMatrix.copy(bone.parent.matrixWorld).invert();
+    _tempNewLocalPos.copy(_tempHandTargetWorldPos).applyMatrix4(_tempParentInverseMatrix);
+    bone.position.copy(_tempNewLocalPos);
+
+    if (
+      allowStandingGripCapture &&
+      adsT >= 0.98 &&
+      (!cachedPose.position || !cachedPose.quaternion)
+    ) {
+      bone.updateWorldMatrix(false, false);
+      bone.getWorldPosition(_tempHandWorldPos);
+      bone.getWorldQuaternion(_tempHandWorldQuat);
+      _tempHandWeaponLocalPos.copy(_tempHandWorldPos);
+      weaponGroup.worldToLocal(_tempHandWeaponLocalPos);
+      _tempHandLocalQuat.copy(_tempWeaponWorldQuat).invert().multiply(
+        _tempHandWorldQuat,
+      );
+
+      if (cachedPose.position) {
+        cachedPose.position.copy(_tempHandWeaponLocalPos);
+      } else {
+        cachedPose.position = _tempHandWeaponLocalPos.clone();
+      }
+      if (cachedPose.quaternion) {
+        cachedPose.quaternion.copy(_tempHandLocalQuat);
+      } else {
+        cachedPose.quaternion = _tempHandLocalQuat.clone();
+      }
+    }
+  }
+}
+
 function resolveDisplayedWeapon(
   weapon: WeaponSystem,
   switchState: WeaponSwitchState,
@@ -1399,6 +1721,13 @@ export const GameplayRuntime = forwardRef<
   onCriticalAssetsReadyChange,
   characterOverride,
   playerSpawnOverride,
+  multiplayerEnabled = false,
+  multiplayerLocalState,
+  multiplayerLocalPose,
+  confirmedShotEvent,
+  onMatchPlayerState,
+  onMatchFire,
+  onMatchReload,
   onPauseMenuToggle,
 }: GameplayRuntimeProps, ref) {
   const gl = useThree((state) => state.gl);
@@ -1474,6 +1803,10 @@ export const GameplayRuntime = forwardRef<
   const activeWeaponCallbackRef = useRef(onActiveWeaponChange);
   const sniperRechamberCallbackRef = useRef(onSniperRechamberChange);
   const aimingStateCallbackRef = useRef(onAimingStateChange);
+  const multiplayerEnabledRef = useRef(multiplayerEnabled);
+  const matchPlayerStateCallbackRef = useRef(onMatchPlayerState);
+  const matchFireCallbackRef = useRef(onMatchFire);
+  const matchReloadCallbackRef = useRef(onMatchReload);
 
   const perfAccumulatorRef = useRef(0);
   const perfFrameMsEmaRef = useRef(0);
@@ -1546,9 +1879,23 @@ export const GameplayRuntime = forwardRef<
     new Map<THREE.Mesh, THREE.Material | THREE.Material[]>(),
   );
   const characterGloveMeshesRef = useRef(new Set<THREE.Mesh>());
+  const characterRequiresUpperBodyClipRef = useRef(false);
+  const characterUpperBodyClipPlaneRef = useRef(
+    new THREE.Plane(FIRST_PERSON_UPPER_BODY_CLIP_NORMAL, 0),
+  );
   const lastReloadActiveRef = useRef<boolean | null>(null);
   const lastReloadWeaponKindRef = useRef<WeaponKind | null>(null);
+  const lastMultiplayerStateSentAtRef = useRef(0);
+  const multiplayerStateSeqRef = useRef(0);
+  const lastConfirmedShotIdRef = useRef<string | null>(null);
+  const localAuthoritativeAliveRef = useRef<boolean | null>(null);
   const characterWeaponAttachBoneRef = useRef<THREE.Bone | null>(null);
+  const characterLeftHandBoneRef = useRef<THREE.Bone | null>(null);
+  const characterRightHandBasePosRef = useRef<THREE.Vector3 | null>(null);
+  const characterLeftHandBasePosRef = useRef<THREE.Vector3 | null>(null);
+  const standingAdsGripPosesRef = useRef<WeaponHandGripPoses>(
+    createWeaponHandGripPoses(),
+  );
   const characterHeadBoneRef = useRef<THREE.Bone | null>(null);
   const characterUpperTorsoBoneRef = useRef<THREE.Bone | null>(null);
   const characterLowerTorsoBoneRef = useRef<THREE.Bone | null>(null);
@@ -1559,6 +1906,9 @@ export const GameplayRuntime = forwardRef<
   const tempBoneWorldQuatRef = useRef(new THREE.Quaternion());
   const tempBackWeaponAnchorWorldRef = useRef(new THREE.Vector3());
   const tempBackWeaponAnchorQuatRef = useRef(new THREE.Quaternion());
+  const tempUpperBodyClipPointRef = useRef(new THREE.Vector3());
+  const tempUpperBodyClipLowerRef = useRef(new THREE.Vector3());
+  const tempUpperBodyClipUpperRef = useRef(new THREE.Vector3());
   const characterWeaponAnchorRef = useRef<
     {
       position: THREE.Vector3;
@@ -1589,6 +1939,14 @@ export const GameplayRuntime = forwardRef<
   const transitionFrontLookRef = useRef(new THREE.Vector3());
   const transitionBackPosRef = useRef(new THREE.Vector3());
   const transitionBackLookRef = useRef(new THREE.Vector3());
+
+  useEffect(() => {
+    const previous = gl.localClippingEnabled;
+    gl.localClippingEnabled = true;
+    return () => {
+      gl.localClippingEnabled = previous;
+    };
+  }, [gl]);
 
   useEffect(() => {
     targetsRef.current = targets;
@@ -1635,8 +1993,28 @@ export const GameplayRuntime = forwardRef<
   }, [onAimingStateChange]);
 
   useEffect(() => {
+    multiplayerEnabledRef.current = multiplayerEnabled;
+  }, [multiplayerEnabled]);
+
+  useEffect(() => {
+    matchPlayerStateCallbackRef.current = onMatchPlayerState;
+  }, [onMatchPlayerState]);
+
+  useEffect(() => {
+    matchFireCallbackRef.current = onMatchFire;
+  }, [onMatchFire]);
+
+  useEffect(() => {
+    matchReloadCallbackRef.current = onMatchReload;
+  }, [onMatchReload]);
+
+  useEffect(() => {
     if (!characterModel) {
       characterWeaponAttachBoneRef.current = null;
+      characterLeftHandBoneRef.current = null;
+      characterRightHandBasePosRef.current = null;
+      characterLeftHandBasePosRef.current = null;
+      standingAdsGripPosesRef.current = createWeaponHandGripPoses();
       characterHeadBoneRef.current = null;
       characterUpperTorsoBoneRef.current = null;
       characterLowerTorsoBoneRef.current = null;
@@ -1645,11 +2023,15 @@ export const GameplayRuntime = forwardRef<
       characterLowerTorsoBaseQuatRef.current = null;
       characterWeaponAnchorRef.current = null;
       backWeaponAnchorRef.current = null;
+      characterRequiresUpperBodyClipRef.current = false;
       characterVisibilityMaterialsRef.current = [];
       return;
     }
 
+    standingAdsGripPosesRef.current = createWeaponHandGripPoses();
+
     let rightHandBone: THREE.Bone | null = null;
+    let leftHandBone: THREE.Bone | null = null;
     let headBone: THREE.Bone | null = null;
     let upperTorsoBone: THREE.Bone | null = null;
     let upperTorsoPriority = Number.POSITIVE_INFINITY;
@@ -1670,6 +2052,20 @@ export const GameplayRuntime = forwardRef<
           normalized.includes("hand_r"))
       ) {
         rightHandBone = bone;
+      }
+      if (
+        !leftHandBone &&
+        (normalized === "l_hand" ||
+          normalized === "lefthand" ||
+          normalized === "left_hand" ||
+          normalized === "hand_l" ||
+          normalized === "hand.l" ||
+          normalized.includes("l_hand") ||
+          normalized.includes("left_hand") ||
+          normalized.includes("lefthand") ||
+          normalized.includes("hand_l"))
+      ) {
+        leftHandBone = bone;
       }
       if (
         !headBone &&
@@ -1698,6 +2094,7 @@ export const GameplayRuntime = forwardRef<
     });
 
     const resolvedRightHandBone = rightHandBone as THREE.Bone | null;
+    const resolvedLeftHandBone = leftHandBone as THREE.Bone | null;
     const resolvedHeadBone = headBone as THREE.Bone | null;
     const resolvedUpperTorsoBone = upperTorsoBone as THREE.Bone | null;
 
@@ -1722,6 +2119,13 @@ export const GameplayRuntime = forwardRef<
     }
 
     characterWeaponAttachBoneRef.current = resolvedRightHandBone;
+    characterLeftHandBoneRef.current = resolvedLeftHandBone;
+    characterRightHandBasePosRef.current = resolvedRightHandBone
+      ? resolvedRightHandBone.position.clone()
+      : null;
+    characterLeftHandBasePosRef.current = resolvedLeftHandBone
+      ? resolvedLeftHandBone.position.clone()
+      : null;
     characterHeadBoneRef.current = resolvedHeadBone;
     characterUpperTorsoBoneRef.current = resolvedUpperTorsoBone;
     characterLowerTorsoBoneRef.current = resolvedLowerTorsoBone;
@@ -1751,18 +2155,37 @@ export const GameplayRuntime = forwardRef<
 
   useEffect(() => {
     if (!characterModel) {
+      characterRequiresUpperBodyClipRef.current = false;
       characterVisibilityMaterialsRef.current = [];
       return;
     }
 
-    const visibilityMaterials = collectCharacterVisibilityMaterials(
+    const visibilityCollection = collectCharacterVisibilityMaterials(
       characterModel,
     );
-    characterVisibilityMaterialsRef.current = visibilityMaterials;
-    applyCharacterFirstPersonMask(visibilityMaterials, 0, 1, 1, 1);
+    characterRequiresUpperBodyClipRef.current = !visibilityCollection.hasGloveParts;
+    characterVisibilityMaterialsRef.current = visibilityCollection.entries;
+    applyCharacterFirstPersonMask(
+      visibilityCollection.entries,
+      0,
+      1,
+      1,
+      0,
+      1,
+    );
+    applyCharacterUpperBodyClip(visibilityCollection.entries, null);
 
     return () => {
-      applyCharacterFirstPersonMask(visibilityMaterials, 0, 1, 1, 1);
+      applyCharacterFirstPersonMask(
+        visibilityCollection.entries,
+        0,
+        1,
+        1,
+        0,
+        1,
+      );
+      applyCharacterUpperBodyClip(visibilityCollection.entries, null);
+      characterRequiresUpperBodyClipRef.current = false;
       characterVisibilityMaterialsRef.current = [];
     };
   }, [characterModel]);
@@ -1796,8 +2219,10 @@ export const GameplayRuntime = forwardRef<
         const mats = ([] as THREE.Material[]).concat(
           mesh.material as THREE.Material | THREE.Material[],
         );
-        if (mats.some((m) =>
-          m.name.trim().toLowerCase().includes("glove"),
+        if (mats.some((material) =>
+          resolveFirstPersonVisibilityCategory(
+            `${mesh.name ?? ""} ${material.name ?? ""}`.trim(),
+          ) === "glove"
         )) {
           gloveMeshes.add(mesh);
         }
@@ -1992,7 +2417,7 @@ export const GameplayRuntime = forwardRef<
       : [...spawnPosition];
     const inventorySnapshot = inventoryRef.current.getSnapshot(
       playerPositionTuple,
-      baseSnapshot.inventoryPanelOpen,
+      multiplayerEnabledRef.current ? false : baseSnapshot.inventoryPanelOpen,
       baseSnapshot.inventoryPanelMode,
     );
     if (ammoVisualRevisionRef.current !== inventorySnapshot.revision) {
@@ -2009,8 +2434,9 @@ export const GameplayRuntime = forwardRef<
     const nowMs = performance.now();
     playerSnapshotCallbackRef.current({
       ...baseSnapshot,
-      canInteract: inventorySnapshot.nearby.length > 0,
-      interactWeaponKind: nearestWeaponKind,
+      canInteract: multiplayerEnabledRef.current ? false : inventorySnapshot.nearby.length > 0,
+      interactWeaponKind: multiplayerEnabledRef.current ? null : nearestWeaponKind,
+      inventoryPanelOpen: multiplayerEnabledRef.current ? false : baseSnapshot.inventoryPanelOpen,
       inventory: inventorySnapshot,
       weaponLoadout: weaponRef.current.getLoadoutState(),
       weaponReload: weaponRef.current.getReloadState(nowMs),
@@ -2129,6 +2555,14 @@ export const GameplayRuntime = forwardRef<
   const handleAction = useCallback(
     (action: string) => {
       const weapon = weaponRef.current;
+      if (
+        multiplayerEnabledRef.current &&
+        (action === "equipSniper" || action === "unarm" || action === "pickup" || action === "drop")
+      ) {
+        emitPlayerSnapshot();
+        return;
+      }
+
       if (action === "equipRifle") {
         audioRef.current.cancelReload();
         audioRef.current.cancelSniperShelling();
@@ -2153,7 +2587,10 @@ export const GameplayRuntime = forwardRef<
         return;
       }
       if (action === "reload") {
-        weapon.beginReload(performance.now());
+        const reloadStarted = weapon.beginReload(performance.now());
+        if (reloadStarted && multiplayerEnabledRef.current) {
+          matchReloadCallbackRef.current?.(`reload-${Math.floor(performance.now())}`);
+        }
         emitPlayerSnapshot();
         return;
       }
@@ -2231,6 +2668,118 @@ export const GameplayRuntime = forwardRef<
     latestControllerSnapshotRef.current = snapshot;
     emitPlayerSnapshot(snapshot);
   }, [emitPlayerSnapshot]);
+
+  useEffect(() => {
+    if (!multiplayerEnabled || !multiplayerLocalState) {
+      return;
+    }
+
+    weaponRef.current.syncMultiplayerRifleState({
+      magAmmo: multiplayerLocalState.magAmmo,
+      reloadEndsAtMs: multiplayerLocalState.reloadingUntil === null
+        ? null
+        : Date.parse(multiplayerLocalState.reloadingUntil),
+      nowMs: performance.now(),
+    });
+    emitPlayerSnapshot();
+  }, [
+    emitPlayerSnapshot,
+    multiplayerEnabled,
+    multiplayerLocalState?.magAmmo,
+    multiplayerLocalState?.reloadingUntil,
+  ]);
+
+  useEffect(() => {
+    if (!multiplayerEnabled || !multiplayerLocalPose) {
+      localAuthoritativeAliveRef.current = multiplayerLocalPose?.alive ?? null;
+      return;
+    }
+
+    const controller = controllerRef.current;
+    if (!controller) {
+      localAuthoritativeAliveRef.current = multiplayerLocalPose.alive;
+      return;
+    }
+
+    const targetPosition = tempImpactPositionRef.current.set(
+      multiplayerLocalPose.x,
+      multiplayerLocalPose.y,
+      multiplayerLocalPose.z,
+    );
+    const currentPosition = controller.getPosition();
+    const justRespawned = multiplayerLocalPose.alive &&
+      localAuthoritativeAliveRef.current === false;
+    const farFromAuthoritativePose = currentPosition.distanceToSquared(targetPosition) > 9;
+
+    if (justRespawned || farFromAuthoritativePose) {
+      controller.setPose(
+        targetPosition,
+        multiplayerLocalPose.yaw,
+        multiplayerLocalPose.pitch,
+      );
+      emitPlayerSnapshot();
+    }
+
+    localAuthoritativeAliveRef.current = multiplayerLocalPose.alive;
+  }, [
+    emitPlayerSnapshot,
+    multiplayerEnabled,
+    multiplayerLocalPose?.alive,
+    multiplayerLocalPose?.pitch,
+    multiplayerLocalPose?.x,
+    multiplayerLocalPose?.y,
+    multiplayerLocalPose?.yaw,
+    multiplayerLocalPose?.z,
+  ]);
+
+  useEffect(() => {
+    if (!multiplayerEnabled || !confirmedShotEvent) {
+      return;
+    }
+    if (lastConfirmedShotIdRef.current === confirmedShotEvent.shotId) {
+      return;
+    }
+
+    lastConfirmedShotIdRef.current = confirmedShotEvent.shotId;
+    const nowMs = performance.now();
+    const origin = tempTracerOriginRef.current.set(
+      confirmedShotEvent.origin[0],
+      confirmedShotEvent.origin[1],
+      confirmedShotEvent.origin[2],
+    );
+    const direction = tempFireDirectionRef.current.set(
+      confirmedShotEvent.direction[0],
+      confirmedShotEvent.direction[1],
+      confirmedShotEvent.direction[2],
+    ).normalize();
+    const end = tempEndRef.current.copy(origin);
+
+    if (confirmedShotEvent.hit) {
+      end.set(
+        confirmedShotEvent.hit.impactPoint[0],
+        confirmedShotEvent.hit.impactPoint[1],
+        confirmedShotEvent.hit.impactPoint[2],
+      );
+      tempImpactNormalRef.current.copy(direction).multiplyScalar(-1);
+      pushBloodSpray(
+        end,
+        tempImpactNormalRef.current,
+        confirmedShotEvent.hit.zone,
+      );
+    } else {
+      end.addScaledVector(direction, TRACER_DISTANCE);
+    }
+
+    if (confirmedShotEvent.userId !== multiplayerLocalState?.userId) {
+      audioRef.current.playGunshot("rifle");
+      weaponRef.current.setTracer(origin, end, nowMs);
+    }
+  }, [
+    confirmedShotEvent,
+    multiplayerEnabled,
+    multiplayerLocalState?.userId,
+    pushBloodSpray,
+  ]);
 
   const handleTriggerChange = useCallback((firing: boolean) => {
     rifleFireIntentRef.current = firing;
@@ -2329,6 +2878,10 @@ export const GameplayRuntime = forwardRef<
     lastSniperRechamberProgressStepRef.current = 100;
     lastReloadActiveRef.current = false;
     lastReloadWeaponKindRef.current = null;
+    lastMultiplayerStateSentAtRef.current = 0;
+    multiplayerStateSeqRef.current = 0;
+    lastConfirmedShotIdRef.current = null;
+    localAuthoritativeAliveRef.current = null;
     lastHudSyncKeyRef.current = "";
     practiceAmmoRespawnAtRef.current = null;
     bulletHittableMeshesRef.current = [];
@@ -2417,6 +2970,10 @@ export const GameplayRuntime = forwardRef<
   const handleMoveInventoryItem = useCallback((
     request: InventoryMoveRequest,
   ): InventoryMoveResult => {
+    if (multiplayerEnabledRef.current) {
+      return { ok: false, message: "Inventory shuffling is disabled during live multiplayer." };
+    }
+
     const playerPosition = controllerRef.current?.getPosition();
     const playerTuple: [number, number, number] = playerPosition
       ? [playerPosition.x, playerPosition.y, playerPosition.z]
@@ -2519,6 +3076,10 @@ export const GameplayRuntime = forwardRef<
   const handleQuickMoveInventoryItem = useCallback((
     location: InventoryMoveLocation,
   ): InventoryMoveResult => {
+    if (multiplayerEnabledRef.current) {
+      return { ok: false, message: "Inventory shuffling is disabled during live multiplayer." };
+    }
+
     const playerPosition = controllerRef.current?.getPosition();
     const playerTuple: [number, number, number] = playerPosition
       ? [playerPosition.x, playerPosition.y, playerPosition.z]
@@ -2762,6 +3323,26 @@ export const GameplayRuntime = forwardRef<
       : null;
     const adsActive = controller.isADS();
     const firstPerson = controller.isFirstPerson();
+    if (
+      multiplayerEnabledRef.current &&
+      nowMs - lastMultiplayerStateSentAtRef.current >= 50
+    ) {
+      lastMultiplayerStateSentAtRef.current = nowMs;
+      multiplayerStateSeqRef.current += 1;
+      matchPlayerStateCallbackRef.current?.({
+        seq: multiplayerStateSeqRef.current,
+        x: playerPosition.x,
+        y: playerPosition.y,
+        z: playerPosition.z,
+        yaw: controller.getAimYaw(),
+        pitch: controller.getPitch(),
+        moving,
+        sprinting,
+        crouched,
+        grounded,
+        ads: adsActive,
+      });
+    }
     const moveInput = controller.getMoveInput();
     const planarVelocity = controller.getPlanarVelocity();
     const planarSpeed = controller.getPlanarSpeed();
@@ -3515,12 +4096,16 @@ export const GameplayRuntime = forwardRef<
       downLookAmount *
       (controller.isGrounded() ? 1 : 0);
     const gloveVisibility = 1;
+    const upperBodyVisibility = characterRequiresUpperBodyClipRef.current
+      ? shoeVisibility
+      : 0;
     const headVisibility = 1 - headPartMaskBlend;
     applyCharacterFirstPersonMask(
       characterVisibilityMaterialsRef.current,
       overallMaskBlend,
       gloveVisibility,
       shoeVisibility,
+      upperBodyVisibility,
       headVisibility,
     );
 
@@ -3529,6 +4114,7 @@ export const GameplayRuntime = forwardRef<
     // Glove meshes are excluded so hands keep their original textures.
     const outlineBlend = overallMaskBlend * downLookAmount;
     const outlineMaterial = characterOutlineMaterialRef.current;
+    let activeUpperBodyClipPlane: THREE.Plane | null = null;
     const originalMaterialsMap = characterMeshOriginalMaterialsRef.current;
     const gloveMeshes = characterGloveMeshesRef.current;
     if (outlineMaterial && originalMaterialsMap.size > 0) {
@@ -3575,6 +4161,18 @@ export const GameplayRuntime = forwardRef<
       const lowerTorsoBaseQuat = characterLowerTorsoBaseQuatRef.current;
       if (lowerTorsoBone && lowerTorsoBaseQuat) {
         lowerTorsoBone.quaternion.copy(lowerTorsoBaseQuat);
+      }
+      // Restore hand bone positions to bind pose before the mixer runs,
+      // so the mixer starts from a clean state and can properly animate
+      // hand positions (e.g. crouch pose). Without this, the ADS override
+      // from the previous frame would persist and corrupt the mixer output.
+      const rhBone = characterWeaponAttachBoneRef.current;
+      const lhBone = characterLeftHandBoneRef.current;
+      if (rhBone && characterRightHandBasePosRef.current) {
+        rhBone.position.copy(characterRightHandBasePosRef.current);
+      }
+      if (lhBone && characterLeftHandBasePosRef.current) {
+        lhBone.position.copy(characterLeftHandBasePosRef.current);
       }
       const mixer = characterModel.userData.__mixer as
         | THREE.AnimationMixer
@@ -3737,7 +4335,59 @@ export const GameplayRuntime = forwardRef<
       }
     }
 
+    const shouldApplyUpperBodyClip = characterRequiresUpperBodyClipRef.current &&
+      presentation.phase === "playing" &&
+      overallMaskBlend > 0.001;
+    if (shouldApplyUpperBodyClip) {
+      const playerChar = playerCharacterRef.current;
+      if (playerChar) {
+        playerChar.updateMatrixWorld(true);
+        const clipPoint = tempUpperBodyClipPointRef.current;
+        const upperClipBone = characterUpperTorsoBoneRef.current;
+        const lowerClipBone = characterLowerTorsoBoneRef.current;
+        if (upperClipBone) {
+          upperClipBone.getWorldPosition(tempUpperBodyClipUpperRef.current);
+          if (lowerClipBone) {
+            lowerClipBone.getWorldPosition(tempUpperBodyClipLowerRef.current);
+            clipPoint.copy(tempUpperBodyClipLowerRef.current).lerp(
+              tempUpperBodyClipUpperRef.current,
+              FIRST_PERSON_UPPER_BODY_CLIP_BLEND,
+            );
+          } else {
+            clipPoint.copy(tempUpperBodyClipUpperRef.current);
+          }
+          clipPoint.y -= FIRST_PERSON_UPPER_BODY_CLIP_OFFSET;
+        } else {
+          playerChar.getWorldPosition(clipPoint);
+          clipPoint.y += FIRST_PERSON_UPPER_BODY_FALLBACK_HEIGHT;
+        }
+        activeUpperBodyClipPlane = characterUpperBodyClipPlaneRef.current;
+        activeUpperBodyClipPlane.setFromNormalAndCoplanarPoint(
+          FIRST_PERSON_UPPER_BODY_CLIP_NORMAL,
+          clipPoint,
+        );
+      }
+    }
+    applyCharacterUpperBodyClip(
+      characterVisibilityMaterialsRef.current,
+      activeUpperBodyClipPlane,
+    );
+    if (outlineMaterial) {
+      const nextPlanes = activeUpperBodyClipPlane ? [activeUpperBodyClipPlane] : null;
+      if (!sameClippingPlanes(outlineMaterial.clippingPlanes, nextPlanes)) {
+        outlineMaterial.clippingPlanes = nextPlanes;
+        outlineMaterial.needsUpdate = true;
+      }
+      const nextClipShadows = !!activeUpperBodyClipPlane;
+      if (outlineMaterial.clipShadows !== nextClipShadows) {
+        outlineMaterial.clipShadows = nextClipShadows;
+        outlineMaterial.needsUpdate = true;
+      }
+    }
+
     const switchState = weapon.getSwitchState(nowMs);
+    const activeWeapon = weapon.getActiveWeapon();
+
     const handBone = characterWeaponAttachBoneRef.current;
     let characterWeaponAnchor = characterWeaponAnchorRef.current;
     if (handBone) {
@@ -3768,8 +4418,19 @@ export const GameplayRuntime = forwardRef<
       firstPerson,
       controller.getAdsLerp(),
       camera,
-      weapon.getActiveWeapon(),
+      activeWeapon,
       presentation.phase === "menu" ? "rifle" : null,
+    );
+
+    overrideHandBonesForADS(
+      characterWeaponAttachBoneRef.current,
+      characterLeftHandBoneRef.current,
+      characterWeaponRef.current,
+      controller.getAdsLerp(),
+      firstPerson,
+      activeWeapon,
+      !crouched && crouchTransitionState === "idle",
+      standingAdsGripPosesRef.current,
     );
 
     const weaponSprinting = slideState.active || (!weaponEquipped
@@ -3856,6 +4517,36 @@ export const GameplayRuntime = forwardRef<
       audio.playGunshot(shot.weaponType);
       if (shot.recoilPitchRadians !== 0 || shot.recoilYawRadians !== 0) {
         controller.addRecoil(shot.recoilPitchRadians, shot.recoilYawRadians);
+      }
+
+      if (multiplayerEnabledRef.current) {
+        const shotId = `shot-${Math.floor(nowMs)}-${shot.shotIndex}`;
+        matchFireCallbackRef.current?.(shotId);
+
+        const tracerOrigin = tempTracerOriginRef.current;
+        const muzzle = characterMuzzleRef.current;
+        const usedMuzzle = !!muzzle && !!playerChar?.visible;
+        if (usedMuzzle) {
+          muzzle.getWorldPosition(tracerOrigin);
+        } else {
+          tracerOrigin.copy(shot.origin);
+        }
+
+        const fireDirection = tempFireDirectionRef.current.copy(shot.direction).normalize();
+        const tracerEnd = tempEndRef.current
+          .copy(tracerOrigin)
+          .addScaledVector(fireDirection, TRACER_DISTANCE);
+
+        if (
+          !usedMuzzle &&
+          tracerOrigin.distanceToSquared(tracerEnd) >
+            (TRACER_CAMERA_START_OFFSET + 0.04) ** 2
+        ) {
+          tracerOrigin.addScaledVector(fireDirection, TRACER_CAMERA_START_OFFSET);
+        }
+
+        weapon.setTracer(tracerOrigin, tracerEnd, nowMs);
+        continue;
       }
 
       const cameraTargetHit = raycastVisibleTargets(

@@ -58,6 +58,15 @@ export function loadGlbAsset(url: string): Promise<THREE.Group | null> {
   return request;
 }
 
+function isGltfLikeAsset(url: string): boolean {
+  const normalizedUrl = url.split("?")[0].split("#")[0].toLowerCase();
+  return normalizedUrl.endsWith(".glb") || normalizedUrl.endsWith(".gltf");
+}
+
+export function loadModelAsset(url: string): Promise<THREE.Group | null> {
+  return isGltfLikeAsset(url) ? loadGlbAsset(url) : loadFbxAsset(url);
+}
+
 export function loadGlbWithAnimations(url: string): Promise<GltfResult | null> {
   const cacheKey = encodeURI(url);
   const cached = gltfFullCache.get(cacheKey);

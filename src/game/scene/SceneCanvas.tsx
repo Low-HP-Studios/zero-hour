@@ -13,6 +13,12 @@ import { Perf } from "r3f-perf";
 import * as THREE from "three";
 import type { AudioVolumeSettings } from "../Audio";
 import { markBootEvent } from "../boot-trace";
+import type {
+  OnlineMatchPlayerInput,
+  OnlineMatchPlayerState,
+  OnlineRealtimePlayerState,
+  OnlineShotFiredEvent,
+} from "../online/types";
 import {
   getSkyById,
   type SceneLightingPreset,
@@ -56,6 +62,7 @@ import {
   CHARACTER_YAW_OFFSET,
   CANVAS_GL,
   TARGET_FLASH_MS,
+  type CharacterAnimState,
 } from "./scene-constants";
 
 export type { HitMarkerKind, AimingState, ShotFiredState };
@@ -179,43 +186,100 @@ type SceneProps = {
   onBootReady: () => void;
   characterOverride?: CharacterModelOverride;
   playerSpawnOverride?: PracticeMapDefinition["playerSpawn"];
-  remoteAvatar?: {
-    position: [number, number, number];
-    yaw: number;
+  remotePlayer?: {
+    state: OnlineRealtimePlayerState;
     characterOverride: CharacterModelOverride;
   } | null;
+  multiplayerEnabled?: boolean;
+  multiplayerLocalState?: OnlineMatchPlayerState | null;
+  multiplayerLocalPose?: OnlineRealtimePlayerState | null;
+  confirmedShotEvent?: OnlineShotFiredEvent | null;
+  onMatchPlayerState?: (state: OnlineMatchPlayerInput) => void;
+  onMatchFire?: (shotId: string) => void;
+  onMatchReload?: (requestId: string) => void;
   onPauseMenuToggle?: () => void;
 };
 
-function StaticRemoteAvatar({
-  position,
-  yaw,
+function resolveRemoteAnimState(state: OnlineRealtimePlayerState): CharacterAnimState {
+  if (!state.alive) {
+    return "rifleIdle";
+  }
+  if (state.crouched && state.moving) {
+    return "rifleCrouchWalk";
+  }
+  if (state.crouched) {
+    return "rifleCrouchIdle";
+  }
+  if (state.sprinting && state.moving) {
+    return "rifleRun";
+  }
+  if (state.moving && state.ads) {
+    return "rifleAimWalk";
+  }
+  if (state.moving) {
+    return "rifleJog";
+  }
+  if (state.ads) {
+    return "rifleAimHold";
+  }
+  return "rifleIdle";
+}
+
+function RemotePlayerAvatar({
+  state,
   characterOverride,
 }: {
-  position: [number, number, number];
-  yaw: number;
+  state: OnlineRealtimePlayerState;
   characterOverride: CharacterModelOverride;
 }) {
-  const { model } = useCharacterModel(characterOverride);
+  const { model, setAnimState } = useCharacterModel(characterOverride);
+  const positionRef = useRef(
+    new THREE.Vector3(state.x, state.y, state.z),
+  );
+  const targetPositionRef = useRef(
+    new THREE.Vector3(state.x, state.y, state.z),
+  );
+  const yawRef = useRef(state.yaw);
+  const targetYawRef = useRef(state.yaw);
+
+  useEffect(() => {
+    targetPositionRef.current.set(state.x, state.y, state.z);
+    targetYawRef.current = state.yaw;
+    setAnimState(resolveRemoteAnimState(state), {
+      locomotionScale: state.sprinting ? 1.12 : 1,
+    });
+  }, [
+    setAnimState,
+    state,
+  ]);
 
   useFrame((_state, delta) => {
     const mixer = model?.userData.__mixer as THREE.AnimationMixer | undefined;
     if (mixer) {
       mixer.update(Math.min(delta, 1 / 20));
     }
+
+    positionRef.current.lerp(
+      targetPositionRef.current,
+      1 - Math.exp(-Math.min(delta, 1 / 15) * 14),
+    );
+    yawRef.current = THREE.MathUtils.lerp(
+      yawRef.current,
+      targetYawRef.current,
+      1 - Math.exp(-Math.min(delta, 1 / 15) * 16),
+    );
+
+    if (model) {
+      model.position.copy(positionRef.current);
+      model.rotation.set(0, yawRef.current + CHARACTER_YAW_OFFSET, 0);
+    }
   });
 
-  if (!model) {
+  if (!model || !state.alive) {
     return null;
   }
 
-  return (
-    <primitive
-      object={model}
-      position={position}
-      rotation={[0, yaw + CHARACTER_YAW_OFFSET, 0]}
-    />
-  );
+  return <primitive object={model} />;
 }
 
 function waitForAnimationFrame() {
@@ -366,7 +430,14 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
   onBootReady,
   characterOverride,
   playerSpawnOverride,
-  remoteAvatar,
+  remotePlayer,
+  multiplayerEnabled = false,
+  multiplayerLocalState,
+  multiplayerLocalPose,
+  confirmedShotEvent,
+  onMatchPlayerState,
+  onMatchFire,
+  onMatchReload,
   onPauseMenuToggle,
 }: SceneProps, ref) {
   const [canvasEpoch, setCanvasEpoch] = useState(0);
@@ -670,12 +741,11 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
         count={practiceMap.supportsStressMode ? stressCount : 0}
         shadows={settings.shadows}
       />
-      {remoteAvatar
+      {remotePlayer
         ? (
-          <StaticRemoteAvatar
-            position={remoteAvatar.position}
-            yaw={remoteAvatar.yaw}
-            characterOverride={remoteAvatar.characterOverride}
+          <RemotePlayerAvatar
+            state={remotePlayer.state}
+            characterOverride={remotePlayer.characterOverride}
           />
         )
         : null}
@@ -711,6 +781,13 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
         onCriticalAssetsReadyChange={setRuntimeAssetsReady}
         characterOverride={characterOverride}
         playerSpawnOverride={playerSpawnOverride}
+        multiplayerEnabled={multiplayerEnabled}
+        multiplayerLocalState={multiplayerLocalState}
+        multiplayerLocalPose={multiplayerLocalPose}
+        confirmedShotEvent={confirmedShotEvent}
+        onMatchPlayerState={onMatchPlayerState}
+        onMatchFire={onMatchFire}
+        onMatchReload={onMatchReload}
         onPauseMenuToggle={onPauseMenuToggle}
       />
       <SceneBootCompiler enabled={compileReady} onReady={onBootReady} />

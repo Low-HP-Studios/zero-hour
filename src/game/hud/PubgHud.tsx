@@ -10,6 +10,7 @@ import "./pubg-hud.css";
 
 type PubgHudProps = {
   player: PlayerSnapshot;
+  health: number;
   visible: boolean;
 };
 
@@ -30,7 +31,7 @@ const CONTROLLER_HELP_ROWS = [
   { button: "Menu", action: "Pause" },
 ] as const;
 
-function PubgHudInner({ player, visible }: PubgHudProps) {
+function PubgHudInner({ player, health, visible }: PubgHudProps) {
   const [models, setModels] = useState<WeaponModelsState>({
     rifle: null,
     sniper: null,
@@ -109,7 +110,7 @@ function PubgHudInner({ player, visible }: PubgHudProps) {
             reloadProgress={weaponReload.progress}
           />
         ) : null}
-        <HealthBar health={100} maxHealth={100} />
+        <HealthBar health={health} maxHealth={100} />
       </div>
     </>
   );

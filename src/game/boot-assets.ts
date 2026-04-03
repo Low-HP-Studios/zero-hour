@@ -2,6 +2,7 @@ import {
   loadGlbAsset,
   loadFbxAnimation,
   loadFbxAsset,
+  loadModelAsset,
   preloadTextureAsset,
   type PreloadManifestEntry,
 } from "./AssetLoader";
@@ -118,7 +119,7 @@ export function createDeferredBootPreloadManifest(
       label: "Target character",
       weight: 6,
       bucket: "asset",
-      load: () => loadFbxAsset(TARGET_CHARACTER_MODEL_URL),
+      load: () => loadModelAsset(TARGET_CHARACTER_MODEL_URL),
     },
     {
       id: "target:idle",

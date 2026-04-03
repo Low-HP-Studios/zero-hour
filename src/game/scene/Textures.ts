@@ -524,3 +524,247 @@ export function createSpaceFloorTexture(): THREE.CanvasTexture | null {
   texture.needsUpdate = true;
   return texture;
 }
+
+export function createTdmTileTexture(): THREE.CanvasTexture | null {
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  const size = 512;
+  const tile = 64;
+  const grout = 5;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    return null;
+  }
+
+  const rng = createSeededRandom(240913);
+  const base = ctx.createLinearGradient(0, 0, size, size);
+  base.addColorStop(0, "#b8b3ab");
+  base.addColorStop(0.5, "#969189");
+  base.addColorStop(1, "#747068");
+  ctx.fillStyle = base;
+  ctx.fillRect(0, 0, size, size);
+
+  for (let y = 0; y < size; y += tile) {
+    for (let x = 0; x < size; x += tile) {
+      const shade = 118 + Math.floor(rng() * 42);
+      const warm = 8 + Math.floor(rng() * 10);
+      ctx.fillStyle = `rgb(${shade + warm}, ${shade + 2}, ${shade - 6})`;
+      ctx.fillRect(x, y, tile - grout, tile - grout);
+
+      const highlight = ctx.createLinearGradient(x, y, x + tile, y + tile);
+      highlight.addColorStop(0, "rgba(255,255,255,0.14)");
+      highlight.addColorStop(0.45, "rgba(255,255,255,0.03)");
+      highlight.addColorStop(1, "rgba(0,0,0,0.10)");
+      ctx.fillStyle = highlight;
+      ctx.fillRect(x, y, tile - grout, tile - grout);
+
+      for (let i = 0; i < 16; i += 1) {
+        const px = x + rng() * (tile - grout);
+        const py = y + rng() * (tile - grout);
+        const radius = 0.8 + rng() * 1.8;
+        const alpha = 0.03 + rng() * 0.06;
+        ctx.beginPath();
+        ctx.fillStyle = `rgba(40, 38, 36, ${alpha})`;
+        ctx.arc(px, py, radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+
+  ctx.strokeStyle = "rgba(54, 51, 47, 0.85)";
+  ctx.lineWidth = grout;
+  for (let x = tile - grout / 2; x < size; x += tile) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, size);
+    ctx.stroke();
+  }
+  for (let y = tile - grout / 2; y < size; y += tile) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(size, y);
+    ctx.stroke();
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(6, 6);
+  texture.needsUpdate = true;
+  return texture;
+}
+
+export function createTdmBrickTexture(): THREE.CanvasTexture | null {
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  const width = 512;
+  const height = 512;
+  const brickW = 128;
+  const brickH = 58;
+  const mortar = 4;
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    return null;
+  }
+
+  const rng = createSeededRandom(711203);
+  ctx.fillStyle = "#989086";
+  ctx.fillRect(0, 0, width, height);
+
+  for (let row = 0, y = 0; y < height + brickH; row += 1, y += brickH) {
+    const offset = row % 2 === 0 ? 0 : brickW / 2;
+    for (let x = -offset; x < width + brickW; x += brickW) {
+      const tone = 138 + Math.floor(rng() * 42);
+      const warm = 10 + Math.floor(rng() * 16);
+      const brickWidth = brickW - mortar;
+      const brickHeight = brickH - mortar;
+      const brickX = x + mortar / 2;
+      const brickY = y + mortar / 2;
+
+      ctx.fillStyle = `rgb(${tone + warm}, ${tone + 8}, ${tone - 2})`;
+      ctx.fillRect(brickX, brickY, brickWidth, brickHeight);
+
+      const shade = ctx.createLinearGradient(
+        brickX,
+        brickY,
+        brickX,
+        brickY + brickHeight,
+      );
+      shade.addColorStop(0, "rgba(255,255,255,0.15)");
+      shade.addColorStop(0.5, "rgba(255,255,255,0.04)");
+      shade.addColorStop(1, "rgba(0,0,0,0.10)");
+      ctx.fillStyle = shade;
+      ctx.fillRect(brickX, brickY, brickWidth, brickHeight);
+
+      ctx.fillStyle = "rgba(255,255,255,0.08)";
+      ctx.fillRect(brickX, brickY, brickWidth, 2);
+      ctx.fillStyle = "rgba(0,0,0,0.06)";
+      ctx.fillRect(brickX, brickY + brickHeight - 2, brickWidth, 2);
+
+      for (let i = 0; i < 10; i += 1) {
+        const px = brickX + rng() * brickWidth;
+        const py = brickY + rng() * brickHeight;
+        const radius = 0.6 + rng() * 1.4;
+        const alpha = 0.04 + rng() * 0.07;
+        ctx.beginPath();
+        ctx.fillStyle = `rgba(62, 54, 50, ${alpha})`;
+        ctx.arc(px, py, radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+
+  for (let i = 0; i < 50; i += 1) {
+    const x = rng() * width;
+    const y = rng() * height;
+    const length = 12 + rng() * 26;
+    const angle = rng() > 0.5 ? 0 : Math.PI / 2;
+    ctx.strokeStyle = `rgba(255,255,255,${0.03 + rng() * 0.05})`;
+    ctx.lineWidth = 1 + rng() * 1.2;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(
+      x + Math.cos(angle) * length,
+      y + Math.sin(angle) * length,
+    );
+    ctx.stroke();
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(4, 4);
+  texture.needsUpdate = true;
+  return texture;
+}
+
+export function createTdmContainerTexture(): THREE.CanvasTexture | null {
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  const width = 512;
+  const height = 512;
+  const ribSpacing = 28;
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    return null;
+  }
+
+  const rng = createSeededRandom(407221);
+  const base = ctx.createLinearGradient(0, 0, width, height);
+  base.addColorStop(0, "#c9ced3");
+  base.addColorStop(0.5, "#8e969d");
+  base.addColorStop(1, "#646b74");
+  ctx.fillStyle = base;
+  ctx.fillRect(0, 0, width, height);
+
+  for (let x = 0; x < width; x += ribSpacing) {
+    const rib = ctx.createLinearGradient(x, 0, x + ribSpacing, 0);
+    rib.addColorStop(0, "rgba(255,255,255,0.12)");
+    rib.addColorStop(0.25, "rgba(255,255,255,0.04)");
+    rib.addColorStop(0.5, "rgba(0,0,0,0.10)");
+    rib.addColorStop(0.75, "rgba(255,255,255,0.05)");
+    rib.addColorStop(1, "rgba(0,0,0,0.08)");
+    ctx.fillStyle = rib;
+    ctx.fillRect(x, 0, ribSpacing, height);
+
+    ctx.fillStyle = "rgba(255,255,255,0.07)";
+    ctx.fillRect(x + 2, 0, 2, height);
+    ctx.fillStyle = "rgba(0,0,0,0.06)";
+    ctx.fillRect(x + ribSpacing - 3, 0, 2, height);
+  }
+
+  ctx.fillStyle = "rgba(34, 38, 44, 0.20)";
+  ctx.fillRect(0, 0, width, 18);
+  ctx.fillRect(0, height - 18, width, 18);
+  ctx.fillRect(0, height * 0.33, width, 6);
+  ctx.fillRect(0, height * 0.66, width, 6);
+
+  for (let i = 0; i < 180; i += 1) {
+    const x = rng() * width;
+    const y = rng() * height;
+    const w = 12 + rng() * 38;
+    const h = 1 + rng() * 2;
+    const alpha = 0.035 + rng() * 0.06;
+    ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+    ctx.fillRect(x, y, w, h);
+  }
+
+  for (let i = 0; i < 160; i += 1) {
+    const x = rng() * width;
+    const y = rng() * height;
+    const radius = 1 + rng() * 2.8;
+    const alpha = 0.03 + rng() * 0.05;
+    ctx.beginPath();
+    ctx.fillStyle = `rgba(28, 30, 34, ${alpha})`;
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(4, 3);
+  texture.needsUpdate = true;
+  return texture;
+}

@@ -5972,3 +5972,47 @@ code {
   text-transform: uppercase;
   border-radius: 3px;
 }
+
+.multiplayer-respawn-overlay {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  z-index: 32;
+  background:
+    radial-gradient(circle at center, rgba(123, 18, 18, 0.28), rgba(3, 4, 7, 0.82));
+}
+
+.multiplayer-respawn-card {
+  min-width: min(24rem, calc(100vw - 3rem));
+  padding: 1.4rem 1.5rem;
+  border: 1px solid rgba(255, 120, 120, 0.22);
+  border-radius: 1.1rem;
+  background: rgba(10, 10, 14, 0.78);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.36);
+  text-align: center;
+  backdrop-filter: blur(10px);
+}
+
+.multiplayer-respawn-label {
+  display: block;
+  margin-bottom: 0.55rem;
+  color: rgba(255, 196, 196, 0.82);
+  font-size: 0.74rem;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+}
+
+.multiplayer-respawn-time {
+  display: block;
+  color: #fff2f2;
+  font-size: clamp(2rem, 4vw, 3.2rem);
+  line-height: 1;
+}
+
+.multiplayer-respawn-copy {
+  margin: 0.8rem 0 0;
+  color: rgba(240, 228, 228, 0.74);
+  font-size: 0.94rem;
+}

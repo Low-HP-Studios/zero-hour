@@ -57,7 +57,10 @@ import {
 } from "./scene/practice-maps";
 import { LobbyMusicController } from "./LobbyMusicController";
 import type { CharacterModelOverride } from "./scene/CharacterModel";
-import type { OnlineActiveMatchSlot, OnlineController } from "./online/types";
+import type {
+  OnlineActiveMatchSlot,
+  OnlineController,
+} from "./online/types";
 import {
   type BindingKey,
   type SettingsTabId,
@@ -366,6 +369,7 @@ export function GameRoot({
     () => getPracticeMapById(currentMapId),
     [currentMapId],
   );
+  const multiplayerSession = activeSession?.kind === "multiplayer" ? activeSession : null;
   const currentCharacterId = activeSession?.kind === "multiplayer"
     ? activeSession.localSlot.selectedCharacterId
     : selectedCharacterId;
@@ -376,28 +380,109 @@ export function GameRoot({
   const playerSpawnOverride = activeSession?.kind === "multiplayer"
     ? currentMap.multiplayerSpawns?.[activeSession.localSlot.spawnSlot] ?? currentMap.playerSpawn
     : undefined;
-  const remoteAvatar = useMemo(() => {
-    if (activeSession?.kind !== "multiplayer" || !activeSession.remoteSlot) {
-      return null;
+  const [multiplayerClockMs, setMultiplayerClockMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!multiplayerSession) {
+      return;
     }
 
-    const spawn = currentMap.multiplayerSpawns?.[activeSession.remoteSlot.spawnSlot];
-    if (!spawn) {
+    setMultiplayerClockMs(Date.now());
+    const intervalId = window.setInterval(() => {
+      setMultiplayerClockMs(Date.now());
+    }, 100);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [multiplayerSession?.startedAt]);
+  const localMatchPlayer = useMemo(() => {
+    if (!multiplayerSession) {
+      return null;
+    }
+    return online.matchState?.players.find((player) => player.userId === multiplayerSession.localSlot.userId) ?? null;
+  }, [multiplayerSession, online.matchState]);
+  const localRealtimePlayer = useMemo(() => {
+    if (!multiplayerSession) {
+      return null;
+    }
+    return online.realtimePlayers.find((player) => player.userId === multiplayerSession.localSlot.userId) ?? null;
+  }, [multiplayerSession, online.realtimePlayers]);
+  const remotePlayer = useMemo(() => {
+    if (!multiplayerSession || !multiplayerSession.remoteSlot) {
+      return null;
+    }
+    const state = online.realtimePlayers.find((player) =>
+      player.userId === multiplayerSession.remoteSlot?.userId
+    );
+    if (!state) {
       return null;
     }
 
     return {
-      position: spawn.position,
-      yaw: spawn.yaw,
-      characterOverride: resolveCharacterOverride(activeSession.remoteSlot.selectedCharacterId),
+      state,
+      characterOverride: resolveCharacterOverride(multiplayerSession.remoteSlot.selectedCharacterId),
     };
-  }, [activeSession, currentMap]);
+  }, [multiplayerSession, online.realtimePlayers]);
+  const localReloadRemainingMs = localMatchPlayer?.reloadingUntil
+    ? Math.max(0, Date.parse(localMatchPlayer.reloadingUntil) - multiplayerClockMs)
+    : 0;
+  const localReloadActive = localMatchPlayer?.reloadingUntil !== null &&
+    localReloadRemainingMs > 0;
+  const localRespawnRemainingMs = localMatchPlayer?.respawnAt
+    ? Math.max(0, Date.parse(localMatchPlayer.respawnAt) - multiplayerClockMs)
+    : 0;
   const [perfMetrics, setPerfMetrics] = useState<PerfMetrics>(
     DEFAULT_PERF_METRICS,
   );
   const [player, setPlayerRaw] = useState<PlayerSnapshot>(
     DEFAULT_PLAYER_SNAPSHOT,
   );
+  const multiplayerHudPlayer = useMemo(() => {
+    if (!multiplayerSession || !localMatchPlayer) {
+      return player;
+    }
+
+    return {
+      ...player,
+      canInteract: false,
+      interactWeaponKind: null,
+      inventoryPanelOpen: false,
+      weaponLoadout: {
+        ...player.weaponLoadout,
+        activeSlot: "slotA" as const,
+        weaponRaised: true,
+        slotA: {
+          ...player.weaponLoadout.slotA,
+          weaponKind: "rifle" as const,
+          hasWeapon: true,
+          magAmmo: localMatchPlayer.magAmmo,
+          reserveAmmo: player.weaponLoadout.slotA.maxReserveAmmo || 240,
+          infiniteReserveAmmo: true,
+          maxMagAmmo: 30,
+          maxReserveAmmo: player.weaponLoadout.slotA.maxReserveAmmo || 240,
+        },
+        slotB: {
+          ...player.weaponLoadout.slotB,
+          hasWeapon: false,
+          magAmmo: 0,
+          reserveAmmo: 0,
+          infiniteReserveAmmo: false,
+        },
+      },
+      weaponReload: {
+        active: localReloadActive,
+        weaponKind: localReloadActive ? ("rifle" as const) : null,
+        progress: localReloadActive ? clamp01((3_000 - localReloadRemainingMs) / 3_000) : 1,
+        remainingMs: localReloadActive ? localReloadRemainingMs : 0,
+      },
+    };
+  }, [
+    localMatchPlayer,
+    localReloadActive,
+    localReloadRemainingMs,
+    multiplayerSession,
+    player,
+  ]);
   const playerRef = useRef(player);
   const setPlayer = useCallback((snapshot: PlayerSnapshot) => {
     const prev = playerRef.current;
@@ -438,6 +523,7 @@ export function GameRoot({
   >([]);
   const damageNumberIdRef = useRef(0);
   const damageNumberTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const latestProcessedOnlineShotIdRef = useRef<string | null>(null);
   const [shotBloom, setShotBloom] = useState(0);
   const shotBloomRef = useRef(0);
   const shotBloomFrameRef = useRef<number | null>(null);
@@ -451,7 +537,12 @@ export function GameRoot({
   >(null);
   const updaterApi = window.electronAPI?.updater;
   const updaterAvailable = Boolean(updaterApi);
-  const inventoryOpen = phase === "playing" && player.inventoryPanelOpen;
+  const inventoryOpen = phase === "playing" &&
+    multiplayerSession === null &&
+    player.inventoryPanelOpen;
+  const gameplayInputBlockedByMatchState = multiplayerSession
+    ? !(localMatchPlayer?.alive ?? true)
+    : false;
   const [hasBeenLocked, setHasBeenLocked] = useState(false);
   const returnResetDoneRef = useRef(false);
   const enteredPlayingAtRef = useRef(0);
@@ -459,6 +550,7 @@ export function GameRoot({
   const isGameplayPaused =
     booting ||
     phase !== "playing" ||
+    gameplayInputBlockedByMatchState ||
     pauseMenuOpen ||
     (phase === "playing" &&
       needsPointerLock &&
@@ -833,6 +925,8 @@ export function GameRoot({
     sceneRef.current?.dropWeaponForReturn();
     sceneRef.current?.resetForMenu();
     setHitMarker({ until: 0, kind: "body" });
+    latestProcessedOnlineShotIdRef.current = null;
+    setDamageNumbers([]);
     setHasBeenLocked(false);
     setPhase("menu");
   }, []);
@@ -951,11 +1045,7 @@ export function GameRoot({
 
   const handleMapSelect = useCallback((mapId: MapId) => {
     setSelectedMapId(mapId);
-
-    if (online.lobby?.status === "open" && online.user?.id === online.lobby.hostUserId) {
-      void online.selectLobbyMap(mapId);
-    }
-  }, [online]);
+  }, []);
 
   const handleHitMarker = useCallback(
     (kind: HitMarkerKind, damage: number, targetId: string) => {
@@ -1041,6 +1131,28 @@ export function GameRoot({
     settings.crosshair.dynamic.enabled,
     settings.crosshair.dynamic.shotKick,
   ]);
+
+  useEffect(() => {
+    const shot = online.latestShotEvent;
+    const localUserId = online.user?.id ?? null;
+    if (!shot || !localUserId) {
+      return;
+    }
+    if (latestProcessedOnlineShotIdRef.current === shot.shotId) {
+      return;
+    }
+
+    latestProcessedOnlineShotIdRef.current = shot.shotId;
+    if (shot.userId !== localUserId || !shot.hit) {
+      return;
+    }
+
+    handleHitMarker(
+      shot.hit.killed ? "kill" : shot.hit.zone === "head" ? "head" : "body",
+      shot.hit.damage,
+      shot.hit.userId,
+    );
+  }, [handleHitMarker, online.latestShotEvent, online.user?.id]);
 
   const settingsProfileJson = useMemo(
     () =>
@@ -1716,7 +1828,9 @@ export function GameRoot({
   const canInstallUpdate = updaterStatus.phase === "downloaded";
   const installUpdateInProgress = updaterBusyAction === "install";
   const gameplayHudVisible = phase === "playing";
-  const showInventoryOverlay = gameplayHudVisible && player.inventoryPanelOpen;
+  const showInventoryOverlay = gameplayHudVisible &&
+    multiplayerSession === null &&
+    player.inventoryPanelOpen;
   const showInteractPrompt = gameplayHudVisible && !isGameplayPaused &&
     !showInventoryOverlay &&
     player.canInteract;
@@ -1831,7 +1945,7 @@ export function GameRoot({
         booting={booting}
         deferredAssetsEnabled={deferredAssetsEnabled}
         presentation={renderedPresentation}
-        gameplayInputEnabled={!pauseMenuOpen && phase === "playing"}
+        gameplayInputEnabled={!pauseMenuOpen && phase === "playing" && !gameplayInputBlockedByMatchState}
         onPerfMetrics={setPerfMetrics}
         onPlayerSnapshot={setPlayer}
         onHitMarker={handleHitMarker}
@@ -1843,7 +1957,14 @@ export function GameRoot({
         onBootReady={onSceneBootReady}
         characterOverride={characterOverride}
         playerSpawnOverride={playerSpawnOverride}
-        remoteAvatar={phase === "playing" ? remoteAvatar : null}
+        remotePlayer={phase === "playing" ? remotePlayer : null}
+        multiplayerEnabled={multiplayerSession !== null}
+        multiplayerLocalState={localMatchPlayer}
+        multiplayerLocalPose={localRealtimePlayer}
+        confirmedShotEvent={online.latestShotEvent}
+        onMatchPlayerState={online.sendMatchPlayerState}
+        onMatchFire={online.sendMatchFire}
+        onMatchReload={online.sendMatchReload}
         onPauseMenuToggle={handlePauseMenuToggle}
       />
 
@@ -3712,7 +3833,28 @@ export function GameRoot({
         </div>
 
         {combatHudVisible && !isGameplayPaused ? (
-          <PubgHud player={player} visible />
+          <PubgHud
+            player={multiplayerHudPlayer}
+            health={multiplayerSession ? (localMatchPlayer?.health ?? 100) : 100}
+            visible
+          />
+        ) : null}
+
+        {phase === "playing" &&
+        multiplayerSession &&
+        localMatchPlayer &&
+        !localMatchPlayer.alive ? (
+          <div className="multiplayer-respawn-overlay" role="status" aria-live="polite">
+            <div className="multiplayer-respawn-card">
+              <span className="multiplayer-respawn-label">Respawning</span>
+              <strong className="multiplayer-respawn-time">
+                {(Math.max(0, localRespawnRemainingMs) / 1000).toFixed(1)}s
+              </strong>
+              <p className="multiplayer-respawn-copy">
+                Backend says you are dead. Try not to take it personally.
+              </p>
+            </div>
+          </div>
         ) : null}
 
       </div>
