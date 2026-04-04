@@ -774,7 +774,7 @@ export function ExperienceMenuOverlay({
               <div>
                 <h2 className="lobby-store-title-v2">Character Store</h2>
                 <p className="lobby-store-subtitle-v2">
-                  All operatives are unlocked during Early Access, because fake scarcity is still fake.
+                  Additional operatives are temporarily disabled while first-person visibility gets fixed.
                 </p>
               </div>
               <span className="lobby-store-balance-v2">All Owned</span>

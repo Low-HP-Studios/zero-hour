@@ -186,6 +186,7 @@ const WEAPON_SWAP_DURATION_MS =
   WEAPON_DRAW_DURATION_MS + WEAPON_HOLSTER_DURATION_MS;
 const GLOBAL_RECOIL_REDUCTION_SCALE = 0.75;
 const CROUCH_RECOIL_REDUCTION_SCALE = 0.9;
+const AIRBORNE_RECOIL_SCALE = 2.0;
 
 function resolveDefaultSlot(weaponKind: WeaponKind): WeaponSlotState {
   return {
@@ -256,6 +257,7 @@ export class WeaponSystem {
   private moving = false;
   private sprinting = false;
   private crouched = false;
+  private airborne = false;
   private rifleMagBonus = 0;
   private sniperMagBonus = 0;
   private rifleRecoilScale = 1;
@@ -280,10 +282,11 @@ export class WeaponSystem {
     }
   }
 
-  setMovementState(moving: boolean, sprinting: boolean, crouched: boolean) {
+  setMovementState(moving: boolean, sprinting: boolean, crouched: boolean, airborne: boolean) {
     this.moving = moving;
     this.sprinting = sprinting;
     this.crouched = crouched;
+    this.airborne = airborne;
   }
 
   setRecoilProfiles(next: WeaponRecoilProfiles) {
@@ -468,7 +471,8 @@ export class WeaponSystem {
       ? this.rifleRecoilScale
       : this.sniperRecoilScale;
     const stanceScale = this.crouched ? CROUCH_RECOIL_REDUCTION_SCALE : 1;
-    return attachmentScale * GLOBAL_RECOIL_REDUCTION_SCALE * stanceScale;
+    const airborneScale = this.airborne ? AIRBORNE_RECOIL_SCALE : 1;
+    return attachmentScale * GLOBAL_RECOIL_REDUCTION_SCALE * stanceScale * airborneScale;
   }
 
   private resolveMaxMagAmmo(kind: WeaponKind) {
@@ -1294,6 +1298,7 @@ export class WeaponSystem {
     this.sniperRecoilScale = 1;
     this.moving = false;
     this.sprinting = false;
+    this.airborne = false;
     this.clearTracer();
   }
 }

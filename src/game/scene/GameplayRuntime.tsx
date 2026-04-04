@@ -637,6 +637,11 @@ const FIRST_PERSON_UPPER_BODY_FALLBACK_HEIGHT = 1.02;
 const PLAYER_WALK_SPEED = 5.3;
 const PLAYER_SPRINT_SPEED = 8.2;
 const UNARMED_WALK_SPEED_SCALE = 0.68;
+const MULTIPLAYER_STATE_SEND_INTERVAL_MS = 50;
+const MULTIPLAYER_STATE_HEARTBEAT_MS = 250;
+const MULTIPLAYER_POSITION_EPSILON_SQ = 0.0025;
+const MULTIPLAYER_ANGLE_EPSILON = 0.01;
+type OutgoingMultiplayerState = Omit<OnlineMatchPlayerInput, "seq">;
 
 type FootstepPhaseTracker = {
   cycle: number;
@@ -1063,6 +1068,41 @@ function isStandingRifleDirectionPauseEligible(
 
 function normalizeAngle(angleRadians: number): number {
   return Math.atan2(Math.sin(angleRadians), Math.cos(angleRadians));
+}
+
+function shouldSendMultiplayerState(
+  previous: OutgoingMultiplayerState | null,
+  next: OutgoingMultiplayerState,
+  nowMs: number,
+  lastSentAtMs: number,
+) {
+  if (!previous) {
+    return true;
+  }
+
+  if (nowMs - lastSentAtMs >= MULTIPLAYER_STATE_HEARTBEAT_MS) {
+    return true;
+  }
+
+  if (
+    previous.moving !== next.moving ||
+    previous.sprinting !== next.sprinting ||
+    previous.crouched !== next.crouched ||
+    previous.grounded !== next.grounded ||
+    previous.ads !== next.ads
+  ) {
+    return true;
+  }
+
+  const dx = previous.x - next.x;
+  const dy = previous.y - next.y;
+  const dz = previous.z - next.z;
+  if (dx * dx + dy * dy + dz * dz >= MULTIPLAYER_POSITION_EPSILON_SQ) {
+    return true;
+  }
+
+  return Math.abs(normalizeAngle(next.yaw - previous.yaw)) >= MULTIPLAYER_ANGLE_EPSILON ||
+    Math.abs(next.pitch - previous.pitch) >= MULTIPLAYER_ANGLE_EPSILON;
 }
 
 function resolveFirstPersonVisibilityCategory(
@@ -1886,6 +1926,7 @@ export const GameplayRuntime = forwardRef<
   const lastReloadActiveRef = useRef<boolean | null>(null);
   const lastReloadWeaponKindRef = useRef<WeaponKind | null>(null);
   const lastMultiplayerStateSentAtRef = useRef(0);
+  const lastSentMultiplayerStateRef = useRef<OutgoingMultiplayerState | null>(null);
   const multiplayerStateSeqRef = useRef(0);
   const lastConfirmedShotIdRef = useRef<string | null>(null);
   const localAuthoritativeAliveRef = useRef<boolean | null>(null);
@@ -2587,10 +2628,23 @@ export const GameplayRuntime = forwardRef<
         return;
       }
       if (action === "reload") {
-        const reloadStarted = weapon.beginReload(performance.now());
-        if (reloadStarted && multiplayerEnabledRef.current) {
+        if (multiplayerEnabledRef.current) {
+          const authoritativeAlive = multiplayerLocalState?.alive ??
+            localAuthoritativeAliveRef.current ??
+            true;
+          const reloadActive = multiplayerLocalState?.reloadingUntil !== null;
+          const magazineFull = (multiplayerLocalState?.magAmmo ?? 30) >= 30;
+          if (!authoritativeAlive || reloadActive || magazineFull) {
+            emitPlayerSnapshot();
+            return;
+          }
+
           matchReloadCallbackRef.current?.(`reload-${Math.floor(performance.now())}`);
+          emitPlayerSnapshot();
+          return;
         }
+
+        weapon.beginReload(performance.now());
         emitPlayerSnapshot();
         return;
       }
@@ -2660,6 +2714,9 @@ export const GameplayRuntime = forwardRef<
       equipGroundWeaponToSlot,
       syncWeaponAmmoFromInventory,
       isAmmoItemId,
+      multiplayerLocalState?.alive,
+      multiplayerLocalState?.magAmmo,
+      multiplayerLocalState?.reloadingUntil,
       schedulePracticeAmmoRefill,
     ],
   );
@@ -2690,14 +2747,33 @@ export const GameplayRuntime = forwardRef<
   ]);
 
   useEffect(() => {
-    if (!multiplayerEnabled || !multiplayerLocalPose) {
-      localAuthoritativeAliveRef.current = multiplayerLocalPose?.alive ?? null;
+    const authoritativeAlive = multiplayerLocalState?.alive ??
+      multiplayerLocalPose?.alive ??
+      null;
+    if (!multiplayerEnabled) {
+      localAuthoritativeAliveRef.current = authoritativeAlive;
+      return;
+    }
+
+    if (authoritativeAlive === false) {
+      weaponRef.current.setTriggerHeld(false);
+      rifleFireIntentRef.current = false;
+      audioRef.current.cancelReload();
+      if (localAuthoritativeAliveRef.current !== false) {
+        emitPlayerSnapshot();
+      }
+      localAuthoritativeAliveRef.current = false;
+      return;
+    }
+
+    if (!multiplayerLocalPose) {
+      localAuthoritativeAliveRef.current = authoritativeAlive;
       return;
     }
 
     const controller = controllerRef.current;
     if (!controller) {
-      localAuthoritativeAliveRef.current = multiplayerLocalPose.alive;
+      localAuthoritativeAliveRef.current = authoritativeAlive;
       return;
     }
 
@@ -2707,7 +2783,7 @@ export const GameplayRuntime = forwardRef<
       multiplayerLocalPose.z,
     );
     const currentPosition = controller.getPosition();
-    const justRespawned = multiplayerLocalPose.alive &&
+    const justRespawned = authoritativeAlive === true &&
       localAuthoritativeAliveRef.current === false;
     const farFromAuthoritativePose = currentPosition.distanceToSquared(targetPosition) > 9;
 
@@ -2720,10 +2796,11 @@ export const GameplayRuntime = forwardRef<
       emitPlayerSnapshot();
     }
 
-    localAuthoritativeAliveRef.current = multiplayerLocalPose.alive;
+    localAuthoritativeAliveRef.current = authoritativeAlive;
   }, [
     emitPlayerSnapshot,
     multiplayerEnabled,
+    multiplayerLocalState?.alive,
     multiplayerLocalPose?.alive,
     multiplayerLocalPose?.pitch,
     multiplayerLocalPose?.x,
@@ -2879,6 +2956,7 @@ export const GameplayRuntime = forwardRef<
     lastReloadActiveRef.current = false;
     lastReloadWeaponKindRef.current = null;
     lastMultiplayerStateSentAtRef.current = 0;
+    lastSentMultiplayerStateRef.current = null;
     multiplayerStateSeqRef.current = 0;
     lastConfirmedShotIdRef.current = null;
     localAuthoritativeAliveRef.current = null;
@@ -3325,12 +3403,10 @@ export const GameplayRuntime = forwardRef<
     const firstPerson = controller.isFirstPerson();
     if (
       multiplayerEnabledRef.current &&
-      nowMs - lastMultiplayerStateSentAtRef.current >= 50
+      localAuthoritativeAliveRef.current !== false &&
+      nowMs - lastMultiplayerStateSentAtRef.current >= MULTIPLAYER_STATE_SEND_INTERVAL_MS
     ) {
-      lastMultiplayerStateSentAtRef.current = nowMs;
-      multiplayerStateSeqRef.current += 1;
-      matchPlayerStateCallbackRef.current?.({
-        seq: multiplayerStateSeqRef.current,
+      const nextMultiplayerState: OutgoingMultiplayerState = {
         x: playerPosition.x,
         y: playerPosition.y,
         z: playerPosition.z,
@@ -3341,7 +3417,23 @@ export const GameplayRuntime = forwardRef<
         crouched,
         grounded,
         ads: adsActive,
-      });
+      };
+      if (
+        shouldSendMultiplayerState(
+          lastSentMultiplayerStateRef.current,
+          nextMultiplayerState,
+          nowMs,
+          lastMultiplayerStateSentAtRef.current,
+        )
+      ) {
+        lastMultiplayerStateSentAtRef.current = nowMs;
+        lastSentMultiplayerStateRef.current = nextMultiplayerState;
+        multiplayerStateSeqRef.current += 1;
+        matchPlayerStateCallbackRef.current?.({
+          seq: multiplayerStateSeqRef.current,
+          ...nextMultiplayerState,
+        });
+      }
     }
     const moveInput = controller.getMoveInput();
     const planarVelocity = controller.getPlanarVelocity();
@@ -3757,6 +3849,12 @@ export const GameplayRuntime = forwardRef<
       upperBodyOverlayState = weaponEquipped
         ? reloadVisible ? "rifleReload" : "rifleAimHold"
         : null;
+    } else if (!grounded) {
+      nextAnimState = weaponEquipped ? "rifleIdle" : "idle";
+      lowerBodyOverlayState = "falling" as CharacterAnimState;
+      upperBodyOverlayState = weaponEquipped
+        ? reloadVisible ? "rifleReload" : "rifleAimHold"
+        : null;
     } else if (crouchTransitionState === "enter") {
       nextAnimState = crouchAimCompositeActive
         ? "rifleAimHold"
@@ -3905,7 +4003,8 @@ export const GameplayRuntime = forwardRef<
       rifleReadyPoseActive = false;
     }
 
-    const triggerHeldForWeapon = fireInputHeld;
+    const triggerHeldForWeapon = fireInputHeld &&
+      (!multiplayerEnabled || localAuthoritativeAliveRef.current !== false);
     weapon.setTriggerHeld(triggerHeldForWeapon);
 
     const crouchPose = crouchTransitionState !== "idle"
@@ -4438,7 +4537,7 @@ export const GameplayRuntime = forwardRef<
       : nextAnimState === "rifleRun" ||
         nextAnimState === "rifleRunStart" ||
         nextAnimState === "rifleRunStop");
-    weapon.setMovementState(movementActive || slideMotionActive, weaponSprinting, crouched);
+    weapon.setMovementState(movementActive || slideMotionActive, weaponSprinting, crouched, !grounded);
     syncWeaponAmmoFromInventory();
     const preUpdateLoadout = weapon.getLoadoutState();
     const shots = weapon.update(clampedDelta, nowMs, camera);

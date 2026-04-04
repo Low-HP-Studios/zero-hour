@@ -50,18 +50,24 @@ import {
   type ShotFiredState,
 } from "./GameplayRuntime";
 import type { BlockingVolume } from "../map-layout";
-import { type CharacterModelOverride, useCharacterModel } from "./CharacterModel";
+import {
+  type CharacterModelOverride,
+  normalizeBoneName,
+  useCharacterModel,
+} from "./CharacterModel";
 import { PracticeMapEnvironment, StressBoxes } from "./MapEnvironment";
 import {
   clonePracticeMapTargets,
   RANGE_PRACTICE_MAP,
   type PracticeMapDefinition,
 } from "./practice-maps";
+import { useWeaponModels } from "./WeaponModels";
 import {
   CANVAS_CAMERA,
   CHARACTER_YAW_OFFSET,
   CANVAS_GL,
   TARGET_FLASH_MS,
+  WEAPON_MODEL_TRANSFORMS,
   type CharacterAnimState,
 } from "./scene-constants";
 
@@ -200,6 +206,66 @@ type SceneProps = {
   onPauseMenuToggle?: () => void;
 };
 
+function isRightHandBoneName(name: string) {
+  const normalized = normalizeBoneName(name).toLowerCase();
+  return normalized === "r_hand" ||
+    normalized === "righthand" ||
+    normalized === "right_hand" ||
+    normalized === "hand_r" ||
+    normalized === "hand.r" ||
+    normalized.includes("r_hand") ||
+    normalized.includes("right_hand") ||
+    normalized.includes("righthand") ||
+    normalized.includes("hand_r");
+}
+
+function createRemoteRifleAnchor(source: THREE.Group | null) {
+  const anchor = new THREE.Group();
+  anchor.name = "remote-rifle-anchor";
+
+  if (source) {
+    const transform = WEAPON_MODEL_TRANSFORMS.character.rifle;
+    const clone = source.clone(true);
+    clone.position.set(...transform.position);
+    clone.rotation.set(...transform.rotation);
+    clone.scale.setScalar(transform.scale);
+    anchor.add(clone);
+    return anchor;
+  }
+
+  const rifleBody = new THREE.Mesh(
+    new THREE.BoxGeometry(0.55, 0.09, 0.13),
+    new THREE.MeshStandardMaterial({
+      color: "#30363c",
+      roughness: 0.55,
+      metalness: 0.4,
+    }),
+  );
+  const grip = new THREE.Mesh(
+    new THREE.BoxGeometry(0.18, 0.17, 0.05),
+    new THREE.MeshStandardMaterial({
+      color: "#4d463f",
+      roughness: 0.85,
+      metalness: 0.1,
+    }),
+  );
+  grip.position.set(0.16, -0.08, 0.01);
+  grip.rotation.set(0.15, 0, -0.2);
+  const barrel = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.015, 0.015, 0.42, 8),
+    new THREE.MeshStandardMaterial({
+      color: "#20262b",
+      roughness: 0.4,
+      metalness: 0.6,
+    }),
+  );
+  barrel.position.set(-0.24, 0.015, 0);
+  barrel.rotation.set(0, 0, Math.PI / 2);
+
+  anchor.add(rifleBody, grip, barrel);
+  return anchor;
+}
+
 function resolveRemoteAnimState(state: OnlineRealtimePlayerState): CharacterAnimState {
   if (!state.alive) {
     return "rifleIdle";
@@ -233,6 +299,7 @@ function RemotePlayerAvatar({
   characterOverride: CharacterModelOverride;
 }) {
   const { model, setAnimState } = useCharacterModel(characterOverride);
+  const weaponModels = useWeaponModels();
   const positionRef = useRef(
     new THREE.Vector3(state.x, state.y, state.z),
   );
@@ -241,6 +308,8 @@ function RemotePlayerAvatar({
   );
   const yawRef = useRef(state.yaw);
   const targetYawRef = useRef(state.yaw);
+  const rightHandBoneRef = useRef<THREE.Bone | null>(null);
+  const weaponAnchorRef = useRef<THREE.Group | null>(null);
 
   useEffect(() => {
     targetPositionRef.current.set(state.x, state.y, state.z);
@@ -252,6 +321,42 @@ function RemotePlayerAvatar({
     setAnimState,
     state,
   ]);
+
+  useEffect(() => {
+    if (!model) {
+      rightHandBoneRef.current = null;
+      return;
+    }
+
+    let resolved: THREE.Bone | null = null;
+    model.traverse((child) => {
+      if (resolved || !(child as THREE.Bone).isBone) {
+        return;
+      }
+      const bone = child as THREE.Bone;
+      if (isRightHandBoneName(bone.name)) {
+        resolved = bone;
+      }
+    });
+    rightHandBoneRef.current = resolved;
+  }, [model]);
+
+  useEffect(() => {
+    const rightHandBone = rightHandBoneRef.current;
+    if (!rightHandBone || !state.alive) {
+      return;
+    }
+
+    const anchor = createRemoteRifleAnchor(weaponModels.rifle);
+    rightHandBone.add(anchor);
+    weaponAnchorRef.current = anchor;
+    return () => {
+      rightHandBone.remove(anchor);
+      if (weaponAnchorRef.current === anchor) {
+        weaponAnchorRef.current = null;
+      }
+    };
+  }, [model, state.alive, weaponModels.rifle]);
 
   useFrame((_state, delta) => {
     const mixer = model?.userData.__mixer as THREE.AnimationMixer | undefined;

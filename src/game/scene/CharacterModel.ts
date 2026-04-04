@@ -129,6 +129,8 @@ function resolveCharacterAnimTimeScale(
   let baseScale = WALK_ANIM_TIME_SCALE;
   if (state === "sprint") {
     baseScale = SPRINT_ANIM_TIME_SCALE;
+  } else if (state === "falling") {
+    baseScale = 1;
   } else if (
     state === "idle" ||
     state === "rifleIdle" ||

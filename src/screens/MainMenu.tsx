@@ -358,7 +358,7 @@ export function MainMenu({ onStartGame }: MainMenuProps) {
                 <div>
                   <h2 className="lobby-store-title-v2">Character Store</h2>
                   <p className="lobby-store-subtitle-v2">
-                    All characters are available during Early Access
+                    Additional operatives are temporarily disabled while first-person visibility gets fixed.
                   </p>
                 </div>
                 <span className="lobby-store-balance-v2">All Owned</span>

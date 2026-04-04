@@ -64,6 +64,19 @@ const MATCH_ENDED_MESSAGES: Record<string, string> = {
   player_ended_match: "A player ended the match and sent everyone back to the lobby.",
 };
 
+const QUIET_REALTIME_NOTICE_INTERVAL_MS = 3_000;
+
+function isQuietRealtimeError(message: string) {
+  return message.startsWith("Movement update rejected") ||
+    message.startsWith("Shot rejected") ||
+    message === "Dead players cannot fire." ||
+    message === "Dead players cannot reload." ||
+    message === "Reload already in progress." ||
+    message === "Reload still in progress." ||
+    message === "Rifle magazine is already full." ||
+    message === "Rifle magazine is empty.";
+}
+
 function parseRealtimeMessage(raw: unknown): RealtimeServerMessage | null {
   if (typeof raw !== "string") {
     return null;
@@ -101,6 +114,8 @@ export function useOnlineState({ pollEnabled: _pollEnabled }: UseOnlineStateOpti
   const backendStatusRef = useRef<BackendStatus>("checking");
   const authStatusRef = useRef<AuthStatus>("checking");
   const previousLobbyCodeRef = useRef<string | null>(null);
+  const lastQuietRealtimeMessageRef = useRef<string | null>(null);
+  const lastQuietRealtimeNoticeAtRef = useRef(0);
 
   useEffect(() => {
     backendStatusRef.current = backendStatus;
@@ -121,6 +136,20 @@ export function useOnlineState({ pollEnabled: _pollEnabled }: UseOnlineStateOpti
       window.clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;
     }
+  }, []);
+
+  const surfaceQuietRealtimeError = useCallback((message: string) => {
+    console.warn("[Online realtime]", message);
+    const nowMs = Date.now();
+    const shouldShowNotice = message !== lastQuietRealtimeMessageRef.current ||
+      nowMs - lastQuietRealtimeNoticeAtRef.current >= QUIET_REALTIME_NOTICE_INTERVAL_MS;
+    if (!shouldShowNotice) {
+      return;
+    }
+
+    lastQuietRealtimeMessageRef.current = message;
+    lastQuietRealtimeNoticeAtRef.current = nowMs;
+    setNotice(message);
   }, []);
 
   const syncLobbyState = useCallback((nextLobby: OnlineLobby | null) => {
@@ -251,6 +280,11 @@ export function useOnlineState({ pollEnabled: _pollEnabled }: UseOnlineStateOpti
         return;
       }
 
+      if (isQuietRealtimeError(message.message)) {
+        surfaceQuietRealtimeError(message.message);
+        return;
+      }
+
       setNotice(message.message);
       toast.error(message.message);
     });
@@ -283,7 +317,7 @@ export function useOnlineState({ pollEnabled: _pollEnabled }: UseOnlineStateOpti
         socket.close();
       }
     });
-  }, [clearMatchRuntime, clearReconnectTimeout, subscribeToLobby, syncLobbyState]);
+  }, [clearMatchRuntime, clearReconnectTimeout, subscribeToLobby, surfaceQuietRealtimeError, syncLobbyState]);
 
   const resetAuthState = useCallback((clearStorage: boolean) => {
     if (clearStorage) {

@@ -291,6 +291,7 @@ export const ANIM_CLIPS: { name: string; url: string }[] = [
     name: 'rifleReload',
     url: '/assets/animations/rifle/reload/reload-animation.fbx',
   },
+  { name: 'falling', url: '/assets/animations/falling/falling.fbx' },
 ];
 
 export const WEAPON_MODEL_URLS: Record<WeaponKind, string> = {
@@ -477,7 +478,8 @@ export type CharacterAnimState =
   | 'rifleRunStart'
   | 'rifleRunStop'
   | 'rifleReload'
-  | 'sprint';
+  | 'sprint'
+  | 'falling';
 
 export type BulletImpactMark = {
   id: number;

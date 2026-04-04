@@ -10,7 +10,7 @@ import { flushSync } from "react-dom";
 import { toast } from "sonner";
 import { sharedAudioManager, type AudioVolumeSettings } from "./Audio";
 import { preloadPracticeMapAssets, preloadSkyAsset } from "./boot-assets";
-import { getCharacterById } from "./characters";
+import { getCharacterById, normalizeCharacterId } from "./characters";
 import { ControllerCursor } from "./ControllerCursor";
 import { ExperienceMenuOverlay } from "./ExperienceMenuOverlay";
 import { playControllerRumble } from "./GamepadHaptics";
@@ -565,9 +565,10 @@ export function GameRoot({
     const currentLobbyPlayer = online.user && online.lobby
       ? online.lobby.players.find((player) => player.userId === online.user?.id)
       : null;
+    const nextCharacterId = normalizeCharacterId(currentLobbyPlayer?.selectedCharacterId);
 
-    if (currentLobbyPlayer && currentLobbyPlayer.selectedCharacterId !== selectedCharacterId) {
-      setSelectedCharacterId(currentLobbyPlayer.selectedCharacterId);
+    if (currentLobbyPlayer && nextCharacterId !== selectedCharacterId) {
+      setSelectedCharacterId(nextCharacterId);
     }
   }, [online.lobby, online.user, selectedCharacterId]);
 
@@ -1036,10 +1037,11 @@ export function GameRoot({
   }, [reportInventoryResult]);
 
   const handleCharacterSelect = useCallback((characterId: string) => {
-    setSelectedCharacterId(characterId);
+    const nextCharacterId = normalizeCharacterId(characterId);
+    setSelectedCharacterId(nextCharacterId);
 
     if (online.lobby?.status === "open") {
-      void online.selectLobbyCharacter(characterId);
+      void online.selectLobbyCharacter(nextCharacterId);
     }
   }, [online]);
 
