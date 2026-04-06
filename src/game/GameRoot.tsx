@@ -262,7 +262,7 @@ type ActiveSession =
       startedAt: string;
       mapId: MapId;
       localSlot: OnlineActiveMatchSlot;
-      remoteSlot: OnlineActiveMatchSlot | null;
+      remoteSlots: OnlineActiveMatchSlot[];
     };
 
 function resolveCharacterOverride(characterId: string): CharacterModelOverride {
@@ -378,7 +378,7 @@ export function GameRoot({
     [currentCharacterId],
   );
   const playerSpawnOverride = activeSession?.kind === "multiplayer"
-    ? currentMap.multiplayerSpawns?.[activeSession.localSlot.spawnSlot] ?? currentMap.playerSpawn
+    ? currentMap.multiplayerSpawns?.[activeSession.localSlot.slotIndex] ?? currentMap.playerSpawn
     : undefined;
   const [multiplayerClockMs, setMultiplayerClockMs] = useState(() => Date.now());
   useEffect(() => {
@@ -407,21 +407,24 @@ export function GameRoot({
     }
     return online.realtimePlayers.find((player) => player.userId === multiplayerSession.localSlot.userId) ?? null;
   }, [multiplayerSession, online.realtimePlayers]);
-  const remotePlayer = useMemo(() => {
-    if (!multiplayerSession || !multiplayerSession.remoteSlot) {
-      return null;
-    }
-    const state = online.realtimePlayers.find((player) =>
-      player.userId === multiplayerSession.remoteSlot?.userId
-    );
-    if (!state) {
-      return null;
+  const remotePlayers = useMemo(() => {
+    if (!multiplayerSession) {
+      return [];
     }
 
-    return {
-      state,
-      characterOverride: resolveCharacterOverride(multiplayerSession.remoteSlot.selectedCharacterId),
-    };
+    return multiplayerSession.remoteSlots
+      .map((slot) => {
+        const state = online.realtimePlayers.find((player) => player.userId === slot.userId);
+        if (!state) {
+          return null;
+        }
+
+        return {
+          state,
+          characterOverride: resolveCharacterOverride(slot.selectedCharacterId),
+        };
+      })
+      .filter((player): player is NonNullable<typeof player> => player !== null);
   }, [multiplayerSession, online.realtimePlayers]);
   const localReloadRemainingMs = localMatchPlayer?.reloadingUntil
     ? Math.max(0, Date.parse(localMatchPlayer.reloadingUntil) - multiplayerClockMs)
@@ -957,7 +960,7 @@ export function GameRoot({
       startedAt: online.activeMatch.startedAt,
       mapId: online.lobby.selectedMapId,
       localSlot,
-      remoteSlot: online.activeMatch.slots.find((slot) => slot.userId !== online.user?.id) ?? null,
+      remoteSlots: online.activeMatch.slots.filter((slot) => slot.userId !== online.user?.id),
     };
 
     if (
@@ -1959,14 +1962,14 @@ export function GameRoot({
         onBootReady={onSceneBootReady}
         characterOverride={characterOverride}
         playerSpawnOverride={playerSpawnOverride}
-        remotePlayer={phase === "playing" ? remotePlayer : null}
+        remotePlayers={phase === "playing" ? remotePlayers : []}
         multiplayerEnabled={multiplayerSession !== null}
         multiplayerLocalState={localMatchPlayer}
         multiplayerLocalPose={localRealtimePlayer}
         confirmedShotEvent={online.latestShotEvent}
-        onMatchPlayerState={online.sendMatchPlayerState}
-        onMatchFire={online.sendMatchFire}
-        onMatchReload={online.sendMatchReload}
+        onMatchInputFrame={online.sendInputFrame}
+        onFireIntent={online.sendFireIntent}
+        onReloadIntent={online.sendReloadIntent}
         onPauseMenuToggle={handlePauseMenuToggle}
       />
 
@@ -2003,7 +2006,7 @@ export function GameRoot({
         {combatHudVisible && hudPanels.statsBar
           ? (
             <div className="corner-top-right">
-              <MinimalStatsBar metrics={perfMetrics} visible />
+              <MinimalStatsBar metrics={perfMetrics} pingMs={online.pingMs} visible />
             </div>
           )
           : null}

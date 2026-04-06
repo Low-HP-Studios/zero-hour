@@ -9,22 +9,31 @@ export type OnlineUser = {
   createdAt: string;
 };
 
-export type OnlineMatchSpawnSlot = "host" | "guest";
+export type MatchEndedReason =
+  | "host_disconnected"
+  | "player_disconnected"
+  | "host_left"
+  | "player_left"
+  | "host_ended_match"
+  | "player_ended_match";
 
 export type OnlineActiveMatchSlot = {
   userId: string;
-  spawnSlot: OnlineMatchSpawnSlot;
+  slotIndex: number;
   selectedCharacterId: string;
 };
 
 export type OnlineActiveMatch = {
   startedAt: string;
+  hostAddress: string;
+  hostPort: number;
+  protocolVersion: number;
   slots: OnlineActiveMatchSlot[];
 };
 
 export type OnlineMatchPlayerState = {
   userId: string;
-  spawnSlot: OnlineMatchSpawnSlot;
+  slotIndex: number;
   health: number;
   alive: boolean;
   respawnAt: string | null;
@@ -40,6 +49,7 @@ export type OnlineMatchState = {
 
 export type OnlineRealtimePlayerState = {
   userId: string;
+  slotIndex: number;
   seq: number;
   x: number;
   y: number;
@@ -60,7 +70,10 @@ export type OnlineRealtimePlayerState = {
   alive: boolean;
 };
 
-export type OnlineMatchPlayerInput = Omit<OnlineRealtimePlayerState, "userId" | "alive">;
+export type OnlineMatchInputFrame = Omit<
+  OnlineRealtimePlayerState,
+  "userId" | "slotIndex" | "alive"
+>;
 
 export type OnlineShotHit = {
   userId: string;
@@ -77,6 +90,18 @@ export type OnlineShotFiredEvent = {
   origin: [number, number, number];
   direction: [number, number, number];
   hit: OnlineShotHit | null;
+};
+
+export type OnlineFireIntent = {
+  shotId: string;
+  origin: [number, number, number];
+  direction: [number, number, number];
+};
+
+export type OnlineHostedMatchSnapshot = {
+  matchState: OnlineMatchState | null;
+  playerStates: OnlineRealtimePlayerState[];
+  latestShotEvent: OnlineShotFiredEvent | null;
 };
 
 export type OnlineLobbyPlayer = {
@@ -97,7 +122,15 @@ export type OnlineLobby = {
   createdAt: string;
   expiresAt: string;
   activeMatch: OnlineActiveMatch | null;
+  lastMatchEndedReason: MatchEndedReason | null;
   players: OnlineLobbyPlayer[];
+};
+
+export type HostedMatchRole = "idle" | "host" | "client";
+
+export type HostedMatchConnectionState = {
+  status: RealtimeStatus;
+  role: HostedMatchRole;
 };
 
 export type BackendStatus = "checking" | "connected" | "unavailable";
@@ -121,9 +154,18 @@ export type StoredOnlineAuth = {
   user: OnlineUser;
 };
 
+export type StoredHostedMatchConfig = {
+  hostAddress: string;
+  hostPort: number;
+};
+
 export type OnlineController = {
+  multiplayerSupported: boolean;
   backendStatus: BackendStatus;
   realtimeStatus: RealtimeStatus;
+  pingMs: number | null;
+  hostAddress: string;
+  hostPort: number;
   bootstrapComplete: boolean;
   authStatus: AuthStatus;
   authBusyAction: AuthBusyAction;
@@ -136,6 +178,8 @@ export type OnlineController = {
   realtimePlayers: OnlineRealtimePlayerState[];
   latestShotEvent: OnlineShotFiredEvent | null;
   refreshConnection: () => Promise<boolean>;
+  setHostAddress: (value: string) => void;
+  setHostPort: (value: number) => void;
   signUp: (username: string, password: string) => Promise<boolean>;
   signIn: (username: string, password: string) => Promise<boolean>;
   signOut: () => Promise<boolean>;
@@ -148,7 +192,7 @@ export type OnlineController = {
   endMatch: () => Promise<boolean>;
   leaveLobby: () => Promise<boolean>;
   disbandLobby: () => Promise<boolean>;
-  sendMatchPlayerState: (state: OnlineMatchPlayerInput) => void;
-  sendMatchFire: (shotId: string) => void;
-  sendMatchReload: (requestId: string) => void;
+  sendInputFrame: (state: OnlineMatchInputFrame) => void;
+  sendFireIntent: (intent: OnlineFireIntent) => void;
+  sendReloadIntent: (requestId: string) => void;
 };

@@ -14,7 +14,8 @@ import * as THREE from "three";
 import type { AudioVolumeSettings } from "../Audio";
 import { markBootEvent } from "../boot-trace";
 import type {
-  OnlineMatchPlayerInput,
+  OnlineFireIntent,
+  OnlineMatchInputFrame,
   OnlineMatchPlayerState,
   OnlineRealtimePlayerState,
   OnlineShotFiredEvent,
@@ -192,17 +193,17 @@ type SceneProps = {
   onBootReady: () => void;
   characterOverride?: CharacterModelOverride;
   playerSpawnOverride?: PracticeMapDefinition["playerSpawn"];
-  remotePlayer?: {
+  remotePlayers?: Array<{
     state: OnlineRealtimePlayerState;
     characterOverride: CharacterModelOverride;
-  } | null;
+  }>;
   multiplayerEnabled?: boolean;
   multiplayerLocalState?: OnlineMatchPlayerState | null;
   multiplayerLocalPose?: OnlineRealtimePlayerState | null;
   confirmedShotEvent?: OnlineShotFiredEvent | null;
-  onMatchPlayerState?: (state: OnlineMatchPlayerInput) => void;
-  onMatchFire?: (shotId: string) => void;
-  onMatchReload?: (requestId: string) => void;
+  onMatchInputFrame?: (state: OnlineMatchInputFrame) => void;
+  onFireIntent?: (intent: OnlineFireIntent) => void;
+  onReloadIntent?: (requestId: string) => void;
   onPauseMenuToggle?: () => void;
 };
 
@@ -553,14 +554,14 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
   onBootReady,
   characterOverride,
   playerSpawnOverride,
-  remotePlayer,
+  remotePlayers = [],
   multiplayerEnabled = false,
   multiplayerLocalState,
   multiplayerLocalPose,
   confirmedShotEvent,
-  onMatchPlayerState,
-  onMatchFire,
-  onMatchReload,
+  onMatchInputFrame,
+  onFireIntent,
+  onReloadIntent,
   onPauseMenuToggle,
 }: SceneProps, ref) {
   const [canvasEpoch, setCanvasEpoch] = useState(0);
@@ -864,15 +865,14 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
         count={practiceMap.supportsStressMode ? stressCount : 0}
         shadows={settings.shadows}
       />
-      {remotePlayer
-        ? (
-          <RemotePlayerAvatar
-            state={remotePlayer.state}
-            characterOverride={remotePlayer.characterOverride}
-            weaponAlignment={settings.weaponAlignment}
-          />
-        )
-        : null}
+      {remotePlayers.map((remotePlayer) => (
+        <RemotePlayerAvatar
+          key={remotePlayer.state.userId}
+          state={remotePlayer.state}
+          characterOverride={remotePlayer.characterOverride}
+          weaponAlignment={settings.weaponAlignment}
+        />
+      ))}
       <GameplayRuntime
         ref={runtimeRef}
         practiceMap={runtimePracticeMap}
@@ -909,9 +909,9 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
         multiplayerLocalState={multiplayerLocalState}
         multiplayerLocalPose={multiplayerLocalPose}
         confirmedShotEvent={confirmedShotEvent}
-        onMatchPlayerState={onMatchPlayerState}
-        onMatchFire={onMatchFire}
-        onMatchReload={onMatchReload}
+        onMatchInputFrame={onMatchInputFrame}
+        onFireIntent={onFireIntent}
+        onReloadIntent={onReloadIntent}
         onPauseMenuToggle={onPauseMenuToggle}
       />
       <SceneBootCompiler enabled={compileReady} onReady={onBootReady} />

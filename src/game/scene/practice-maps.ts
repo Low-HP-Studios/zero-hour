@@ -36,18 +36,11 @@ export type PracticeMapDefinition = {
     yaw: number;
     pitch: number;
   };
-  multiplayerSpawns?: {
-    host: {
+  multiplayerSpawns?: Array<{
       position: [number, number, number];
       yaw: number;
       pitch: number;
-    };
-    guest: {
-      position: [number, number, number];
-      yaw: number;
-      pitch: number;
-    };
-  };
+    }>;
   targets: readonly TargetState[];
   groundSpawns: readonly StaticGroundSpawn[];
   walkableSurfaces?: readonly WalkableSurface[];
@@ -323,18 +316,18 @@ export const RANGE_PRACTICE_MAP: PracticeMapDefinition = {
     yaw: 0,
     pitch: DEFAULT_PLAYER_PITCH,
   },
-  multiplayerSpawns: {
-    host: {
+  multiplayerSpawns: [
+    {
       position: [-1.4, 0, 6],
       yaw: 0,
       pitch: DEFAULT_PLAYER_PITCH,
     },
-    guest: {
+    {
       position: [1.4, 0, 6],
       yaw: 0,
       pitch: DEFAULT_PLAYER_PITCH,
     },
-  },
+  ],
   targets: createDefaultTargets(),
   groundSpawns: RANGE_GROUND_SPAWNS,
   environment: { kind: 'range-procedural' },
@@ -351,14 +344,14 @@ export const MAP1_PRACTICE_MAP: PracticeMapDefinition = {
   collisionRects: [],
   occluderVolumes: [],
   playerSpawn: MAP1_PLAYER_SPAWN,
-  multiplayerSpawns: {
-    host: MAP1_PLAYER_SPAWN,
-    guest: {
+  multiplayerSpawns: [
+    MAP1_PLAYER_SPAWN,
+    {
       position: [0, 0.5, 50],
       yaw: 0,
       pitch: DEFAULT_PLAYER_PITCH,
     },
-  },
+  ],
   targets: [],
   groundSpawns: [],
   walkableSurfaces: TDM_WALKABLE_SURFACES,

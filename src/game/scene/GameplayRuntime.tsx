@@ -15,7 +15,8 @@ import { type AudioVolumeSettings, sharedAudioManager } from "../Audio";
 import { playControllerRumble } from "../GamepadHaptics";
 import type { JumpPad } from "../map-layout";
 import type {
-  OnlineMatchPlayerInput,
+  OnlineFireIntent,
+  OnlineMatchInputFrame,
   OnlineMatchPlayerState,
   OnlineRealtimePlayerState,
   OnlineShotFiredEvent,
@@ -181,9 +182,9 @@ type GameplayRuntimeProps = {
   multiplayerLocalState?: OnlineMatchPlayerState | null;
   multiplayerLocalPose?: OnlineRealtimePlayerState | null;
   confirmedShotEvent?: OnlineShotFiredEvent | null;
-  onMatchPlayerState?: (state: OnlineMatchPlayerInput) => void;
-  onMatchFire?: (shotId: string) => void;
-  onMatchReload?: (requestId: string) => void;
+  onMatchInputFrame?: (state: OnlineMatchInputFrame) => void;
+  onFireIntent?: (intent: OnlineFireIntent) => void;
+  onReloadIntent?: (requestId: string) => void;
   onPauseMenuToggle?: () => void;
 };
 
@@ -640,7 +641,7 @@ const UNARMED_WALK_SPEED_SCALE = 0.68;
 const MULTIPLAYER_STATE_HEARTBEAT_MS = 250;
 const MULTIPLAYER_POSITION_EPSILON_SQ = 0.0025;
 const MULTIPLAYER_ANGLE_EPSILON = 0.01;
-type OutgoingMultiplayerState = Omit<OnlineMatchPlayerInput, "seq">;
+type OutgoingMultiplayerState = Omit<OnlineMatchInputFrame, "seq">;
 
 type FootstepPhaseTracker = {
   cycle: number;
@@ -1770,9 +1771,9 @@ export const GameplayRuntime = forwardRef<
   multiplayerLocalState,
   multiplayerLocalPose,
   confirmedShotEvent,
-  onMatchPlayerState,
-  onMatchFire,
-  onMatchReload,
+  onMatchInputFrame,
+  onFireIntent,
+  onReloadIntent,
   onPauseMenuToggle,
 }: GameplayRuntimeProps, ref) {
   const gl = useThree((state) => state.gl);
@@ -1849,9 +1850,9 @@ export const GameplayRuntime = forwardRef<
   const sniperRechamberCallbackRef = useRef(onSniperRechamberChange);
   const aimingStateCallbackRef = useRef(onAimingStateChange);
   const multiplayerEnabledRef = useRef(multiplayerEnabled);
-  const matchPlayerStateCallbackRef = useRef(onMatchPlayerState);
-  const matchFireCallbackRef = useRef(onMatchFire);
-  const matchReloadCallbackRef = useRef(onMatchReload);
+  const matchInputFrameCallbackRef = useRef(onMatchInputFrame);
+  const matchFireIntentCallbackRef = useRef(onFireIntent);
+  const matchReloadIntentCallbackRef = useRef(onReloadIntent);
 
   const perfAccumulatorRef = useRef(0);
   const perfFrameMsEmaRef = useRef(0);
@@ -2043,16 +2044,16 @@ export const GameplayRuntime = forwardRef<
   }, [multiplayerEnabled]);
 
   useEffect(() => {
-    matchPlayerStateCallbackRef.current = onMatchPlayerState;
-  }, [onMatchPlayerState]);
+    matchInputFrameCallbackRef.current = onMatchInputFrame;
+  }, [onMatchInputFrame]);
 
   useEffect(() => {
-    matchFireCallbackRef.current = onMatchFire;
-  }, [onMatchFire]);
+    matchFireIntentCallbackRef.current = onFireIntent;
+  }, [onFireIntent]);
 
   useEffect(() => {
-    matchReloadCallbackRef.current = onMatchReload;
-  }, [onMatchReload]);
+    matchReloadIntentCallbackRef.current = onReloadIntent;
+  }, [onReloadIntent]);
 
   useEffect(() => {
     if (!characterModel) {
@@ -2644,7 +2645,7 @@ export const GameplayRuntime = forwardRef<
             return;
           }
 
-          matchReloadCallbackRef.current?.(`reload-${Math.floor(performance.now())}`);
+          matchReloadIntentCallbackRef.current?.(`reload-${Math.floor(performance.now())}`);
           emitPlayerSnapshot();
           return;
         }
@@ -2782,17 +2783,15 @@ export const GameplayRuntime = forwardRef<
       return;
     }
 
-    const targetPosition = tempImpactPositionRef.current.set(
-      multiplayerLocalPose.x,
-      multiplayerLocalPose.y,
-      multiplayerLocalPose.z,
-    );
-    const currentPosition = controller.getPosition();
     const justRespawned = authoritativeAlive === true &&
       localAuthoritativeAliveRef.current === false;
-    const farFromAuthoritativePose = currentPosition.distanceToSquared(targetPosition) > 9;
 
-    if (justRespawned || farFromAuthoritativePose) {
+    if (justRespawned) {
+      const targetPosition = tempImpactPositionRef.current.set(
+        multiplayerLocalPose.x,
+        multiplayerLocalPose.y,
+        multiplayerLocalPose.z,
+      );
       controller.setPose(
         targetPosition,
         multiplayerLocalPose.yaw,
@@ -4131,7 +4130,7 @@ export const GameplayRuntime = forwardRef<
     if (
       multiplayerEnabled &&
       presentation.phase === "playing" &&
-      matchPlayerStateCallbackRef.current
+      matchInputFrameCallbackRef.current
     ) {
       const nextMultiplayerState: OutgoingMultiplayerState = {
         x: playerPosition.x,
@@ -4163,7 +4162,7 @@ export const GameplayRuntime = forwardRef<
         multiplayerStateSeqRef.current += 1;
         lastSentMultiplayerStateRef.current = nextMultiplayerState;
         lastMultiplayerStateSentAtRef.current = nowMs;
-        matchPlayerStateCallbackRef.current({
+        matchInputFrameCallbackRef.current({
           seq: multiplayerStateSeqRef.current,
           ...nextMultiplayerState,
         });
@@ -4634,7 +4633,11 @@ export const GameplayRuntime = forwardRef<
 
       if (multiplayerEnabledRef.current) {
         const shotId = `shot-${Math.floor(nowMs)}-${shot.shotIndex}`;
-        matchFireCallbackRef.current?.(shotId);
+        matchFireIntentCallbackRef.current?.({
+          shotId,
+          origin: [shot.origin.x, shot.origin.y, shot.origin.z],
+          direction: [shot.direction.x, shot.direction.y, shot.direction.z],
+        });
 
         const tracerOrigin = tempTracerOriginRef.current;
         const muzzle = characterMuzzleRef.current;

@@ -256,12 +256,19 @@ export function ExperienceMenuOverlay({
   const isCurrentPlayerHost = currentLobbyPlayer?.isHost ?? false;
   const onlineSelectedMap = getPracticeMapById(online.lobby?.selectedMapId ?? "map1");
   const allPlayersReady = online.lobby?.players.every((player) => player.isReady) ?? false;
+  const normalizedHostAddress = online.hostAddress.trim();
+  const hostPortValid = Number.isInteger(online.hostPort) &&
+    online.hostPort >= 1 &&
+    online.hostPort <= 65_535;
   const canStartMatch = Boolean(
     online.lobby &&
+      online.multiplayerSupported &&
       isCurrentPlayerHost &&
       online.lobby.status === "open" &&
       online.lobby.players.length === 2 &&
       allPlayersReady &&
+      normalizedHostAddress.length > 0 &&
+      hostPortValid &&
       online.realtimeStatus === "connected",
   );
 
@@ -465,11 +472,16 @@ export function ExperienceMenuOverlay({
                       <p className="online-status-note-v3">
                         Creates a 2-player rifle skirmish on map1 using your currently selected operative.
                       </p>
+                      {!online.multiplayerSupported ? (
+                        <p className="online-status-note-v3">
+                          Multiplayer alpha is desktop-only for now. The browser build gets practice mode and a front-row seat to your restraint.
+                        </p>
+                      ) : null}
                       <button
                         type="button"
                         className="lobby-play-btn-v2 online-submit-btn-v3"
                         onClick={() => { void online.createLobby(2, selectedCharacterId, "map1"); }}
-                        disabled={onlineBusy}
+                        disabled={onlineBusy || !online.multiplayerSupported}
                       >
                         {online.lobbyBusyAction === "create" ? "Creating..." : "Create lobby"}
                       </button>
@@ -492,7 +504,7 @@ export function ExperienceMenuOverlay({
                       <button
                         type="submit"
                         className="online-secondary-btn-v3 online-join-btn-v3"
-                        disabled={onlineBusy || joinCode.length !== 6}
+                        disabled={onlineBusy || joinCode.length !== 6 || !online.multiplayerSupported}
                       >
                         {online.lobbyBusyAction === "join" ? "Joining..." : "Join lobby"}
                       </button>
@@ -538,6 +550,12 @@ export function ExperienceMenuOverlay({
                       </article>
                     </div>
 
+                    {!online.multiplayerSupported ? (
+                      <p className="online-status-note-v3">
+                        This browser build can still browse the lobby, but hosted matches only run in the Electron desktop client.
+                      </p>
+                    ) : null}
+
                     <div className="lobby-map-panel-v3">
                       <div className="lobby-map-selector-header-v2">
                         <span className="lobby-map-selector-label-v2">Live combat map</span>
@@ -580,6 +598,47 @@ export function ExperienceMenuOverlay({
                         </article>
                       ))}
                     </div>
+
+                    {isCurrentPlayerHost && online.lobby.status === "open" ? (
+                      <div className="online-create-card-v3">
+                        <span className="online-block-label-v3">Hosted endpoint</span>
+                        <p className="online-status-note-v3">
+                          Enter the address your guest should reach. Port defaults to 7777 because every alpha needs at least one magic number.
+                        </p>
+                        <div className="online-join-form-v3">
+                          <label className="online-field-v3">
+                            <span>Host address</span>
+                            <input
+                              className="online-input-v3"
+                              type="text"
+                              value={online.hostAddress}
+                              autoComplete="off"
+                              spellCheck={false}
+                              onChange={(event) => online.setHostAddress(event.target.value)}
+                              placeholder="192.168.1.10"
+                              disabled={onlineBusy || !online.multiplayerSupported}
+                            />
+                          </label>
+                          <label className="online-field-v3">
+                            <span>Port</span>
+                            <input
+                              className="online-input-v3"
+                              type="number"
+                              min={1}
+                              max={65535}
+                              step={1}
+                              value={online.hostPort}
+                              onChange={(event) => online.setHostPort(Number(event.target.value))}
+                              placeholder="7777"
+                              disabled={onlineBusy || !online.multiplayerSupported}
+                            />
+                          </label>
+                        </div>
+                        <p className="online-status-note-v3">
+                          Guests join with the room code first. Once you start, the game pushes this endpoint through Convex and they auto-connect.
+                        </p>
+                      </div>
+                    ) : null}
 
                     <div className="online-lobby-actions-v3">
                       {isCurrentPlayerHost ? (

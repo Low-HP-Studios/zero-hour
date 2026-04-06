@@ -14,6 +14,7 @@ import fs from 'fs';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 const { createUpdaterService } = require('./updater.cjs');
+const { createMultiplayerService } = require('./multiplayer.cjs');
 const isDev = !app.isPackaged;
 const distPath = path.join(__dirname, '..', 'dist');
 
@@ -61,6 +62,7 @@ protocol.registerSchemesAsPrivileged([
 
 let mainWindow = null;
 let updaterService = null;
+let multiplayerService = null;
 
 function applyGameplayFrameRate(isPlaying) {
   if (!mainWindow || mainWindow.isDestroyed()) {
@@ -152,6 +154,54 @@ function registerUpdaterHandlers() {
   });
 }
 
+function registerMultiplayerHandlers() {
+  ipcMain.handle("multiplayer:get-default-port", () => {
+    return multiplayerService?.getDefaultHostPort() ?? 7777;
+  });
+
+  ipcMain.handle("multiplayer:host-match", async (_event, payload) => {
+    if (!multiplayerService) {
+      return { ok: false };
+    }
+    return multiplayerService.hostMatch(payload);
+  });
+
+  ipcMain.handle("multiplayer:join-match", async (_event, payload) => {
+    if (!multiplayerService) {
+      return { ok: false };
+    }
+    return multiplayerService.joinMatch(payload);
+  });
+
+  ipcMain.handle("multiplayer:leave-match", async (_event, payload) => {
+    if (!multiplayerService) {
+      return { ok: false };
+    }
+    return multiplayerService.leaveMatch(payload);
+  });
+
+  ipcMain.handle("multiplayer:send-input-frame", async (_event, payload) => {
+    if (!multiplayerService) {
+      return { ok: false };
+    }
+    return multiplayerService.sendInputFrame(payload);
+  });
+
+  ipcMain.handle("multiplayer:send-fire-intent", async (_event, payload) => {
+    if (!multiplayerService) {
+      return { ok: false };
+    }
+    return multiplayerService.sendFireIntent(payload);
+  });
+
+  ipcMain.handle("multiplayer:send-reload-intent", async (_event, payload) => {
+    if (!multiplayerService) {
+      return { ok: false };
+    }
+    return multiplayerService.sendReloadIntent(payload);
+  });
+}
+
 app.whenReady().then(() => {
   if (!isDev) {
     protocol.handle('app', (request) => {
@@ -184,7 +234,11 @@ app.whenReady().then(() => {
   updaterService = createUpdaterService({
     getMainWindow: () => mainWindow,
   });
+  multiplayerService = createMultiplayerService({
+    getMainWindow: () => mainWindow,
+  });
   registerUpdaterHandlers();
+  registerMultiplayerHandlers();
 
   globalShortcut.register('F11', () => {
     if (mainWindow) {
@@ -207,6 +261,7 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   globalShortcut.unregisterAll();
+  multiplayerService?.dispose();
   if (process.platform !== 'darwin') {
     app.quit();
   }
