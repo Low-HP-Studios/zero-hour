@@ -224,6 +224,7 @@ const ADS_BODY_YAW_DAMP = 22;
 const SHOOT_BODY_YAW_DAMP = 34;
 const SHOOT_ALIGN_WINDOW_MS = 180;
 const CAMERA_BLOCKING_MARGIN = 0.38;
+const FIRST_PERSON_CAMERA_BLOCKING_MARGIN = 0.08;
 const HEAD_TURN_DEAD_ZONE = THREE.MathUtils.degToRad(45);
 
 const cameraClipDir = new THREE.Vector3();
@@ -451,6 +452,7 @@ export function usePlayerController({
   const tempThirdPersonCameraPosRef = useRef(new THREE.Vector3());
   const cameraClipEyeRef = useRef(new THREE.Vector3());
   const cameraClipOutRef = useRef(new THREE.Vector3());
+  const cameraClipFirstPersonOutRef = useRef(new THREE.Vector3());
   const slideSnapshotRef = useRef<SlideState>({
     active: false,
     phase: 'none',
@@ -2045,6 +2047,8 @@ export function usePlayerController({
         slideFppDip,
       positionRef.current.z,
     );
+    const fppClipEye = cameraClipEyeRef.current;
+    fppClipEye.copy(fppCameraPos);
     fppCameraPos.addScaledVector(aimDir, FIRST_PERSON_CAMERA_FORWARD_OFFSET);
     if (sniperADS > 0) {
       fppCameraPos.x += cosCurrentYaw * 0.045 * sniperADS;
@@ -2120,6 +2124,20 @@ export function usePlayerController({
     }
 
     if (cameraEnabledRef.current) {
+      const volumes = blockingVolumesRef.current;
+      const clippedFpp = cameraClipFirstPersonOutRef.current;
+      if (volumes.length > 0) {
+        clipThirdPersonCameraToVolumes(
+          fppClipEye,
+          fppCameraPos,
+          volumes,
+          FIRST_PERSON_CAMERA_BLOCKING_MARGIN,
+          clippedFpp,
+        );
+      } else {
+        clippedFpp.copy(fppCameraPos);
+      }
+
       const clipEye = cameraClipEyeRef.current;
       clipEye.set(
         positionRef.current.x,
@@ -2132,7 +2150,6 @@ export function usePlayerController({
         clipEye.z += -sinCurrentYaw * leanOffsetX;
       }
       const clippedTpp = cameraClipOutRef.current;
-      const volumes = blockingVolumesRef.current;
       if (volumes.length > 0 && viewT < 0.995) {
         clipThirdPersonCameraToVolumes(
           clipEye,
@@ -2141,9 +2158,9 @@ export function usePlayerController({
           CAMERA_BLOCKING_MARGIN,
           clippedTpp,
         );
-        camera.position.copy(clippedTpp).lerp(fppCameraPos, viewT);
+        camera.position.copy(clippedTpp).lerp(clippedFpp, viewT);
       } else {
-        camera.position.copy(tppCameraPos).lerp(fppCameraPos, viewT);
+        camera.position.copy(tppCameraPos).lerp(clippedFpp, viewT);
       }
 
       // Preserve the dialed-in zoom while the player keeps the sniper equipped.
