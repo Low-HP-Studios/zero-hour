@@ -31,7 +31,11 @@ import {
   type StressModeCount,
 } from "../types";
 import { PIXEL_RATIO_OPTIONS, STRESS_STEPS } from "./settings-constants";
-import { DEFAULT_CHARACTER_ID, isCharacterId } from "../characters";
+import {
+  DEFAULT_CHARACTER_ID,
+  isCharacterId,
+  normalizePlayableCharacterId,
+} from "../characters";
 
 const LEGACY_SETTINGS_STORAGE_KEY = "zerohour.settings.v1";
 const PRE_RESET_SETTINGS_STORAGE_KEYS = [
@@ -194,7 +198,7 @@ function readString(value: unknown, fallback: string): string {
 }
 
 function readCharacterId(value: unknown, fallback: string): string {
-  return isCharacterId(value) ? value : fallback;
+  return normalizePlayableCharacterId(isCharacterId(value) ? value : fallback);
 }
 
 function readMapId(value: unknown, fallback: MapId): MapId {

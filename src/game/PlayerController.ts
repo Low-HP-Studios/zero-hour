@@ -126,6 +126,7 @@ export type PlayerControllerApi = {
   setMovementProfile: (profile: Partial<MovementProfile>) => void;
   requestPointerLock: () => void;
   releasePointerLock: () => void;
+  hasPointerLock: () => boolean;
   setPose: (
     position: THREE.Vector3,
     yawRadians: number,
@@ -678,11 +679,19 @@ export function usePlayerController({
     }
   }, [beginSlideRecovery, getSlideStateSnapshot]);
 
+  const focusCanvas = useCallback((element: HTMLElement) => {
+    if (element.tabIndex < 0) {
+      element.tabIndex = -1;
+    }
+    element.focus({ preventScroll: true });
+  }, []);
+
   const requestLock = useCallback((element: HTMLElement) => {
+    focusCanvas(element);
     if (document.pointerLockElement === element) return;
     if (document.pointerLockElement !== null) return;
     element.requestPointerLock();
-  }, []);
+  }, [focusCanvas]);
 
   const closeInventoryPanel = useCallback((
     restorePointerLock = inventoryRestorePointerLockRef.current,
@@ -716,6 +725,18 @@ export function usePlayerController({
   useEffect(() => {
     onPauseMenuToggleRef.current = onPauseMenuToggle;
   }, [onPauseMenuToggle]);
+
+  useEffect(() => {
+    const element = gl.domElement;
+    const previousTabIndex = element.tabIndex;
+    if (element.tabIndex < 0) {
+      element.tabIndex = -1;
+    }
+
+    return () => {
+      element.tabIndex = previousTabIndex;
+    };
+  }, [gl.domElement]);
 
   useEffect(() => {
     actionCallbackRef.current = onAction;
@@ -867,9 +888,13 @@ export function usePlayerController({
         return;
       }
 
-      if (event.code === 'Escape' && !event.repeat && onPauseMenuToggleRef.current) {
+      if (event.code === 'Escape' && !event.repeat) {
         event.preventDefault();
-        onPauseMenuToggleRef.current();
+        if (inventoryPanelOpenRef.current) {
+          closeInventoryPanel();
+          return;
+        }
+        onPauseMenuToggleRef.current?.();
         return;
       }
 
@@ -1165,7 +1190,11 @@ export function usePlayerController({
       clearHeldCombatInput();
       controllerInventoryHeldRef.current = false;
       controllerSprintToggleRef.current = false;
-      onPauseMenuToggleRef.current();
+      if (inventoryPanelOpenRef.current) {
+        closeInventoryPanel();
+      } else {
+        onPauseMenuToggleRef.current();
+      }
     }
 
     if (inputEnabledRef.current) {
@@ -2271,22 +2300,15 @@ export function usePlayerController({
     },
     requestPointerLock: () => {
       userGestureCallbackRef.current();
-      if (
-        pointerLockedRef.current ||
-        document.pointerLockElement === gl.domElement
-      ) {
-        return;
-      }
-      if (document.pointerLockElement !== null) {
-        return;
-      }
-      gl.domElement.requestPointerLock();
+      requestLock(gl.domElement);
     },
     releasePointerLock: () => {
       if (document.pointerLockElement === gl.domElement) {
         document.exitPointerLock();
       }
     },
+    hasPointerLock: () =>
+      pointerLockedRef.current || document.pointerLockElement === gl.domElement,
     setPose: (position, yawRadians, pitchRadians = spawnPitch) => {
       positionRef.current.copy(position);
       resolvedXZRef.current.set(position.x, position.z);

@@ -2,7 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   CHARACTER_REGISTRY,
+  DEFAULT_CHARACTER_ID,
   getCharacterById,
+  isCharacterSelectable,
 } from "./characters";
 import { SKY_OPTIONS, getSkyById, type SkyId } from "./sky-registry";
 import { PRACTICE_MAP_OPTIONS, getPracticeMapById } from "./scene/practice-maps";
@@ -230,6 +232,13 @@ export function ExperienceMenuOverlay({
     });
   }, []);
 
+  const handleCharacterAction = useCallback((characterId: string) => {
+    if (!isCharacterSelectable(characterId)) {
+      return;
+    }
+    onCharacterSelect(characterId);
+  }, [onCharacterSelect]);
+
   const selectedCharacterDef = getCharacterById(selectedCharacterId);
   const selectedCharacterIndex = Math.max(
     0,
@@ -379,19 +388,27 @@ export function ExperienceMenuOverlay({
               </div>
               <div className="lobby-collection-grid-v2">
                 {collectionTab === "characters"
-                  ? CHARACTER_REGISTRY.map((char) => (
-                    <button
-                      key={char.id}
-                      type="button"
-                      className={`lobby-char-card-v2 ${selectedCharacterId === char.id ? "equipped" : ""}`}
-                      onClick={() => onCharacterSelect(char.id)}
-                    >
-                      <span className="lobby-char-name-v2">{char.displayName}</span>
-                      {selectedCharacterId === char.id && (
-                        <span className="lobby-char-equipped-v2">Equipped</span>
-                      )}
-                    </button>
-                  ))
+                  ? CHARACTER_REGISTRY.map((char) => {
+                    const isSelectable = isCharacterSelectable(char.id);
+                    const isEquipped = selectedCharacterId === char.id;
+                    return (
+                      <button
+                        key={char.id}
+                        type="button"
+                        className={`lobby-char-card-v2 ${isEquipped ? "equipped" : ""} ${
+                          isSelectable ? "" : "locked"
+                        }`.trim()}
+                        onClick={() => handleCharacterAction(char.id)}
+                        disabled={!isSelectable}
+                        aria-disabled={!isSelectable}
+                      >
+                        <span className="lobby-char-name-v2">{char.displayName}</span>
+                        <span className={`lobby-char-equipped-v2 ${isSelectable ? "" : "locked"}`.trim()}>
+                          {isEquipped ? "Equipped" : "Locked"}
+                        </span>
+                      </button>
+                    );
+                  })
                   : SKY_OPTIONS.map((sky) => (
                     <button
                       key={sky.id}
@@ -476,35 +493,47 @@ export function ExperienceMenuOverlay({
               <div>
                 <h2 className="lobby-store-title-v2">Character Store</h2>
                 <p className="lobby-store-subtitle-v2">
-                  All operatives are unlocked during Early Access, because fake scarcity is still fake.
+                  Thulla is the active operative right now. The rest of the roster stays visible,
+                  but locked, because half-finished choice is still just half-finished.
                 </p>
               </div>
-              <span className="lobby-store-balance-v2">All Owned</span>
+              <span className="lobby-store-balance-v2">Trooper Active</span>
             </div>
             <div className="lobby-store-grid-v2">
               {CHARACTER_REGISTRY.map((char, index) => {
+                const isSelectable = isCharacterSelectable(char.id);
                 const isEquipped = selectedCharacterId === char.id;
                 const monogram = getCatalogMonogram(char.displayName);
                 return (
                   <div
                     key={char.id}
-                    className={`lobby-store-item-v2 ${isEquipped ? "equipped" : ""}`}
+                    className={`lobby-store-item-v2 ${isEquipped ? "equipped" : ""} ${
+                      isSelectable ? "" : "locked"
+                    }`.trim()}
                   >
                     <div className="lobby-store-item-art-v2" aria-hidden="true">
                       <span className="lobby-store-item-seq-v3">{formatCatalogIndex(index)}</span>
                       <span className="lobby-store-item-monogram-v3">{monogram}</span>
-                      <span className="lobby-store-item-owned-tag-v2">Owned</span>
+                      <span className={`lobby-store-item-owned-tag-v2 ${isSelectable ? "" : "locked"}`.trim()}>
+                        {char.id === DEFAULT_CHARACTER_ID ? "Active" : "Locked"}
+                      </span>
                     </div>
                     <div className="lobby-store-item-info-v2">
                       <span className="lobby-store-item-name-v2">{char.displayName}</span>
-                      <span className="lobby-store-item-price-v2">FREE</span>
+                      <span className={`lobby-store-item-price-v2 ${isSelectable ? "" : "locked"}`.trim()}>
+                        {isSelectable ? "ACTIVE" : "LOCKED"}
+                      </span>
                     </div>
                     <button
                       type="button"
-                      className={`lobby-store-item-cta-v2 ${isEquipped ? "equipped" : ""}`}
-                      onClick={() => onCharacterSelect(char.id)}
+                      className={`lobby-store-item-cta-v2 ${isEquipped ? "equipped" : ""} ${
+                        isSelectable ? "" : "locked"
+                      }`.trim()}
+                      onClick={() => handleCharacterAction(char.id)}
+                      disabled={!isSelectable}
+                      aria-disabled={!isSelectable}
                     >
-                      {isEquipped ? "Equipped" : "Equip"}
+                      {isEquipped ? "Equipped" : isSelectable ? "Equip" : "Locked"}
                     </button>
                   </div>
                 );

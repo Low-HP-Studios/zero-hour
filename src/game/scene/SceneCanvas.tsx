@@ -151,6 +151,7 @@ function blendLightingPresets(
 export type SceneHandle = {
   requestPointerLock: () => void;
   releasePointerLock: () => void;
+  hasPointerLock: () => boolean;
   dropWeaponForReturn: () => void;
   moveInventoryItem: (request: InventoryMoveRequest) => InventoryMoveResult;
   quickMoveInventoryItem: (location: InventoryMoveLocation) => InventoryMoveResult;
@@ -529,6 +530,9 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
     releasePointerLock: () => {
       runtimeRef.current?.releasePointerLock();
     },
+    hasPointerLock: () => {
+      return runtimeRef.current?.hasPointerLock() ?? false;
+    },
     dropWeaponForReturn: () => {
       runtimeRef.current?.dropWeaponForReturn();
     },
@@ -564,6 +568,7 @@ export const Scene = forwardRef<SceneHandle, SceneProps>(function Scene({
     <Canvas
       key={canvasEpoch}
       className="game-canvas"
+      tabIndex={-1}
       shadows={settings.shadows && worldTheme > 0.6 ? "percentage" : false}
       dpr={dpr}
       camera={CANVAS_CAMERA}

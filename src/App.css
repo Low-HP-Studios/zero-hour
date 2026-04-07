@@ -47,6 +47,17 @@ body {
   color: var(--text);
 }
 
+#root,
+#root * {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+:is(input, textarea, [contenteditable='true']) {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 .app-toast {
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 20px;
@@ -4119,6 +4130,20 @@ code {
   color: #f7f8f6;
 }
 
+.lobby-char-card-v2.locked,
+.lobby-char-card-v2:disabled {
+  cursor: not-allowed;
+  color: rgba(232, 237, 233, 0.34);
+  border-color: rgba(255, 255, 255, 0.04);
+}
+
+.lobby-char-card-v2.locked:hover,
+.lobby-char-card-v2:disabled:hover {
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.04);
+  color: rgba(232, 237, 233, 0.34);
+}
+
 .lobby-sky-card-v3 {
   display: flex;
   flex-direction: column;
@@ -4174,6 +4199,10 @@ code {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: #93dcc0;
+}
+
+.lobby-char-equipped-v2.locked {
+  color: rgba(232, 237, 233, 0.4);
 }
 
 .lobby-collection-preview-v2 {
@@ -4276,6 +4305,14 @@ code {
   border-color: rgba(220, 228, 223, 0.2);
 }
 
+.lobby-store-item-v2.locked {
+  border-color: rgba(220, 228, 223, 0.08);
+}
+
+.lobby-store-item-v2.locked:hover {
+  border-color: rgba(220, 228, 223, 0.08);
+}
+
 .lobby-store-item-art-v2 {
   position: relative;
   height: 160px;
@@ -4301,6 +4338,12 @@ code {
   padding: 2px 6px;
 }
 
+.lobby-store-item-owned-tag-v2.locked {
+  color: rgba(232, 237, 233, 0.52);
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.05);
+}
+
 .lobby-store-item-info-v2 {
   display: flex;
   align-items: center;
@@ -4324,6 +4367,10 @@ code {
   letter-spacing: 0.06em;
   color: #93dcc0;
   flex-shrink: 0;
+}
+
+.lobby-store-item-price-v2.locked {
+  color: rgba(232, 237, 233, 0.46);
 }
 
 .lobby-store-item-cta-v2 {
@@ -4352,6 +4399,20 @@ code {
   color: #93dcc0;
   cursor: default;
   background: rgba(147, 220, 192, 0.06);
+}
+
+.lobby-store-item-cta-v2.locked,
+.lobby-store-item-cta-v2:disabled {
+  cursor: not-allowed;
+  color: rgba(232, 237, 233, 0.42);
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.lobby-store-item-cta-v2.locked:hover,
+.lobby-store-item-cta-v2:disabled:hover {
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(232, 237, 233, 0.42);
 }
 
 /* ── Nav download indicator dot ── */
@@ -5029,6 +5090,20 @@ code {
   border-color: rgba(255, 255, 255, 0.12);
 }
 
+.lobby-layout-v3 .lobby-char-card-v2.locked,
+.lobby-layout-v3 .lobby-char-card-v2:disabled {
+  background: rgba(255, 255, 255, 0.02);
+  border-color: rgba(255, 255, 255, 0.06);
+  color: rgba(246, 241, 234, 0.36);
+}
+
+.lobby-layout-v3 .lobby-char-card-v2.locked:hover,
+.lobby-layout-v3 .lobby-char-card-v2:disabled:hover {
+  background: rgba(255, 255, 255, 0.02);
+  border-color: rgba(255, 255, 255, 0.06);
+  color: rgba(246, 241, 234, 0.36);
+}
+
 .lobby-layout-v3 .lobby-char-equipped-v2,
 .lobby-layout-v3 .lobby-store-item-price-v2,
 .lobby-layout-v3 .updates-download-pct-v2,
@@ -5120,6 +5195,15 @@ code {
   box-shadow: 0 0 0 1px rgba(214, 180, 138, 0.2);
 }
 
+.lobby-layout-v3 .lobby-store-item-v2.locked {
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow: none;
+}
+
+.lobby-layout-v3 .lobby-store-item-v2.locked:hover {
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
 .lobby-layout-v3 .lobby-store-item-art-v2 {
   height: 180px;
   padding: 14px;
@@ -5156,6 +5240,10 @@ code {
   border-radius: 999px;
 }
 
+.lobby-layout-v3 .lobby-store-item-owned-tag-v2.locked {
+  color: rgba(246, 241, 234, 0.52);
+}
+
 .lobby-layout-v3 .lobby-store-item-info-v2 {
   padding: 14px 16px 10px;
 }
@@ -5173,6 +5261,13 @@ code {
 .lobby-layout-v3 .lobby-store-item-cta-v2 {
   margin: 0 16px 16px;
   min-height: 42px;
+}
+
+.lobby-layout-v3 .lobby-store-item-cta-v2.locked,
+.lobby-layout-v3 .lobby-store-item-cta-v2:disabled {
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(246, 241, 234, 0.42);
+  border-color: rgba(255, 255, 255, 0.12);
 }
 
 .lobby-layout-v3 .updates-page-v2 {
@@ -5216,6 +5311,12 @@ code {
 .lobby-layout-v3 .lobby-store-item-cta-v2:hover {
   background: rgba(255, 255, 255, 0.08);
   color: var(--lobby-text);
+}
+
+.lobby-layout-v3 .lobby-store-item-cta-v2.locked:hover,
+.lobby-layout-v3 .lobby-store-item-cta-v2:disabled:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(246, 241, 234, 0.42);
 }
 
 .lobby-layout-v3 .updates-action-btn-v2.danger {

@@ -14,7 +14,8 @@ export type CharacterDefinition = {
   textures: CharacterTextureEntry[] | null;
 };
 
-export const DEFAULT_CHARACTER_ID = 'stylish-man';
+export const TROOPER_CHARACTER_ID = 'trooper';
+export const DEFAULT_CHARACTER_ID = TROOPER_CHARACTER_ID;
 
 export const CHARACTER_REGISTRY: CharacterDefinition[] = [
   {
@@ -194,4 +195,16 @@ export function getCharacterById(id: string): CharacterDefinition {
 
 export function isCharacterId(id: unknown): id is CharacterDefinition["id"] {
   return typeof id === "string" && CHARACTER_REGISTRY.some((c) => c.id === id);
+}
+
+export function isCharacterSelectable(
+  id: unknown,
+): id is CharacterDefinition["id"] {
+  return id === TROOPER_CHARACTER_ID;
+}
+
+export function normalizePlayableCharacterId(
+  id: unknown,
+): CharacterDefinition["id"] {
+  return isCharacterSelectable(id) ? id : DEFAULT_CHARACTER_ID;
 }

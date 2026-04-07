@@ -10,7 +10,7 @@ import { flushSync } from "react-dom";
 import { toast } from "sonner";
 import { sharedAudioManager, type AudioVolumeSettings } from "./Audio";
 import { preloadPracticeMapAssets, preloadSkyAsset } from "./boot-assets";
-import { getCharacterById } from "./characters";
+import { getCharacterById, normalizePlayableCharacterId } from "./characters";
 import { ControllerCursor } from "./ControllerCursor";
 import { ExperienceMenuOverlay } from "./ExperienceMenuOverlay";
 import { playControllerRumble } from "./GamepadHaptics";
@@ -306,7 +306,7 @@ export function GameRoot({
     persistedSettings.audioVolumes,
   );
   const [selectedCharacterId, setSelectedCharacterId] = useState<string>(
-    persistedSettings.selectedCharacterId,
+    normalizePlayableCharacterId(persistedSettings.selectedCharacterId),
   );
   const [selectedSkyId, setSelectedSkyId] = useState<SkyId>(
     persistedSettings.selectedSkyId,
@@ -402,6 +402,10 @@ export function GameRoot({
   const returnResetDoneRef = useRef(false);
   const enteredPlayingAtRef = useRef(0);
   const [needsPointerLock, setNeedsPointerLock] = useState(false);
+  const pointerLockFallbackFrameRef = useRef<number | null>(null);
+  const pointerLockFallbackVerifyFrameRef = useRef<number | null>(null);
+  const previousPointerLockedRef = useRef(player.pointerLocked);
+  const previousInventoryPanelOpenRef = useRef(player.inventoryPanelOpen);
   const isGameplayPaused =
     booting ||
     phase !== "playing" ||
@@ -415,6 +419,62 @@ export function GameRoot({
     pauseMenuOpenRef.current = pauseMenuOpen;
   }, [pauseMenuOpen]);
 
+  const clearPointerLockFallbackCheck = useCallback(() => {
+    if (pointerLockFallbackFrameRef.current !== null) {
+      window.cancelAnimationFrame(pointerLockFallbackFrameRef.current);
+      pointerLockFallbackFrameRef.current = null;
+    }
+    if (pointerLockFallbackVerifyFrameRef.current !== null) {
+      window.cancelAnimationFrame(pointerLockFallbackVerifyFrameRef.current);
+      pointerLockFallbackVerifyFrameRef.current = null;
+    }
+  }, []);
+
+  const schedulePointerLockFallbackCheck = useCallback(() => {
+    clearPointerLockFallbackCheck();
+    pointerLockFallbackFrameRef.current = window.requestAnimationFrame(() => {
+      pointerLockFallbackFrameRef.current = null;
+      pointerLockFallbackVerifyFrameRef.current = window.requestAnimationFrame(() => {
+        pointerLockFallbackVerifyFrameRef.current = null;
+        if (
+          phaseRef.current !== "playing" ||
+          pauseMenuOpenRef.current ||
+          playerRef.current.inventoryPanelOpen ||
+          playerRef.current.controllerConnected
+        ) {
+          return;
+        }
+        if (!sceneRef.current?.hasPointerLock()) {
+          setNeedsPointerLock(true);
+        }
+      });
+    });
+  }, [clearPointerLockFallbackCheck]);
+
+  const attemptGameplayResume = useCallback(() => {
+    if (phaseRef.current !== "playing") {
+      return;
+    }
+    clearPointerLockFallbackCheck();
+    setNeedsPointerLock(false);
+    window.focus();
+    sceneRef.current?.requestPointerLock();
+    schedulePointerLockFallbackCheck();
+  }, [clearPointerLockFallbackCheck, schedulePointerLockFallbackCheck]);
+
+  const openPauseMenu = useCallback(() => {
+    clearPointerLockFallbackCheck();
+    setNeedsPointerLock(false);
+    setBindingCapture(null);
+    setControllerBindingCapture(null);
+    setMenuSettingsOpen(false);
+    setPauseMenuOpen(true);
+  }, [clearPointerLockFallbackCheck]);
+
+  const handleCharacterSelect = useCallback((characterId: string) => {
+    setSelectedCharacterId(normalizePlayableCharacterId(characterId));
+  }, []);
+
   useEffect(() => {
     bindingCaptureRef.current = bindingCapture;
   }, [bindingCapture]);
@@ -427,10 +487,59 @@ export function GameRoot({
   const lastMenuAutoCheckAtRef = useRef(0);
 
   useEffect(() => {
-    if (player.pointerLocked && !hasBeenLocked) {
+    if (!player.pointerLocked) {
+      return;
+    }
+    clearPointerLockFallbackCheck();
+    setNeedsPointerLock(false);
+    if (!hasBeenLocked) {
       setHasBeenLocked(true);
     }
-  }, [player.pointerLocked, hasBeenLocked]);
+  }, [clearPointerLockFallbackCheck, hasBeenLocked, player.pointerLocked]);
+
+  useEffect(() => {
+    const wasPointerLocked = previousPointerLockedRef.current;
+    previousPointerLockedRef.current = player.pointerLocked;
+    if (
+      phase !== "playing" ||
+      !wasPointerLocked ||
+      player.pointerLocked ||
+      !hasBeenLocked ||
+      pauseMenuOpenRef.current ||
+      player.inventoryPanelOpen ||
+      needsPointerLock
+    ) {
+      return;
+    }
+    openPauseMenu();
+  }, [
+    hasBeenLocked,
+    needsPointerLock,
+    openPauseMenu,
+    phase,
+    player.inventoryPanelOpen,
+    player.pointerLocked,
+  ]);
+
+  useEffect(() => {
+    const wasInventoryOpen = previousInventoryPanelOpenRef.current;
+    previousInventoryPanelOpenRef.current = player.inventoryPanelOpen;
+    if (
+      phase !== "playing" ||
+      !wasInventoryOpen ||
+      player.inventoryPanelOpen ||
+      player.controllerConnected ||
+      pauseMenuOpenRef.current
+    ) {
+      return;
+    }
+    schedulePointerLockFallbackCheck();
+  }, [
+    phase,
+    player.controllerConnected,
+    player.inventoryPanelOpen,
+    schedulePointerLockFallbackCheck,
+  ]);
 
   useEffect(() => {
     if (phase !== "entering" && phase !== "returning") {
@@ -463,7 +572,9 @@ export function GameRoot({
         if (phase === "entering") {
           enteredPlayingAtRef.current = performance.now();
           setPhase("playing");
-          setNeedsPointerLock(true);
+          window.requestAnimationFrame(() => {
+            attemptGameplayResume();
+          });
         } else {
           setPhase("menu");
           setMenuSettingsOpen(false);
@@ -477,51 +588,11 @@ export function GameRoot({
 
     rafId = window.requestAnimationFrame(tick);
     return () => window.cancelAnimationFrame(rafId);
-  }, [phase]);
+  }, [attemptGameplayResume, phase]);
 
   useEffect(() => {
     window.electronAPI?.setGameplayActive(phase === "playing");
   }, [phase]);
-
-  // Auto-lock the pointer once we enter playing state.
-  // Browser requires a user gesture for requestPointerLock, so we add a
-  // one-time click handler. In Electron/Tauri the synthetic click usually
-  // suffices; in the browser the user will just need one click.
-  useEffect(() => {
-    if (!needsPointerLock) return;
-    if (phase !== "playing") {
-      setNeedsPointerLock(false);
-      return;
-    }
-
-    const tryLock = () => {
-      setNeedsPointerLock(false);
-      sceneRef.current?.requestPointerLock();
-    };
-
-    // Use double-RAF: all sibling/child effects (including PlayerController's
-    // inputEnabledRef update) finish synchronously before any RAF fires, so
-    // inputEnabled is guaranteed true and the canvas is visible by then.
-    let raf2 = 0;
-    const raf1 = requestAnimationFrame(() => {
-      raf2 = requestAnimationFrame(tryLock);
-    });
-
-    // Fallback: real user click on the canvas (always works via PlayerController's
-    // own mousedown handler, but keep this for non-Electron environments)
-    const onClick = () => {
-      cancelAnimationFrame(raf1);
-      cancelAnimationFrame(raf2);
-      tryLock();
-    };
-    document.addEventListener("click", onClick, { once: true });
-
-    return () => {
-      cancelAnimationFrame(raf1);
-      cancelAnimationFrame(raf2);
-      document.removeEventListener("click", onClick);
-    };
-  }, [needsPointerLock, phase]);
 
   useEffect(() => {
     if (killPulseToken <= 0) {
@@ -556,15 +627,14 @@ export function GameRoot({
     !player.controllerConnected;
 
   const handleCloseMenuAndResume = useCallback(() => {
-    setBindingCapture(null);
-    setControllerBindingCapture(null);
-    setMenuSettingsOpen(false);
-    setPauseMenuOpen(false);
-    window.focus();
-    if (phaseRef.current === "playing") {
-      setNeedsPointerLock(true);
-    }
-  }, []);
+    flushSync(() => {
+      setBindingCapture(null);
+      setControllerBindingCapture(null);
+      setMenuSettingsOpen(false);
+      setPauseMenuOpen(false);
+    });
+    attemptGameplayResume();
+  }, [attemptGameplayResume]);
 
   const handlePauseMenuToggle = useCallback(() => {
     if (bindingCaptureRef.current || controllerBindingCaptureRef.current) {
@@ -574,13 +644,9 @@ export function GameRoot({
       handleCloseMenuAndResume();
       return;
     }
-    setNeedsPointerLock(false);
-    setBindingCapture(null);
-    setControllerBindingCapture(null);
-    setMenuSettingsOpen(false);
-    setPauseMenuOpen(true);
+    openPauseMenu();
     sceneRef.current?.releasePointerLock();
-  }, [handleCloseMenuAndResume]);
+  }, [handleCloseMenuAndResume, openPauseMenu]);
 
   const handleCloseSettingsModal = useCallback(() => {
     setBindingCapture(null);
@@ -712,9 +778,8 @@ export function GameRoot({
       enteredPlayingAtRef.current = performance.now();
       setPhase("playing");
     });
-    window.focus();
-    setNeedsPointerLock(true);
-  }, []);
+    attemptGameplayResume();
+  }, [attemptGameplayResume]);
 
   const handleEnterPractice = useCallback(() => {
     if (practiceMapReady[selectedMap.id] && skyAssetReady[selectedSkyId]) {
@@ -745,6 +810,7 @@ export function GameRoot({
   ]);
 
   const handleReturnToLobby = useCallback(() => {
+    clearPointerLockFallbackCheck();
     setNeedsPointerLock(false);
     setBindingCapture(null);
     setControllerBindingCapture(null);
@@ -756,7 +822,7 @@ export function GameRoot({
     setHitMarker({ until: 0, kind: "body" });
     setHasBeenLocked(false);
     setPhase("menu");
-  }, []);
+  }, [clearPointerLockFallbackCheck]);
 
   const reportInventoryResult = useCallback((result: InventoryMoveResult) => {
     if (result.ok) {
@@ -1328,11 +1394,16 @@ export function GameRoot({
   }, [phase, pauseMenuOpen]);
 
   useEffect(() => {
+    return clearPointerLockFallbackCheck;
+  }, [clearPointerLockFallbackCheck]);
+
+  useEffect(() => {
     if (phase === "playing") {
       return;
     }
+    clearPointerLockFallbackCheck();
     setNeedsPointerLock(false);
-  }, [phase]);
+  }, [clearPointerLockFallbackCheck, phase]);
 
   useEffect(() => {
     if (phase !== "playing") {
@@ -1683,7 +1754,7 @@ export function GameRoot({
             installingUpdate={installUpdateInProgress}
             onInstallUpdate={() => { void handleInstallUpdate(); }}
             selectedCharacterId={selectedCharacterId}
-            onCharacterSelect={setSelectedCharacterId}
+            onCharacterSelect={handleCharacterSelect}
             selectedSkyId={selectedSkyId}
             onSkySelect={setSelectedSkyId}
             selectedMapId={selectedMapId}
@@ -3544,6 +3615,16 @@ export function GameRoot({
           role="dialog"
           aria-modal="true"
           aria-label="Click to continue"
+          onMouseDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            attemptGameplayResume();
+          }}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            attemptGameplayResume();
+          }}
         >
           <p className="click-to-continue-label">Click to continue</p>
         </div>

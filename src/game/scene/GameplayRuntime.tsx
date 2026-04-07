@@ -106,6 +106,7 @@ export type ShotFiredState = {
 export type GameplayRuntimeHandle = {
   requestPointerLock: () => void;
   releasePointerLock: () => void;
+  hasPointerLock: () => boolean;
   dropWeaponForReturn: () => void;
   moveInventoryItem: (request: InventoryMoveRequest) => InventoryMoveResult;
   quickMoveInventoryItem: (
@@ -2593,6 +2594,9 @@ export const GameplayRuntime = forwardRef<
     },
     releasePointerLock: () => {
       controllerRef.current?.releasePointerLock();
+    },
+    hasPointerLock: () => {
+      return controllerRef.current?.hasPointerLock() ?? false;
     },
     dropWeaponForReturn: () => {
       const playerPosition = controllerRef.current?.getPosition();
